@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>I miei giochi</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    min-height:100%;
+    background: radial-gradient(circle at 50% 8%, #101a2e 0%, #060a14 55%, #03050a 100%);
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color:#dfe6f5;
+    display:flex; align-items:center; justify-content:center;
+    padding:32px 16px;
+  }
+  .wrap { width:100%; max-width:640px; text-align:center; }
+  h1 {
+    font-size:38px; letter-spacing:4px; margin-bottom:6px;
+    background: linear-gradient(90deg,#5ec8ff,#7fa8ff,#ffd85e);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .subtitle { color:#9fb3d9; font-size:14px; margin-bottom:34px; letter-spacing:1px; }
+  .games { display:flex; flex-direction:column; gap:18px; }
+  .card {
+    display:block; text-decoration:none; color:inherit;
+    background: rgba(15,22,40,0.9);
+    border: 1px solid rgba(90,140,255,0.28);
+    border-radius: 14px;
+    padding: 22px 24px;
+    text-align:left;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    border-color:#5ec8ff;
+    box-shadow: 0 10px 30px rgba(40,90,220,0.28);
+  }
+  .card .row { display:flex; align-items:center; gap:16px; }
+  .icon {
+    width:56px; height:56px; flex-shrink:0; border-radius:12px;
+    display:flex; align-items:center; justify-content:center; font-size:30px;
+    background: linear-gradient(150deg,#2f6fff,#5ec8ff);
+    box-shadow: 0 0 18px rgba(90,140,255,0.4);
+  }
+  .card h2 { font-size:20px; margin-bottom:4px; }
+  .card p { color:#9fb3d9; font-size:13px; line-height:1.5; }
+  .play {
+    margin-left:auto; flex-shrink:0;
+    padding:10px 22px; border-radius:24px; font-weight:700; font-size:14px; letter-spacing:1px;
+    background: linear-gradient(90deg,#2f6fff,#5ec8ff); color:#fff;
+    box-shadow:0 0 16px rgba(90,140,255,0.4);
+  }
+  footer { margin-top:36px; color:#5f6b85; font-size:12px; }
+  @media (max-width:520px){
+    .card .row { flex-wrap:wrap; }
+    .play { margin-left:0; width:100%; text-align:center; margin-top:8px; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>I MIEI GIOCHI</h1>
+    <div class="subtitle">Una piccola raccolta giocabile dal browser</div>
+
+    <div class="games">
+      <a class="card" href="conquista-esagonale-v5.html">
+        <div class="row">
+          <div class="icon">⬡</div>
+          <div>
+            <h2>Conquista Esagonale</h2>
+            <p>Strategia a turni su mappa esagonale: rinforza, attacca coi dadi, occupa territori neutri e conquista le capitali. Contro l'IA, con più modalità e difficoltà.</p>
+          </div>
+          <span class="play">GIOCA</span>
+        </div>
+      </a>
+    </div>
+
+    <footer>Fatto con ♥ — aggiungi altri giochi quando vuoi</footer>
+  </div>
+</body>
+</html>
