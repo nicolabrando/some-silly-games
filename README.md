@@ -1,2 +1,2 @@
-# verbose-octo-guacamole
+# Some Silly Games
 Games
