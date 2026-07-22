@@ -2,6 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Neon Breakout</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -62,6 +63,22 @@
     border:1px solid #8a7fd6; border-radius:5px; font-size:12px;
     color:#c9c3ff;
   }
+  /* on-screen arrow buttons to move the paddle (touch / click) */
+  .touchBtn {
+    position:fixed; bottom:22px; bottom:calc(22px + env(safe-area-inset-bottom));
+    width:78px; height:78px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:40px; line-height:1; color:#c9c3ff;
+    user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent;
+    touch-action:none; cursor:pointer; z-index:50;
+    background: rgba(20,12,40,0.55);
+    border:2px solid rgba(122,92,255,0.6);
+    box-shadow:0 0 18px rgba(122,92,255,0.45), inset 0 0 18px rgba(90,60,220,0.25);
+    transition: transform .08s ease, background .08s ease;
+  }
+  #btnLeft { left:20px; left:calc(20px + env(safe-area-inset-left)); }
+  #btnRight { right:20px; right:calc(20px + env(safe-area-inset-right)); }
+  .touchBtn.active, .touchBtn:active { background: rgba(122,92,255,0.5); transform: scale(0.94); }
 </style>
 </head>
 <body>
@@ -81,6 +98,9 @@
     </div>
   </div>
 </div>
+
+<div id="btnLeft" class="touchBtn" aria-label="Sinistra">←</div>
+<div id="btnRight" class="touchBtn" aria-label="Destra">→</div>
 
 <script>
 (function(){
@@ -194,6 +214,26 @@
   });
   canvas.addEventListener('click', ()=>{
     if(running && !launched) launchBall();
+  });
+
+  // on-screen arrow buttons: hold to move the paddle (reuses the same key state)
+  const btnLeft = document.getElementById('btnLeft');
+  const btnRight = document.getElementById('btnRight');
+  function holdKey(btn, key){
+    const press = (e)=>{ e.preventDefault(); ensureAudio(); keys[key] = true; btn.classList.add('active'); };
+    const release = (e)=>{ if(e) e.preventDefault(); keys[key] = false; btn.classList.remove('active'); };
+    btn.addEventListener('pointerdown', press);
+    btn.addEventListener('pointerup', release);
+    btn.addEventListener('pointercancel', release);
+    btn.addEventListener('pointerleave', release);
+    btn.addEventListener('contextmenu', e=>e.preventDefault());
+  }
+  holdKey(btnLeft, 'ArrowLeft');
+  holdKey(btnRight, 'ArrowRight');
+  // safety: never let a key get stuck if the finger/mouse is released off the button
+  window.addEventListener('pointerup', ()=>{
+    keys['ArrowLeft'] = false; keys['ArrowRight'] = false;
+    btnLeft.classList.remove('active'); btnRight.classList.remove('active');
   });
 
   function launchBall(){
