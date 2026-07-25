@@ -225,6 +225,8 @@
   <p><b>Mappa: Europa.</b> Ogni stato confina con i vicini condividendo il bordo; i collegamenti via mare
   (Islanda, Irlanda, Regno Unito, Danimarca-Svezia, Turchia-Cipro) sono indicati da <b>ponti tratteggiati</b>
   e valgono come confini. Le armate iniziali dipendono dall'estensione dello stato.
+  I rinforzi di ogni turno sono proporzionali all'<b>area controllata</b> (un rinforzo ogni 25 quadratini),
+  quindi tenere un paese vasto vale molto più di tanti staterelli.
   A turno piazzi rinforzi, ti espandi e sposti le truppe. Un territorio può avere anche <b>0 armate</b>:
   resta tuo, ma un vicino può occuparlo <b>senza combattere</b>. Contro uno stato difeso si combatte coi dadi
   (3 in attacco, 2 in difesa, pareggio al difensore). Con <b>Judge Now</b> chiudi la partita ai punti.</p>
@@ -495,32 +497,46 @@
       h.owner = pid; h.capitalSeed = true;
       queues[pid].push(h);
     });
-    let guard = 0, progress = true;
-    while(progress && guard < 5000){
-      progress = false;
-      for(const pid of shuffled){
-        guard++;
-        let q = queues[pid];
-        let claimed = false;
-        while(q.length && !claimed){
-          const cur = q[0];
-          const free = neighborsOf(cur).filter(nb=>nb.owner === null);
-          if(free.length === 0){ q.shift(); continue; }
-          const nb = free[Math.floor(Math.random()*free.length)];
-          nb.owner = pid; q.push(nb); claimed = true;
-        }
-        if(!claimed){
-          q = queues[pid] = all.filter(h=>h.owner===pid && neighborsOf(h).some(nb=>nb.owner===null));
-          if(q.length){
-            const free = neighborsOf(q[0]).filter(nb=>nb.owner === null);
-            if(free.length){
-              const nb = free[Math.floor(Math.random()*free.length)];
-              nb.owner = pid; q.push(nb); claimed = true;
-            }
-          }
-        }
-        if(claimed) progress = true;
+
+    // The giant country (Russia) is handed out immediately, to the player whose capital
+    // lies closest to it. Because reinforcements follow the controlled area, its owner is
+    // instantly the richest and the balanced growth below gives them almost nothing else:
+    // a huge income, but a long and thin empire to defend.
+    const HUGE = 30;
+    const giant = all.find(h=>h.cells.length > HUGE);
+    if(giant && giant.owner === null){
+      let best = seeds[0], bd = Infinity;
+      for(const sd of seeds){
+        const d = (sd.cx-giant.cx)**2 + (sd.cy-giant.cy)**2;
+        if(d < bd){ bd = d; best = sd; }
       }
+      giant.owner = best.owner;
+    }
+    // Growth is balanced by AREA, not by number of countries: at every step the player
+    // controlling the fewest cells takes the next one. Whoever lands a huge country like
+    // Russia therefore ends up with fewer other territories, so nobody starts with a
+    // runaway income even though Russia itself stays a disproportionate prize.
+    const areaNow = pid => all.filter(h=>h.owner===pid).reduce((s,h)=>s+h.cells.length,0);
+    const expandable = pid => {
+      const q = queues[pid];
+      while(q.length && !neighborsOf(q[0]).some(nb=>nb.owner === null)) q.shift();
+      if(q.length) return true;
+      queues[pid] = all.filter(h=>h.owner===pid && neighborsOf(h).some(nb=>nb.owner===null));
+      return queues[pid].length > 0;
+    };
+    let guard = 0;
+    while(guard < 5000){
+      guard++;
+      const able = shuffled.filter(expandable);
+      if(!able.length) break;
+      able.sort((x,y)=>areaNow(x)-areaNow(y));
+      const pid = able[0];
+      if(giant && pid === giant.owner && areaNow(pid) > giant.cells.length){ /* keep growing */ }
+      const cur = queues[pid][0];
+      const free = neighborsOf(cur).filter(nb=>nb.owner === null);
+      const nb = free[Math.floor(Math.random()*free.length)];
+      nb.owner = pid;
+      queues[pid].push(nb);
     }
     for(const h of all){
       if(h.owner !== null) continue;
@@ -528,12 +544,53 @@
       for(const t of all) if(t.owner !== null) counts[t.owner]++;
       h.owner = shuffled.reduce((a,b)=> counts[a] <= counts[b] ? a : b);
     }
+
+    // Rebalancing pass. Growth alone leaves gaps: a player boxed in early stops growing
+    // while a neighbour keeps taking land. Here the richest empire hands a border country
+    // to the poorest until they are within reach of each other. The owner of a giant
+    // country (Russia) is left out of this: by design they hold little else.
+    const bigOwner = giant ? giant.owner : null;
+    const balanced = shuffled.filter(p=>p !== bigOwner);
+    if(balanced.length > 1){
+      const area = pid => all.filter(h=>h.owner===pid).reduce((s,h)=>s+h.cells.length,0);
+      const count = pid => all.filter(h=>h.owner===pid).length;
+      for(let step=0; step<600; step++){
+        const sorted = balanced.slice().sort((x,y)=>area(x)-area(y));
+        if(area(sorted[sorted.length-1]) <= area(sorted[0])*1.4) break;
+        // Work from the poorest outwards: they annex the smallest bordering country of
+        // any richer neighbour. Going through neighbours (rather than only the single
+        // richest player) means a transfer is almost always geographically possible.
+        let done = false;
+        for(let pi=0; pi<sorted.length-1 && !done; pi++){
+          const poor = sorted[pi];
+          const mine = all.filter(h=>h.owner===poor);
+          const donors = [];
+          for(const h of mine){
+            for(const nb of neighborsOf(h)){
+              if(nb.owner === null || nb.owner === poor || nb.owner === bigOwner) continue;
+              if(nb.capitalSeed || nb.cells.length > HUGE) continue;
+              if(area(nb.owner) <= area(poor)*1.4) continue;
+              if(count(nb.owner) <= 1) continue;   // never strip a player bare
+              donors.push(nb);
+            }
+          }
+          if(!donors.length) continue;
+          donors.sort((x,y)=>x.cells.length-y.cells.length);
+          // prefer a transfer that closes the gap without simply reversing it
+          const clean = donors.filter(d => area(d.owner)-d.cells.length >= area(poor)+d.cells.length);
+          (clean.length ? clean[0] : donors[0]).owner = poor;
+          done = true;
+        }
+        if(!done) break;
+      }
+    }
     // a few countries stay neutral, but never at the cost of a viable starting empire
     const owned = {}; shuffled.forEach(p=>owned[p]=0);
     for(const h of all) if(h.owner !== null) owned[h.owner]++;
     for(const h of all){
       if(h.capitalSeed || h.owner === null) continue;
       if(owned[h.owner] <= 3) continue;
+      if(h.cells.length > 30) continue;      // never leave a giant country unowned
       if(Math.random() < NEUTRAL_FRACTION){
         owned[h.owner]--;
         h.owner = null; h.troops = 0; h.isCastle = false;
@@ -745,8 +802,15 @@
     return true;
   }
 
+  // How many grid cells a player controls: this is the real measure of an empire on the
+  // Europe map, where a single country can be worth more than a dozen small ones.
+  function areaOf(pid){ return ownHexes(pid).reduce((s,h)=>s+h.cells.length,0); }
+
+  // Reinforcements are proportional to the controlled AREA, so holding a vast country
+  // such as Russia is deliberately worth far more than holding many tiny states.
+  const AREA_PER_REINFORCEMENT = 25;
   function calcReinforcement(pid){
-    return Math.max(1, Math.floor(ownHexes(pid).length/3));
+    return Math.max(1, Math.floor(areaOf(pid)/AREA_PER_REINFORCEMENT));
   }
 
   function checkEliminationsAndWin(){
@@ -793,7 +857,7 @@
       phase = 'reinforce';
       reinforceLeft = calcReinforcement(HUMAN);
       inputLocked = false;
-      log(`➕ Turno ${turnNumber} — Ricevi ${reinforceLeft} rinforzi. Clicca un tuo esagono per piazzarli.`);
+      log(`➕ Turno ${turnNumber} — Ricevi ${reinforceLeft} rinforzi (${areaOf(HUMAN)} quadratini controllati). Clicca un tuo territorio per piazzarli.`);
       updateUI();
       render();
     } else {
@@ -848,7 +912,7 @@
       const sc = scoreOf(p.id);
       const luck = luckOf(p.id);
       const winRate = s.attacks ? Math.round(100*s.attacksWon/s.attacks) : 0;
-      return { p, s, sc, luck, winRate, out: !alive.has(p.id) };
+      return { p, s, sc, luck, winRate, area: areaOf(p.id), out: !alive.has(p.id) };
     });
     rows.sort((a,b)=> b.sc.score - a.sc.score);
     const body = rows.map(r=>{
@@ -857,7 +921,7 @@
       const luckCls = r.luck >= 2 ? 'lkGood' : (r.luck <= -2 ? 'lkBad' : 'lkMid');
       return `<tr class="${r.out?'outRow':''}">
         <td><span class="swatch" style="background:${r.p.color};color:${r.p.color};"></span>${r.p.name}${r.out?' †':''}</td>
-        <td>${r.sc.terr}</td><td>${r.sc.armies}</td><td><b>${r.sc.score}</b></td>
+        <td>${r.sc.terr}</td><td>${r.area}</td><td>${r.sc.armies}</td><td><b>${r.sc.score}</b></td>
         <td>${s.placed||0}</td>
         <td>${s.killed||0}</td>
         <td>${s.lost||0}</td>
@@ -879,7 +943,7 @@
         <div class="recapScroll">
         <table class="recapTable">
           <thead><tr>
-            <th>Giocatore</th><th>Terr.</th><th>Armate</th><th>Punti</th>
+            <th>Giocatore</th><th>Terr.</th><th>Quadr.</th><th>Armate</th><th>Punti</th>
             <th>Piazzate</th><th>Uccise</th><th>Perse</th>
             <th>Attacchi</th><th>Riusciti</th><th>Occup.</th><th>Fortuna</th>
           </tr></thead>
@@ -924,6 +988,8 @@
     const buffer = difficulty==='impossible'?2: difficulty==='hard'?1:0;
     let target = threat>0 ? threat + buffer : 0;
     if(h.isCastle) target += difficulty==='impossible'?4: difficulty==='hard'?3:2;
+    // wide provinces generate the reinforcements, so they deserve a stronger garrison
+    if(threat>0 && (difficulty==='hard'||difficulty==='impossible')) target += Math.min(4, h.cells.length/8);
     let score = target - h.troops;
     let offense = 0;
     for(const n of neighborsOf(h)){
@@ -964,6 +1030,8 @@
       score -= backup * (difficulty==='impossible'?0.2:0.12);
       // finishing blows that shrink an enemy toward elimination
       if(n.owner!==null && ownHexes(n.owner).length<=2) score += 3;
+      // a large country is worth far more than a small one: it pays reinforcements
+      score += n.cells.length / (difficulty==='impossible' ? 6 : 9);
       // Taking ground we cannot hold is worth little: penalise conquests that would
       // leave the new territory exposed to a stronger neighbour counter-attack.
       let counter = 0;
@@ -1357,7 +1425,7 @@
       path.setAttribute('class','countryEdge');
       outlines.push({ g, path });
       const t = document.createElementNS(SVGNS,'title');
-      t.textContent = `${h.name} — ${h.owner===null ? 'neutro' : playerName(h.owner)} · ${h.troops} truppe`;
+      t.textContent = `${h.name} — ${h.owner===null ? 'neutro' : playerName(h.owner)} · ${h.troops} truppe · ${h.cells.length} quadratini`;
       g.appendChild(t);
       g.addEventListener('click', ()=>onHexClick(k));
       svg.appendChild(g);
@@ -1534,9 +1602,10 @@
       const s = scoreOf(p.id);
       const row = document.createElement('div');
       row.className = 'playerRow' + (alive.has(p.id) ? '' : ' dead');
+      const area = areaOf(p.id);
       row.innerHTML = `<span class="swatch" style="background:${p.color};color:${p.color};"></span>
         <span class="name">${p.name}</span>
-        <span class="stats">${s.terr} terr · ${s.armies} tr · ${s.score} pt</span>`;
+        <span class="stats">${s.terr}t · ${area}q · ${s.armies}a · +${calcReinforcement(p.id)}/turno</span>`;
       playersEl.appendChild(row);
     }
     const curPid = order[turnPointer];
