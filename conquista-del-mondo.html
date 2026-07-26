@@ -116,7 +116,7 @@
   }
   #overlay button.mainBtn:hover { transform:scale(1.05); }
   .kbd { display:inline-block; padding:2px 8px; border:1px solid #5ec8ff; border-radius:5px; font-size:11px; color:#bfe0ff; }
-  .settingGroup { width:100%; margin-top:13px; }
+  .settingGroup { width:100%; margin-top:13px; text-align:center; }
   .settingLabel { font-size:10.5px; color:#7fa8ff; letter-spacing:1.5px; margin-bottom:7px; text-align:center; font-weight:600; }
   .choiceRow { display:flex; gap:7px; flex-wrap:wrap; justify-content:center; }
   .choiceBtn {
@@ -224,7 +224,7 @@
   <p><b>Mappa: Europa.</b> Ogni stato confina con i vicini condividendo il bordo; i collegamenti via mare
   (Islanda, Irlanda, Regno Unito, Danimarca-Svezia, Turchia-Cipro) sono indicati da <b>ponti tratteggiati</b>
   e valgono come confini. Le armate iniziali dipendono dall'estensione dello stato.
-  I rinforzi di ogni turno sono proporzionali all'<b>area controllata</b> (un rinforzo ogni 25 quadratini),
+  I rinforzi di ogni turno sono proporzionali all'<b>area controllata</b> (un rinforzo ogni 430 quadratini),
   quindi tenere un paese vasto vale molto più di tanti staterelli.
   A turno piazzi rinforzi, ti espandi e sposti le truppe. Un territorio può avere anche <b>0 armate</b>:
   resta tuo, ma un vicino può occuparlo <b>senza combattere</b>. Contro uno stato difeso si combatte coi dadi
@@ -288,7 +288,6 @@
   let SETTINGS = {
     numOpponents: 2,
     mapSize: 'medium',
-    mapType: 'regular',   // 'regular' | 'realistic'
     playerColor: COLOR_PALETTE[0],
     aiDifficulty: 'medium',
     mode: 'classic',
@@ -501,7 +500,7 @@
     // lies closest to it. Because reinforcements follow the controlled area, its owner is
     // instantly the richest and the balanced growth below gives them almost nothing else:
     // a huge income, but a long and thin empire to defend.
-    const HUGE = 30;
+    const HUGE = 520;
     const giant = all.find(h=>h.cells.length > HUGE);
     if(giant && giant.owner === null){
       let best = seeds[0], bd = Infinity;
@@ -553,9 +552,9 @@
     if(balanced.length > 1){
       const area = pid => all.filter(h=>h.owner===pid).reduce((s,h)=>s+h.cells.length,0);
       const count = pid => all.filter(h=>h.owner===pid).length;
-      for(let step=0; step<600; step++){
+      for(let step=0; step<1200; step++){
         const sorted = balanced.slice().sort((x,y)=>area(x)-area(y));
-        if(area(sorted[sorted.length-1]) <= area(sorted[0])*1.4) break;
+        if(area(sorted[sorted.length-1]) <= area(sorted[0])*1.28) break;
         // Work from the poorest outwards: they annex the smallest bordering country of
         // any richer neighbour. Going through neighbours (rather than only the single
         // richest player) means a transfer is almost always geographically possible.
@@ -568,7 +567,7 @@
             for(const nb of neighborsOf(h)){
               if(nb.owner === null || nb.owner === poor || nb.owner === bigOwner) continue;
               if(nb.capitalSeed || nb.cells.length > HUGE) continue;
-              if(area(nb.owner) <= area(poor)*1.4) continue;
+              if(area(nb.owner) <= area(poor)*1.28) continue;
               if(count(nb.owner) <= 1) continue;   // never strip a player bare
               donors.push(nb);
             }
@@ -589,7 +588,7 @@
     for(const h of all){
       if(h.capitalSeed || h.owner === null) continue;
       if(owned[h.owner] <= 3) continue;
-      if(h.cells.length > 30) continue;      // never leave a giant country unowned
+      if(h.cells.length > 520) continue;     // never leave a giant country unowned
       if(Math.random() < NEUTRAL_FRACTION){
         owned[h.owner]--;
         h.owner = null; h.troops = 0; h.isCastle = false;
@@ -807,7 +806,7 @@
 
   // Reinforcements are proportional to the controlled AREA, so holding a vast country
   // such as Russia is deliberately worth far more than holding many tiny states.
-  const AREA_PER_REINFORCEMENT = 25;
+  const AREA_PER_REINFORCEMENT = 430;
   function calcReinforcement(pid){
     return Math.max(1, Math.floor(areaOf(pid)/AREA_PER_REINFORCEMENT));
   }
@@ -936,7 +935,7 @@
         <div class="recapMeta">
           <div><span class="rmLabel">DURATA</span>${fmtTime(gameElapsedMs)}</div>
           <div><span class="rmLabel">TURNI</span>${turnsPlayed}</div>
-          <div><span class="rmLabel">MAPPA</span>${SETTINGS.mapType==='realistic' ? 'Realistica' : 'Regolare'}</div>
+          <div><span class="rmLabel">MAPPA</span>Europa</div>
           <div><span class="rmLabel">IA</span>${({easy:'Facile',medium:'Media',hard:'Difficile',impossible:'Impossibile'})[SETTINGS.aiDifficulty]}</div>
         </div>
         <div class="recapScroll">
