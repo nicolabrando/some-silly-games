@@ -35,6 +35,15 @@
   .hexAttack .countryEdge { stroke:#ff3131; stroke-width:4.5; stroke-dasharray:7,4; }
   .hexMove .countryEdge { stroke:#5ec8ff; stroke-width:4.5; stroke-dasharray:7,4; }
   .bridgeLine { stroke:#ffe9a8; stroke-width:2.6; stroke-dasharray:7,5; opacity:0.95; pointer-events:none; }
+  .graphEdge { stroke:#93a7cd; stroke-width:3; fill:none; opacity:0.6; stroke-linecap:round; pointer-events:none; }
+  .graphEdgeSea { stroke:#ffe9a8; stroke-width:2.8; fill:none; opacity:0.85; stroke-dasharray:8,6; stroke-linecap:round; pointer-events:none; }
+  .graphNode { stroke:#0a1120; stroke-width:2.5; cursor:pointer; }
+  .graphTroops { font-size:19px; font-weight:800; fill:#fff; stroke:#0a1120; stroke-width:3; paint-order:stroke; text-anchor:middle; dominant-baseline:central; }
+  .graphTroopsNeutral { font-size:18px; font-weight:700; fill:#e8eefc; stroke:#0a1120; stroke-width:3; paint-order:stroke; text-anchor:middle; dominant-baseline:central; }
+  .graphName { font-size:11px; font-weight:600; fill:#c8d5ef; text-anchor:middle; }
+  .hexSelected .graphNode { stroke:#ffd85e; stroke-width:5; }
+  .hexAttack .graphNode { stroke:#ff3131; stroke-width:4.5; stroke-dasharray:6,4; }
+  .hexMove .graphNode { stroke:#5ec8ff; stroke-width:4.5; stroke-dasharray:6,4; }
   .bridgeDot { fill:#ffe9a8; opacity:0.95; pointer-events:none; }
   .dot { fill:#f5f7ff; stroke:#182238; pointer-events:none; }
   .badgeCircle { fill:#0a1120; stroke:#ffd85e; stroke-width:1.4; pointer-events:none; }
@@ -221,7 +230,9 @@
 <div id="overlay">
   <div id="overlayInner">
   <h1>CONQUISTA DEL MONDO</h1>
-  <p><b>Mappa: Europa.</b> Ogni stato confina con i vicini condividendo il bordo; i collegamenti via mare
+  <p><b>Mappa: Europa</b>, in due stili a scelta: <b>\u201cRealistica\u201d</b>, con gli stati disegnati sul
+  territorio, oppure <b>Grafo</b>, con ogni stato come nodo e ogni confine come collegamento. Territori,
+  confini ed economia sono identici nei due casi. Nello stile realistico ogni stato confina con i vicini condividendo il bordo; i collegamenti via mare
   (Islanda, Irlanda, Regno Unito, Danimarca-Svezia, Turchia-Cipro) sono indicati da <b>ponti tratteggiati</b>
   e valgono come confini. Le armate iniziali dipendono dall'estensione dello stato.
   I rinforzi di ogni turno sono proporzionali all'<b>area controllata</b> (un rinforzo ogni 430 quadratini),
@@ -233,6 +244,10 @@
   <div class="settingGroup">
     <div class="settingLabel">MODALITÀ DI GIOCO</div>
     <div class="choiceRow" id="modeRow"></div>
+  </div>
+  <div class="settingGroup">
+    <div class="settingLabel">STILE DELLA MAPPA</div>
+    <div class="choiceRow" id="styleRow"></div>
   </div>
   <div class="settingGroup">
     <div class="settingLabel">NUMERO DI AVVERSARI</div>
@@ -287,6 +302,7 @@
   // ================= GAME SETTINGS (chosen at start) =================
   let SETTINGS = {
     numOpponents: 2,
+    mapStyle: 'realistic',   // 'realistic' (cell map) | 'graph' (node graph)
     mapSize: 'medium',
     playerColor: COLOR_PALETTE[0],
     aiDifficulty: 'medium',
@@ -413,10 +429,176 @@
     { a:'tur', b:'cyp', from:[99,92], to:[100,93] }
   ];
   const CELL = 8;                        // pixel size of one grid cell
+  // ================= GRAPH MAP =================
+  // The border graph of Europe supplied as a reference: 47 states, 94 connections,
+  // node positions and edge curves taken straight from that drawing so that no
+  // connection ever runs across an unrelated state.
+  const GRAPH_R = 27;
+  const GRAPH = {
+    nor:{ name:'Norvegia', size:4, pos:[611.4,73.5], nbrs:['fin','isl','rus','swe'] },
+    fin:{ name:'Finlandia', size:4, pos:[660.1,216.7], nbrs:['nor','rus','swe'] },
+    isl:{ name:'Islanda', size:3, pos:[67.7,225.1], nbrs:['gbr','nor'] },
+    swe:{ name:'Svezia', size:5, pos:[462.2,255.5], nbrs:['dnk','fin','nor'] },
+    est:{ name:'Estonia', size:2, pos:[606.6,270.6], nbrs:['lva','rus'] },
+    rus:{ name:'Russia', size:8, pos:[795.9,304.0], nbrs:['blr','est','fin','ltu','lva','nor','pol','ukr'] },
+    lva:{ name:'Lettonia', size:2, pos:[666.7,325.0], nbrs:['blr','est','ltu','rus'] },
+    dnk:{ name:'Danimarca', size:2, pos:[410.9,378.6], nbrs:['deu','swe'] },
+    ltu:{ name:'Lituania', size:2, pos:[630.9,393.3], nbrs:['blr','lva','pol','rus'] },
+    blr:{ name:'Bielorussia', size:3, pos:[706.6,402.0], nbrs:['ltu','lva','pol','rus','ukr'] },
+    nld:{ name:'Paesi Bassi', size:2, pos:[344.1,454.0], nbrs:['bel','deu'] },
+    gbr:{ name:'Regno Unito', size:4, pos:[186.0,454.6], nbrs:['fra','irl','isl'] },
+    irl:{ name:'Irlanda', size:2, pos:[87.9,457.8], nbrs:['gbr'] },
+    deu:{ name:'Germania', size:5, pos:[430.3,493.9], nbrs:['aut','bel','che','cze','dnk','fra','lux','nld','pol'] },
+    pol:{ name:'Polonia', size:4, pos:[711.2,500.2], nbrs:['blr','cze','deu','ltu','rus','svk','ukr'] },
+    bel:{ name:'Belgio', size:1, pos:[272.2,500.3], nbrs:['deu','fra','lux','nld'] },
+    cze:{ name:'Rep. Ceca', size:2, pos:[560.0,550.6], nbrs:['aut','deu','pol','svk'] },
+    lux:{ name:'Lussemburgo', size:1, pos:[326.5,553.6], nbrs:['bel','deu','fra'] },
+    svk:{ name:'Slovacchia', size:2, pos:[659.0,562.8], nbrs:['aut','cze','hun','pol','ukr'] },
+    ukr:{ name:'Ucraina', size:6, pos:[797.5,567.0], nbrs:['blr','hun','mda','pol','rou','rus','svk'] },
+    lie:{ name:'Liechtenstein', size:1, pos:[441.5,593.0], nbrs:['aut','che'] },
+    aut:{ name:'Austria', size:2, pos:[515.1,612.3], nbrs:['che','cze','deu','hun','ita','lie','svk','svn'] },
+    hun:{ name:'Ungheria', size:3, pos:[616.7,626.2], nbrs:['aut','hrv','rou','srb','svk','svn','ukr'] },
+    mda:{ name:'Moldavia', size:1, pos:[775.1,649.3], nbrs:['rou','ukr'] },
+    che:{ name:'Svizzera', size:2, pos:[372.0,662.8], nbrs:['aut','deu','fra','ita','lie'] },
+    fra:{ name:'Francia', size:5, pos:[291.8,665.2], nbrs:['and','bel','che','deu','esp','gbr','ita','lux','mco'] },
+    rou:{ name:'Romania', size:4, pos:[687.1,675.4], nbrs:['bgr','hun','mda','srb','ukr'] },
+    svn:{ name:'Slovenia', size:1, pos:[510.4,688.2], nbrs:['aut','hrv','hun','ita'] },
+    hrv:{ name:'Croazia', size:2, pos:[586.0,695.3], nbrs:['bih','hun','mne','srb','svn'] },
+    ita:{ name:'Italia', size:4, pos:[415.9,740.4], nbrs:['aut','che','fra','mlt','smr','svn','vat'] },
+    mco:{ name:'Monaco', size:1, pos:[339.7,745.4], nbrs:['fra'] },
+    smr:{ name:'San Marino', size:1, pos:[490.2,762.1], nbrs:['ita'] },
+    bih:{ name:'Bosnia', size:2, pos:[593.9,770.9], nbrs:['hrv','mne','srb'] },
+    bgr:{ name:'Bulgaria', size:3, pos:[742.7,774.8], nbrs:['grc','mkd','rou','srb','tur'] },
+    and:{ name:'Andorra', size:1, pos:[267.9,781.4], nbrs:['esp','fra'] },
+    srb:{ name:'Serbia', size:2, pos:[668.8,793.9], nbrs:['bgr','bih','hrv','hun','kos','mkd','mne','rou'] },
+    vat:{ name:'Vaticano', size:1, pos:[400.9,827.8], nbrs:['ita'] },
+    mne:{ name:'Montenegro', size:1, pos:[513.1,835.0], nbrs:['alb','bih','hrv','kos','srb'] },
+    esp:{ name:'Spagna', size:5, pos:[169.7,844.2], nbrs:['and','fra','prt'] },
+    kos:{ name:'Kosovo', size:1, pos:[588.5,859.0], nbrs:['alb','mkd','mne','srb'] },
+    mkd:{ name:'Macedonia', size:1, pos:[663.7,869.8], nbrs:['alb','bgr','grc','kos','srb'] },
+    prt:{ name:'Portogallo', size:3, pos:[84.0,869.9], nbrs:['esp'] },
+    tur:{ name:'Turchia', size:6, pos:[825.8,884.8], nbrs:['bgr','cyp','grc'] },
+    alb:{ name:'Albania', size:1, pos:[560.2,929.4], nbrs:['grc','kos','mkd','mne'] },
+    grc:{ name:'Grecia', size:3, pos:[683.7,943.3], nbrs:['alb','bgr','mkd','tur'] },
+    mlt:{ name:'Malta', size:1, pos:[503.1,984.2], nbrs:['ita'] },
+    cyp:{ name:'Cipro', size:1, pos:[848.0,999.3], nbrs:['tur'] }
+  };
+  const GRAPH_SEA = [
+    ['dnk','swe'],
+    ['fra','gbr'],
+    ['isl','nor'],
+    ['isl','gbr'],
+    ['ita','mlt'],
+    ['tur','cyp']
+  ];
+  const GRAPH_EDGES = [
+    { a:'prt', b:'esp', sea:false, d:'M 84.012196 869.939667 Q 126.87129 857.084679 169.730385 844.229691' },
+    { a:'esp', b:'fra', sea:false, d:'M 169.730385 844.229691 Q 162.747634 708.335406 291.810641 665.222116' },
+    { a:'esp', b:'and', sea:false, d:'M 169.730385 844.229691 Q 218.798458 812.824447 267.866531 781.419203' },
+    { a:'and', b:'fra', sea:false, d:'M 267.866531 781.419203 Q 235.683693 714.221897 291.810641 665.222116' },
+    { a:'fra', b:'bel', sea:false, d:'M 291.810641 665.222116 Q 235.864386 588.260637 272.249394 500.344859' },
+    { a:'fra', b:'lux', sea:false, d:'M 291.810641 665.222116 Q 301.347237 606.990188 326.508691 553.615987' },
+    { a:'fra', b:'deu', sea:false, d:'M 291.810641 665.222116 Q 361.040948 579.547249 430.271254 493.872383' },
+    { a:'fra', b:'che', sea:false, d:'M 291.810641 665.222116 Q 331.435539 647.983511 372.018123 662.8279' },
+    { a:'fra', b:'ita', sea:false, d:'M 291.810641 665.222116 Q 353.871277 702.793841 415.931913 740.365565' },
+    { a:'fra', b:'mco', sea:false, d:'M 291.810641 665.222116 Q 305.326203 711.534878 339.687899 745.399553' },
+    { a:'bel', b:'nld', sea:false, d:'M 272.249394 500.344859 Q 302.160248 467.809181 344.130492 453.962589' },
+    { a:'bel', b:'deu', sea:false, d:'M 272.249394 500.344859 Q 351.260324 497.108621 430.271254 493.872383' },
+    { a:'bel', b:'lux', sea:false, d:'M 272.249394 500.344859 Q 292.453796 534.034132 326.508691 553.615987' },
+    { a:'nld', b:'deu', sea:false, d:'M 344.130492 453.962589 Q 389.994559 467.887633 430.271254 493.872383' },
+    { a:'lux', b:'deu', sea:false, d:'M 326.508691 553.615987 Q 378.389973 523.744185 430.271254 493.872383' },
+    { a:'deu', b:'dnk', sea:false, d:'M 430.271254 493.872383 Q 443.640462 432.373827 410.908816 378.620247' },
+    { a:'deu', b:'pol', sea:false, d:'M 430.271254 493.872383 Q 571.9935 440.868095 711.174635 500.22516' },
+    { a:'deu', b:'cze', sea:false, d:'M 430.271254 493.872383 Q 502.5208 505.385478 560.012995 550.631426' },
+    { a:'deu', b:'aut', sea:false, d:'M 430.271254 493.872383 Q 480.987667 547.168043 515.118294 612.342289' },
+    { a:'deu', b:'che', sea:false, d:'M 430.271254 493.872383 Q 401.144688 578.350141 372.018123 662.8279' },
+    { a:'che', b:'ita', sea:false, d:'M 372.018123 662.8279 Q 415.685564 689.300871 415.931913 740.365565' },
+    { a:'che', b:'aut', sea:false, d:'M 372.018123 662.8279 Q 443.568208 637.585094 515.118294 612.342289' },
+    { a:'che', b:'lie', sea:false, d:'M 372.018123 662.8279 Q 406.758522 627.916656 441.498922 593.005412' },
+    { a:'lie', b:'aut', sea:false, d:'M 441.498922 593.005412 Q 478.308608 602.67385 515.118294 612.342289' },
+    { a:'aut', b:'cze', sea:false, d:'M 515.118294 612.342289 Q 537.565645 581.486857 560.012995 550.631426' },
+    { a:'aut', b:'svk', sea:false, d:'M 515.118294 612.342289 Q 587.055967 587.592619 658.993641 562.842948' },
+    { a:'aut', b:'hun', sea:false, d:'M 515.118294 612.342289 Q 565.909297 619.294587 616.7003 626.246885' },
+    { a:'aut', b:'svn', sea:false, d:'M 515.118294 612.342289 Q 512.757136 650.260352 510.395978 688.178415' },
+    { a:'aut', b:'ita', sea:false, d:'M 515.118294 612.342289 Q 456.563474 669.41088 415.931913 740.365565' },
+    { a:'ita', b:'svn', sea:false, d:'M 415.931913 740.365565 Q 463.163946 714.27199 510.395978 688.178415' },
+    { a:'ita', b:'smr', sea:false, d:'M 415.931913 740.365565 Q 451.550353 756.428756 490.210623 762.092927' },
+    { a:'ita', b:'vat', sea:false, d:'M 415.931913 740.365565 Q 414.523432 785.134026 400.874898 827.794505' },
+    { a:'svn', b:'hrv', sea:false, d:'M 510.395978 688.178415 Q 548.178099 691.742365 585.96022 695.306315' },
+    { a:'svn', b:'hun', sea:false, d:'M 510.395978 688.178415 Q 559.212932 649.771348 616.7003 626.246885' },
+    { a:'hrv', b:'hun', sea:false, d:'M 585.96022 695.306315 Q 601.33026 660.7766 616.7003 626.246885' },
+    { a:'hrv', b:'srb', sea:false, d:'M 585.96022 695.306315 Q 627.369647 744.601218 668.779075 793.896121' },
+    { a:'hrv', b:'bih', sea:false, d:'M 585.96022 695.306315 Q 584.645303 733.661519 593.913951 770.903202' },
+    { a:'hrv', b:'mne', sea:false, d:'M 585.96022 695.306315 Q 531.368491 755.658633 513.086248 834.958184' },
+    { a:'bih', b:'srb', sea:false, d:'M 593.913951 770.903202 Q 629.737009 787.64022 668.779075 793.896121' },
+    { a:'bih', b:'mne', sea:false, d:'M 593.913951 770.903202 Q 549.016251 797.272754 513.086248 834.958184' },
+    { a:'mne', b:'srb', sea:false, d:'M 513.086248 834.958184 Q 590.932662 814.427153 668.779075 793.896121' },
+    { a:'mne', b:'kos', sea:false, d:'M 513.086248 834.958184 Q 550.796174 847.0024 588.5061 859.046615' },
+    { a:'mne', b:'alb', sea:false, d:'M 513.086248 834.958184 Q 500.743093 900.09527 560.197088 929.428118' },
+    { a:'srb', b:'hun', sea:false, d:'M 668.779075 793.896121 Q 642.739688 710.071503 616.7003 626.246885' },
+    { a:'srb', b:'rou', sea:false, d:'M 668.779075 793.896121 Q 686.243118 735.906328 687.110719 675.350105' },
+    { a:'srb', b:'bgr', sea:false, d:'M 668.779075 793.896121 Q 705.726368 784.347737 742.673661 774.799353' },
+    { a:'srb', b:'mkd', sea:false, d:'M 668.779075 793.896121 Q 676.099735 832.52659 663.677423 869.830629' },
+    { a:'srb', b:'kos', sea:false, d:'M 668.779075 793.896121 Q 633.203122 832.090476 588.5061 859.046615' },
+    { a:'kos', b:'alb', sea:false, d:'M 588.5061 859.046615 Q 574.351594 894.237367 560.197088 929.428118' },
+    { a:'kos', b:'mkd', sea:false, d:'M 588.5061 859.046615 Q 624.68984 874.210894 663.677423 869.830629' },
+    { a:'alb', b:'mkd', sea:false, d:'M 560.197088 929.428118 Q 628.624552 928.603868 663.677423 869.830629' },
+    { a:'alb', b:'grc', sea:false, d:'M 560.197088 929.428118 Q 618.063234 970.953204 683.705301 943.313691' },
+    { a:'mkd', b:'bgr', sea:false, d:'M 663.677423 869.830629 Q 739.287427 852.333561 742.673661 774.799353' },
+    { a:'mkd', b:'grc', sea:false, d:'M 663.677423 869.830629 Q 673.691362 906.57216 683.705301 943.313691' },
+    { a:'grc', b:'bgr', sea:false, d:'M 683.705301 943.313691 Q 777.224929 881.464499 742.673661 774.799353' },
+    { a:'grc', b:'tur', sea:false, d:'M 683.705301 943.313691 Q 758.856998 924.01554 825.81977 884.821363' },
+    { a:'bgr', b:'tur', sea:false, d:'M 742.673661 774.799353 Q 784.246715 829.810358 825.81977 884.821363' },
+    { a:'bgr', b:'rou', sea:false, d:'M 742.673661 774.799353 Q 727.820592 717.851547 687.110719 675.350105' },
+    { a:'rou', b:'hun', sea:false, d:'M 687.110719 675.350105 Q 655.342735 645.869766 616.7003 626.246885' },
+    { a:'rou', b:'mda', sea:false, d:'M 687.110719 675.350105 Q 732.919488 668.49305 775.084004 649.319735' },
+    { a:'rou', b:'ukr', sea:false, d:'M 687.110719 675.350105 Q 742.281664 621.169241 797.45261 566.988377' },
+    { a:'hun', b:'svk', sea:false, d:'M 616.7003 626.246885 Q 637.846971 594.544917 658.993641 562.842948' },
+    { a:'hun', b:'ukr', sea:false, d:'M 616.7003 626.246885 Q 707.076455 596.617631 797.45261 566.988377' },
+    { a:'svk', b:'cze', sea:false, d:'M 658.993641 562.842948 Q 612.922545 529.022606 560.012995 550.631426' },
+    { a:'svk', b:'pol', sea:false, d:'M 658.993641 562.842948 Q 685.084138 531.534054 711.174635 500.22516' },
+    { a:'svk', b:'ukr', sea:false, d:'M 658.993641 562.842948 Q 728.513305 555.223535 797.45261 566.988377' },
+    { a:'cze', b:'pol', sea:false, d:'M 560.012995 550.631426 Q 621.480061 483.103034 711.174635 500.22516' },
+    { a:'pol', b:'ukr', sea:false, d:'M 711.174635 500.22516 Q 754.313622 533.606768 797.45261 566.988377' },
+    { a:'pol', b:'blr', sea:false, d:'M 711.174635 500.22516 Q 708.886203 451.101819 706.597772 401.978477' },
+    { a:'pol', b:'ltu', sea:false, d:'M 711.174635 500.22516 Q 649.669793 462.837359 630.916494 393.346302' },
+    { a:'pol', b:'rus', sea:false, d:'M 711.174635 500.22516 Q 753.549699 402.103974 795.924764 303.982787' },
+    { a:'ukr', b:'mda', sea:false, d:'M 797.45261 566.988377 Q 792.031502 609.719858 775.084004 649.319735' },
+    { a:'ukr', b:'blr', sea:false, d:'M 797.45261 566.988377 Q 752.025191 484.483427 706.597772 401.978477' },
+    { a:'ukr', b:'rus', sea:false, d:'M 797.45261 566.988377 Q 796.688687 435.485582 795.924764 303.982787' },
+    { a:'blr', b:'ltu', sea:false, d:'M 706.597772 401.978477 Q 667.030698 412.798646 630.916494 393.346302' },
+    { a:'blr', b:'lva', sea:false, d:'M 706.597772 401.978477 Q 686.645287 363.514209 666.692802 325.04994' },
+    { a:'blr', b:'rus', sea:false, d:'M 706.597772 401.978477 Q 751.261268 352.980632 795.924764 303.982787' },
+    { a:'ltu', b:'lva', sea:false, d:'M 630.916494 393.346302 Q 635.145375 352.042859 666.692802 325.04994' },
+    { a:'ltu', b:'rus', sea:false, d:'M 630.916494 393.346302 Q 713.420629 348.664545 795.924764 303.982787' },
+    { a:'lva', b:'est', sea:false, d:'M 666.692802 325.04994 Q 632.813806 302.049713 606.553601 270.629998' },
+    { a:'lva', b:'rus', sea:false, d:'M 666.692802 325.04994 Q 729.834082 305.470126 795.924764 303.982787' },
+    { a:'est', b:'rus', sea:false, d:'M 606.553601 270.629998 Q 703.573878 274.050411 795.924764 303.982787' },
+    { a:'nor', b:'swe', sea:false, d:'M 611.401609 73.494384 Q 536.82078 164.487018 462.239952 255.479652' },
+    { a:'nor', b:'fin', sea:false, d:'M 611.401609 73.494384 Q 635.750515 145.113276 660.099422 216.732168' },
+    { a:'nor', b:'rus', sea:false, d:'M 611.401609 73.494384 Q 768.199939 137.072102 795.924764 303.982787' },
+    { a:'swe', b:'fin', sea:false, d:'M 462.239952 255.479652 Q 553.42019 196.534016 660.099422 216.732168' },
+    { a:'fin', b:'rus', sea:false, d:'M 660.099422 216.732168 Q 739.354673 242.700183 795.924764 303.982787' },
+    { a:'gbr', b:'irl', sea:false, d:'M 185.967439 454.588472 Q 136.927412 456.1949 87.887385 457.801329' },
+    { a:'dnk', b:'swe', sea:true, d:'M 410.908816 378.620247 Q 436.574384 317.049949 462.239952 255.479652' },
+    { a:'fra', b:'gbr', sea:true, d:'M 291.810641 665.222116 Q 179.91162 589.54139 185.967439 454.588472' },
+    { a:'isl', b:'nor', sea:true, d:'M 67.674213 225.098576 Q 339.537911 149.29648 611.401609 73.494384' },
+    { a:'isl', b:'gbr', sea:true, d:'M 67.674213 225.098576 Q 126.820826 339.843524 185.967439 454.588472' },
+    { a:'ita', b:'mlt', sea:true, d:'M 415.931913 740.365565 Q 476.566187 856.176096 503.06569 984.185356' },
+    { a:'tur', b:'cyp', sea:true, d:'M 825.81977 884.821363 Q 836.90047 942.063489 847.98117 999.305616' }
+  ];
+  function isGraph(){ return SETTINGS.mapStyle === 'graph'; }
+  // definition of the map currently in play
+  function mapDef(){ return isGraph() ? GRAPH : EUROPE; }
+  // Weight of a territory for the army economy: grid cells on the realistic map, and the
+  // same scale derived from the country size on the graph map, so the two styles pay out
+  // at the same rate.
+  const GRAPH_WEIGHT = 61;
+
   function cellKey(x,y){ return x+'|'+y; }
 
   // Builds the playable territory map from the grid definition above.
-  function buildEurope(){
+  function buildRealistic(){
     const owner = {};                    // cell -> territory id
     const map = {};
     for(const id in EUROPE){
@@ -449,19 +631,40 @@
       }
     }
     map.__cellOwner = owner;
+    for(const id in EUROPE) map[id].w = map[id].cells.length;
     return map;
   }
+
+  // The graph map is a different board: 47 states and the 94 connections of the reference
+  // border graph, each drawn with its original curve.
+  function buildGraph(){
+    const map = {};
+    for(const id in GRAPH){
+      const d = GRAPH[id];
+      map[id] = {
+        id, name:d.name, size:d.size, cells:[], room:3,
+        gx:d.pos[0], gy:d.pos[1], cx:d.pos[0], cy:d.pos[1],
+        w: d.size * GRAPH_WEIGHT,
+        nbrs: d.nbrs.slice(),
+        owner:null, troops:0, isCastle:false, land:true, capitalSeed:false
+      };
+    }
+    for(const id in map) for(const nb of map[id].nbrs)
+      if(map[nb] && !map[nb].nbrs.includes(id)) map[nb].nbrs.push(id);
+    return map;
+  }
+  function buildEurope(){ return isGraph() ? buildGraph() : buildRealistic(); }
 
   function neighborsOf(h){
     return h.nbrs.map(id=>hexes[id]).filter(n=>n && n.land);
   }
-  function allTerritories(){ return Object.keys(EUROPE).map(id=>hexes[id]); }
+  function allTerritories(){ return Object.keys(mapDef()).map(id=>hexes[id]); }
   function ownHexes(pid){ return allTerritories().filter(h=>h.owner===pid); }
   function landHexes(){ return allTerritories().filter(h=>h.land); }
   function playerName(pid){ return PLAYERS.find(p=>p.id===pid).name; }
   function playerColor(pid){ return PLAYERS.find(p=>p.id===pid).color; }
 
-  function centerOf(h){ return { x:h.cx, y:h.cy }; }
+  function centerOf(h){ return isGraph() ? { x:h.gx, y:h.gy } : { x:h.cx, y:h.cy }; }
   function idOf(h){ return h.id; }
 
   // Spreads the starting capitals across the continent, then grows every empire outward
@@ -501,7 +704,7 @@
     // instantly the richest and the balanced growth below gives them almost nothing else:
     // a huge income, but a long and thin empire to defend.
     const HUGE = 520;
-    const giant = all.find(h=>h.cells.length > HUGE);
+    const giant = all.find(h=>h.w > HUGE);
     if(giant && giant.owner === null){
       let best = seeds[0], bd = Infinity;
       for(const sd of seeds){
@@ -514,7 +717,7 @@
     // controlling the fewest cells takes the next one. Whoever lands a huge country like
     // Russia therefore ends up with fewer other territories, so nobody starts with a
     // runaway income even though Russia itself stays a disproportionate prize.
-    const areaNow = pid => all.filter(h=>h.owner===pid).reduce((s,h)=>s+h.cells.length,0);
+    const areaNow = pid => all.filter(h=>h.owner===pid).reduce((s,h)=>s+h.w,0);
     const expandable = pid => {
       const q = queues[pid];
       while(q.length && !neighborsOf(q[0]).some(nb=>nb.owner === null)) q.shift();
@@ -529,7 +732,7 @@
       if(!able.length) break;
       able.sort((x,y)=>areaNow(x)-areaNow(y));
       const pid = able[0];
-      if(giant && pid === giant.owner && areaNow(pid) > giant.cells.length){ /* keep growing */ }
+      if(giant && pid === giant.owner && areaNow(pid) > giant.w){ /* keep growing */ }
       const cur = queues[pid][0];
       const free = neighborsOf(cur).filter(nb=>nb.owner === null);
       const nb = free[Math.floor(Math.random()*free.length)];
@@ -550,7 +753,7 @@
     const bigOwner = giant ? giant.owner : null;
     const balanced = shuffled.filter(p=>p !== bigOwner);
     if(balanced.length > 1){
-      const area = pid => all.filter(h=>h.owner===pid).reduce((s,h)=>s+h.cells.length,0);
+      const area = pid => all.filter(h=>h.owner===pid).reduce((s,h)=>s+h.w,0);
       const count = pid => all.filter(h=>h.owner===pid).length;
       for(let step=0; step<1200; step++){
         const sorted = balanced.slice().sort((x,y)=>area(x)-area(y));
@@ -566,16 +769,16 @@
           for(const h of mine){
             for(const nb of neighborsOf(h)){
               if(nb.owner === null || nb.owner === poor || nb.owner === bigOwner) continue;
-              if(nb.capitalSeed || nb.cells.length > HUGE) continue;
+              if(nb.capitalSeed || nb.w > HUGE) continue;
               if(area(nb.owner) <= area(poor)*1.28) continue;
               if(count(nb.owner) <= 1) continue;   // never strip a player bare
               donors.push(nb);
             }
           }
           if(!donors.length) continue;
-          donors.sort((x,y)=>x.cells.length-y.cells.length);
+          donors.sort((x,y)=>x.w-y.w);
           // prefer a transfer that closes the gap without simply reversing it
-          const clean = donors.filter(d => area(d.owner)-d.cells.length >= area(poor)+d.cells.length);
+          const clean = donors.filter(d => area(d.owner)-d.w >= area(poor)+d.w);
           (clean.length ? clean[0] : donors[0]).owner = poor;
           done = true;
         }
@@ -588,7 +791,7 @@
     for(const h of all){
       if(h.capitalSeed || h.owner === null) continue;
       if(owned[h.owner] <= 3) continue;
-      if(h.cells.length > 520) continue;     // never leave a giant country unowned
+      if(h.w > 520) continue;                // never leave a giant country unowned
       if(Math.random() < NEUTRAL_FRACTION){
         owned[h.owner]--;
         h.owner = null; h.troops = 0; h.isCastle = false;
@@ -639,7 +842,8 @@
     clearLog();
     const modeLabel = SETTINGS.mode === 'capital' ? 'Conquista la Capitale' : 'Tradizionale';
     const neutralCount = landHexes().filter(h=>h.owner===null).length;
-    log(`🗺️ Mappa Europa (${landHexes().length} stati, di cui ${neutralCount} neutri) per ${numPlayers} giocatori — Modalità: ${modeLabel}. Turno 1 — inizia ${playerName(order[turnPointer])}.`);
+    const styleLabel = SETTINGS.mapStyle==='graph' ? 'grafo dei confini' : 'mappa \u201crealistica\u201d';
+    log(`🗺️ Europa, ${styleLabel} (${landHexes().length} stati, di cui ${neutralCount} neutri) per ${numPlayers} giocatori — Modalità: ${modeLabel}. Turno 1 — inizia ${playerName(order[turnPointer])}.`);
     pushHistorySnapshot();
     startTurnFor(order[turnPointer]);
   }
@@ -802,7 +1006,7 @@
 
   // How many grid cells a player controls: this is the real measure of an empire on the
   // Europe map, where a single country can be worth more than a dozen small ones.
-  function areaOf(pid){ return ownHexes(pid).reduce((s,h)=>s+h.cells.length,0); }
+  function areaOf(pid){ return ownHexes(pid).reduce((s,h)=>s+h.w,0); }
 
   // Reinforcements are proportional to the controlled AREA, so holding a vast country
   // such as Russia is deliberately worth far more than holding many tiny states.
@@ -935,7 +1139,7 @@
         <div class="recapMeta">
           <div><span class="rmLabel">DURATA</span>${fmtTime(gameElapsedMs)}</div>
           <div><span class="rmLabel">TURNI</span>${turnsPlayed}</div>
-          <div><span class="rmLabel">MAPPA</span>Europa</div>
+          <div><span class="rmLabel">MAPPA</span>Europa ${SETTINGS.mapStyle==='graph'?'(grafo)':'(\u201crealistica\u201d)'}</div>
           <div><span class="rmLabel">IA</span>${({easy:'Facile',medium:'Media',hard:'Difficile',impossible:'Impossibile'})[SETTINGS.aiDifficulty]}</div>
         </div>
         <div class="recapScroll">
@@ -987,7 +1191,7 @@
     let target = threat>0 ? threat + buffer : 0;
     if(h.isCastle) target += difficulty==='impossible'?4: difficulty==='hard'?3:2;
     // wide provinces generate the reinforcements, so they deserve a stronger garrison
-    if(threat>0 && (difficulty==='hard'||difficulty==='impossible')) target += Math.min(4, h.cells.length/8);
+    if(threat>0 && (difficulty==='hard'||difficulty==='impossible')) target += Math.min(4, h.w/130);
     let score = target - h.troops;
     let offense = 0;
     for(const n of neighborsOf(h)){
@@ -1029,7 +1233,7 @@
       // finishing blows that shrink an enemy toward elimination
       if(n.owner!==null && ownHexes(n.owner).length<=2) score += 3;
       // a large country is worth far more than a small one: it pays reinforcements
-      score += n.cells.length / (difficulty==='impossible' ? 6 : 9);
+      score += n.w / (difficulty==='impossible' ? 100 : 150);
       // Taking ground we cannot hold is worth little: penalise conquests that would
       // leave the new territory exposed to a stronger neighbour counter-attack.
       let counter = 0;
@@ -1276,10 +1480,24 @@
   let boardBounds = null;
 
   function setupViewBox(){
-    const pad = 8;
-    const w = GRID_W*CELL + pad*2, h2 = GRID_H*CELL + pad*2;
-    svg.setAttribute('viewBox', `${-pad} ${-pad} ${w} ${h2}`);
-    boardBounds = { minX:-pad, minY:-pad, w, h2 };
+    let ox, oy, w, h2;
+    if(isGraph()){
+      const pad = GRAPH_R + 28;
+      let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+      for(const id in GRAPH){
+        const p = GRAPH[id].pos;
+        minX=Math.min(minX,p[0]); maxX=Math.max(maxX,p[0]);
+        minY=Math.min(minY,p[1]); maxY=Math.max(maxY,p[1]);
+      }
+      ox = minX-pad; oy = minY-pad;
+      w = (maxX-minX)+pad*2; h2 = (maxY-minY)+pad*2;
+    } else {
+      const pad = 8;
+      ox = -pad; oy = -pad;
+      w = GRID_W*CELL + pad*2; h2 = GRID_H*CELL + pad*2;
+    }
+    svg.setAttribute('viewBox', `${ox} ${oy} ${w} ${h2}`);
+    boardBounds = { minX:ox, minY:oy, w, h2 };
     const availW = (typeof window !== 'undefined' ? window.innerWidth : 1200) - 360;
     const availH = (typeof window !== 'undefined' ? window.innerHeight : 900) - 60;
     const maxW = Math.max(320, Math.min(availW, 860));
@@ -1407,6 +1625,7 @@
   function render(){
     if(!viewBoxSet) setupViewBox();
     svg.innerHTML = '';
+    if(isGraph()){ renderGraph(); return; }
     drawSeaBackground();
 
     const attackable = new Set(), occupiable = new Set(), moveable = new Set();
@@ -1476,6 +1695,82 @@
     drawAttackArrow();
   }
 
+  // ---- graph style ----
+  // The reference drawing is reproduced as-is: each connection keeps its original curve,
+  // which is what guarantees that no edge runs across a state it does not connect.
+  function renderGraph(){
+    const attackable = new Set(), occupiable = new Set(), moveable = new Set();
+    if(selected){
+      const sel = hexes[selected];
+      if(phase === 'attack'){
+        neighborsOf(sel).forEach(n=>{
+          if(n.owner !== HUMAN){ if(n.troops > 0) attackable.add(idOf(n)); else occupiable.add(idOf(n)); }
+        });
+      } else if(phase === 'fortify'){
+        neighborsOf(sel).forEach(n=>{ if(n.owner === HUMAN) moveable.add(idOf(n)); });
+      }
+    }
+    // connections first, so the states sit on top of them
+    for(const e of GRAPH_EDGES){
+      if(!hexes[e.a] || !hexes[e.b]) continue;
+      const p = document.createElementNS(SVGNS,'path');
+      p.setAttribute('d', e.d);
+      p.setAttribute('class', e.sea ? 'graphEdgeSea' : 'graphEdge');
+      svg.appendChild(p);
+    }
+    for(const id in GRAPH){
+      const h = hexes[id];
+      let cls = h.owner===null ? 'neutralHex' : 'hex';
+      if(h.owner===HUMAN && !inputLocked && !pendingChoice && (phase==='attack'||phase==='fortify') && h.troops>=1) cls += ' ownReady';
+      if(selected===id) cls += ' hexSelected';
+      else if(attackable.has(id)) cls += ' hexAttack';
+      else if(occupiable.has(id)) cls += ' hexMove';
+      else if(moveable.has(id)) cls += ' hexMove';
+      const clickable = !inputLocked && !pendingChoice &&
+        ((phase==='reinforce' && h.owner===HUMAN) || phase==='attack' || phase==='fortify');
+      if(clickable) cls += ' selectable';
+
+      const g = document.createElementNS(SVGNS,'g');
+      g.setAttribute('class', cls);
+      const c = document.createElementNS(SVGNS,'circle');
+      c.setAttribute('cx', h.gx); c.setAttribute('cy', h.gy); c.setAttribute('r', GRAPH_R);
+      c.setAttribute('fill', h.owner!==null ? playerColor(h.owner) : NEUTRAL_COLOR);
+      c.setAttribute('class','graphNode');
+      const t = document.createElementNS(SVGNS,'title');
+      t.textContent = `${h.name} — ${h.owner===null ? 'neutro' : playerName(h.owner)} · ${h.troops} truppe · peso ${h.w}`;
+      c.appendChild(t);
+      c.addEventListener('click', ()=>onHexClick(id));
+      g.appendChild(c);
+      svg.appendChild(g);
+
+      const tg = document.createElementNS(SVGNS,'g');
+      tg.style.pointerEvents = 'none';
+      const num = document.createElementNS(SVGNS,'text');
+      num.setAttribute('x', h.gx); num.setAttribute('y', h.gy);
+      num.setAttribute('class', h.owner===null ? 'graphTroopsNeutral' : 'graphTroops');
+      num.textContent = h.troops;
+      tg.appendChild(num);
+      const nm = document.createElementNS(SVGNS,'text');
+      nm.setAttribute('x', h.gx); nm.setAttribute('y', h.gy + GRAPH_R + 12);
+      nm.setAttribute('class','graphName');
+      nm.textContent = h.name;
+      tg.appendChild(nm);
+      if(h.isCastle) renderGraphCastle(tg, h.gx, h.gy);
+      svg.appendChild(tg);
+    }
+    drawAttackArrow();
+  }
+  function renderGraphCastle(group, cx, cy){
+    const top = cy - GRAPH_R - 13, w = 20, hgt = 11, x0 = cx - w/2;
+    const path = document.createElementNS(SVGNS,'path');
+    path.setAttribute('d',
+      `M ${x0} ${top+hgt} L ${x0} ${top+4} L ${x0+3} ${top+4} L ${x0+3} ${top} L ${x0+6} ${top} L ${x0+6} ${top+4} ` +
+      `L ${x0+w/2-1.5} ${top+4} L ${x0+w/2-1.5} ${top} L ${x0+w/2+1.5} ${top} L ${x0+w/2+1.5} ${top+4} ` +
+      `L ${x0+w-6} ${top+4} L ${x0+w-6} ${top} L ${x0+w-3} ${top} L ${x0+w-3} ${top+4} L ${x0+w} ${top+4} L ${x0+w} ${top+hgt} Z`);
+    path.setAttribute('class','castleShape');
+    group.appendChild(path);
+  }
+
   // Sea crossings: dashed line plus a dot at each end, so a link between two territories
   // separated by water is unmistakable.
   function drawBridges(){
@@ -1505,7 +1800,8 @@
     const dist = Math.hypot(dx,dy);
     if(dist < 0.001) return;
     const ux = dx/dist, uy = dy/dist;
-    const startOffset = Math.min(16, dist*0.25), endOffset = Math.min(20, dist*0.30);
+    const startOffset = isGraph() ? GRAPH_R+2 : Math.min(16, dist*0.25);
+    const endOffset   = isGraph() ? GRAPH_R+7 : Math.min(20, dist*0.30);
     const x1 = from.x+ux*startOffset, y1 = from.y+uy*startOffset;
     const x2 = to.x-ux*endOffset, y2 = to.y-uy*endOffset;
     const glow = document.createElementNS(SVGNS,'line');
@@ -1796,6 +2092,10 @@
         <div class="choiceRow" id="modeRow"></div>
       </div>
       <div class="settingGroup">
+        <div class="settingLabel">STILE DELLA MAPPA</div>
+        <div class="choiceRow" id="styleRow"></div>
+      </div>
+      <div class="settingGroup">
         <div class="settingLabel">NUMERO DI AVVERSARI</div>
         <select class="dropdownSelect" id="opponentSelect"></select>
       </div>
@@ -1868,6 +2168,11 @@
       {value:'classic', label:'Tradizionale'},
       {value:'capital', label:'Conquista la Capitale'}
     ], SETTINGS.mode, v=>{ SETTINGS.mode = v; });
+
+    choiceGroup('styleRow', [
+      {value:'realistic', label:'\u201cRealistica\u201d'},
+      {value:'graph',     label:'Grafo'}
+    ], SETTINGS.mapStyle, v=>{ SETTINGS.mapStyle = v; });
 
     populateOpponentSelect();
 
