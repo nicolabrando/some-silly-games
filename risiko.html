@@ -1,0 +1,1554 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Risiko</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    min-height:100%; width:100%;
+    background: radial-gradient(circle at 50% 10%, #101a2e 0%, #060a14 55%, #03050a 100%);
+    display:flex; align-items:flex-start; justify-content:center;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color:#dfe6f5;
+    overflow-y:auto; overflow-x:hidden;
+  }
+  #app { display:flex; gap:16px; align-items:flex-start; position:relative; padding:16px; }
+  #boardWrap {
+    background: linear-gradient(160deg, #0f2038 0%, #0a1628 60%, #070f1c 100%);
+    border-radius: 12px;
+    box-shadow: 0 0 0 2px rgba(90,140,255,0.28), 0 0 40px rgba(40,90,220,0.25);
+    padding: 10px;
+  }
+  svg { display:block; }
+
+  .contBox { rx:18; pointer-events:none; }
+  .contLabel { font-size:15px; font-weight:800; letter-spacing:2px; pointer-events:none; text-transform:uppercase; }
+  .edge { stroke:#9db2d8; stroke-width:5.5; opacity:0.7; stroke-linecap:round; pointer-events:none; }
+  .node { stroke:#0a1120; stroke-width:2.5; cursor:pointer; }
+  .nodeReady { filter: brightness(1.16) saturate(1.15); }
+  .nodeSelected { stroke:#ffd85e; stroke-width:5; }
+  .nodeAttack { stroke:#ff3131; stroke-width:4.5; stroke-dasharray:6,4; }
+  .nodeMove { stroke:#5ec8ff; stroke-width:4.5; stroke-dasharray:6,4; }
+  .troopTxt { font-size:17px; font-weight:800; text-anchor:middle; dominant-baseline:central; pointer-events:none; }
+  .nameTxt { font-size:9.5px; font-weight:600; fill:#c8d5ef; text-anchor:middle; pointer-events:none; }
+  .attackArrowGlow { animation: pulseArrow 0.55s ease-in-out infinite alternate; pointer-events:none; }
+  @keyframes pulseArrow { from { opacity:0.25; } to { opacity:0.6; } }
+
+  #sidebar { width:310px; display:flex; flex-direction:column; gap:10px; flex-shrink:0; }
+  .panel {
+    background: rgba(15,22,40,0.9);
+    border: 1px solid rgba(90,140,255,0.25);
+    border-radius: 10px;
+    padding: 11px 13px;
+  }
+  .panel h2 { font-size:12px; letter-spacing:2px; color:#7fa8ff; margin-bottom:7px; font-weight:600; }
+  .playerRow { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:13px; }
+  .swatch { width:13px; height:13px; border-radius:3px; flex-shrink:0; box-shadow:0 0 6px currentColor; }
+  .playerRow .name { flex:1; }
+  .playerRow .stats { color:#9fb3d9; font-size:10.5px; }
+  .playerRow.dead { opacity:0.35; text-decoration:line-through; }
+  #turnInfo { font-size:14px; font-weight:600; margin-bottom:3px; }
+  #phaseInfo { font-size:11px; color:#9fb3d9; line-height:1.45; }
+  #actions { display:flex; flex-direction:column; gap:7px; }
+  button.gameBtn {
+    padding:9px; font-size:13px; font-weight:600; color:#fff; border:none; border-radius:8px;
+    background: linear-gradient(90deg,#2f6fff,#5ec8ff); cursor:pointer; letter-spacing:0.5px;
+    transition: transform .1s ease, opacity .1s ease;
+  }
+  button.gameBtn.secondary { background: linear-gradient(90deg,#3a4a6b,#556690); }
+  button.gameBtn.judge { background: linear-gradient(90deg,#ffb347,#ffd85e); color:#3a2a05; }
+  button.gameBtn.cards { background: linear-gradient(90deg,#3ddc84,#8ef0b6); color:#06331c; }
+  button.gameBtn:hover:not(:disabled) { transform: scale(1.03); }
+  button.gameBtn:disabled { opacity:0.35; cursor:not-allowed; }
+
+  #objBox { font-size:12px; line-height:1.5; color:#ffd85e; font-weight:600; }
+  #objBox .hint { display:block; color:#9fb3d9; font-weight:400; font-size:10.5px; margin-top:4px; }
+  #cardsBox { display:flex; gap:5px; flex-wrap:wrap; min-height:34px; align-items:center; }
+  .card {
+    width:30px; height:40px; border-radius:5px; display:flex; align-items:center; justify-content:center;
+    font-size:16px; background:#f5f0e6; color:#1a1a1a; border:2px solid #333; font-weight:700;
+  }
+  .card.jolly { background: linear-gradient(140deg,#ffd85e,#ff9f43); }
+  .cardsInfo { font-size:10.5px; color:#9fb3d9; margin-top:6px; line-height:1.4; }
+  #contBonusBox { font-size:11px; color:#c3cfe8; line-height:1.6; }
+  #contBonusBox .own { color:#3ddc84; font-weight:700; }
+
+  #log {
+    height:110px; overflow-y:auto; font-size:11px; color:#b9c6e6; line-height:1.5;
+    display:flex; flex-direction:column-reverse;
+  }
+  #log div { padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+  .chartTitle { font-size:10px; color:#7fa8ff; letter-spacing:1px; margin:6px 0 2px; }
+  .chartTitle:first-child { margin-top:0; }
+  svg.chart { width:100%; height:60px; display:block; background: rgba(255,255,255,0.02); border-radius:6px; }
+
+  #choicePanel { display:none; border-color: rgba(255,216,94,0.5); }
+  #choiceLabel { font-size:11.5px; color:#c3cfe8; margin-bottom:9px; line-height:1.4; }
+  #choiceRange { width:100%; accent-color:#ffd85e; cursor:pointer; }
+  .choiceValueRow { display:flex; align-items:center; gap:8px; margin-top:2px; }
+  #choiceValue { min-width:26px; text-align:center; font-weight:800; font-size:15px; color:#ffd85e; }
+
+  #diceDisplayPanel { display:none; }
+  .diceAttackerLine { font-size:11px; color:#c3cfe8; margin-bottom:5px; }
+  .diceRow { display:flex; align-items:center; gap:5px; margin-bottom:4px; flex-wrap:wrap; }
+  .diceRowLabel { font-size:10px; color:#9fb3d9; width:54px; flex-shrink:0; }
+  .diceLossLine { font-size:10.5px; color:#9fb3d9; margin-top:2px; }
+
+  #overlay {
+    position:fixed; top:0; left:0; width:100%; height:100%;
+    display:flex; align-items:center; justify-content:flex-start; flex-direction:column;
+    background: rgba(3,5,10,0.93); backdrop-filter: blur(2px); z-index:10;
+    padding: 20px 12px; overflow-y:auto;
+  }
+  #overlay.hidden { display:none; }
+  #overlayInner { display:flex; flex-direction:column; align-items:center; max-width:900px; margin:auto; width:100%; }
+  #overlay h1 {
+    font-size:32px; margin-bottom:8px; letter-spacing:5px; text-align:center;
+    background: linear-gradient(90deg,#5ec8ff,#7fa8ff,#ffd85e);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  #overlay p { font-size:12.5px; color:#c3cfe8; max-width:560px; text-align:center; line-height:1.55; margin:3px 0; }
+  #overlay .legend { display:flex; gap:14px; margin:8px 0; flex-wrap:wrap; justify-content:center; }
+  #overlay .legend div { display:flex; align-items:center; gap:6px; font-size:11px; }
+  #overlay button.mainBtn {
+    margin-top:16px; padding:12px 38px; font-size:15px; font-weight:700; color:#fff; border:none;
+    border-radius:30px; cursor:pointer; background: linear-gradient(90deg,#2f6fff,#5ec8ff);
+    box-shadow:0 0 20px rgba(90,140,255,0.5); letter-spacing:1px;
+  }
+  #overlay button.mainBtn:hover { transform:scale(1.05); }
+  .kbd { display:inline-block; padding:2px 8px; border:1px solid #5ec8ff; border-radius:5px; font-size:11px; color:#bfe0ff; }
+  .settingGroup { width:100%; margin-top:13px; text-align:center; }
+  .settingLabel { font-size:10.5px; color:#7fa8ff; letter-spacing:1.5px; margin-bottom:7px; text-align:center; font-weight:600; }
+  .choiceRow { display:flex; gap:7px; flex-wrap:wrap; justify-content:center; }
+  .choiceBtn {
+    padding:8px 15px; font-size:12.5px; font-weight:600; color:#bfe0ff; cursor:pointer;
+    background: rgba(90,140,255,0.08); border:2px solid rgba(90,140,255,0.35); border-radius:18px;
+    transition: all .12s ease;
+  }
+  .choiceBtn:hover { border-color:#5ec8ff; }
+  .choiceBtn.active { background: linear-gradient(90deg,#2f6fff,#5ec8ff); color:#fff; border-color:transparent; }
+  .colorSwatchBtn {
+    width:32px; height:32px; border-radius:50%; cursor:pointer; border:3px solid transparent;
+    transition: all .12s ease; box-shadow:0 0 8px rgba(0,0,0,0.4);
+  }
+  .colorSwatchBtn.active { border-color:#fff; transform:scale(1.15); }
+  select.dropdownSelect {
+    padding:8px 14px; font-size:13px; font-weight:600; color:#dfe6f5; background:#101a2e;
+    border:2px solid rgba(90,140,255,0.35); border-radius:18px; cursor:pointer; text-align:center;
+  }
+
+  /* ---- end-of-game recap ---- */
+  .recapWrap { width:100%; max-width:900px; margin:14px 0 4px; }
+  .recapMeta { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:6px 0 12px; flex:0 0 auto; }
+  .recapMeta div {
+    background: rgba(90,140,255,0.10); border:1px solid rgba(90,140,255,0.28);
+    border-radius:10px; padding:6px 12px; font-size:13px; font-weight:600; color:#dfe6f5;
+  }
+  .rmLabel { display:block; font-size:9px; letter-spacing:1.5px; color:#7fa8ff; font-weight:600; margin-bottom:2px; }
+  .recapScroll { overflow-x:auto; overflow-y:auto; max-height:44vh; border-radius:10px; }
+  .recapTable { width:100%; border-collapse:collapse; font-size:12px; background: rgba(15,22,40,0.85); }
+  .recapTable th {
+    font-size:9.5px; letter-spacing:1px; color:#7fa8ff; font-weight:600; text-transform:uppercase;
+    padding:8px 7px; border-bottom:1px solid rgba(90,140,255,0.3); white-space:nowrap;
+    position:sticky; top:0; z-index:2; background:#131c33;
+  }
+  .recapTable td { padding:8px 7px; border-bottom:1px solid rgba(255,255,255,0.05); text-align:center; color:#dfe6f5; }
+  .recapTable td:first-child { text-align:left; white-space:nowrap; font-weight:600; }
+  .recapTable tbody tr:first-child td { background: rgba(255,216,94,0.07); }
+  .recapTable .dim { color:#8fa0c0; font-size:10px; }
+  .recapTable .outRow { opacity:0.45; }
+  .lkGood { color:#3ddc84; font-weight:700; }
+  .lkBad { color:#ff6b6b; font-weight:700; }
+  .lkMid { color:#c3cfe8; }
+  .recapNote { font-size:11px !important; color:#9fb3d9 !important; margin-top:9px !important; line-height:1.5; }
+  .objList { font-size:11px; color:#9fb3d9; margin-top:8px; line-height:1.6; text-align:left; max-width:640px; }
+  .objList b { color:#dfe6f5; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="boardWrap"><svg id="board"></svg></div>
+  <div id="sidebar">
+    <div class="panel">
+      <h2>STATO PARTITA</h2>
+      <div id="turnInfo">—</div>
+      <div id="phaseInfo">—</div>
+    </div>
+    <div class="panel" id="objPanel">
+      <h2>IL TUO OBIETTIVO</h2>
+      <div id="objBox">—</div>
+    </div>
+    <div class="panel" id="choicePanel">
+      <h2 id="choiceTitle">SCEGLI QUANTE ARMATE</h2>
+      <div id="choiceLabel"></div>
+      <div class="choiceValueRow">
+        <input type="range" id="choiceRange" min="1" max="1" value="1">
+        <span id="choiceValue">1</span>
+      </div>
+      <button class="gameBtn" id="choiceConfirmBtn" style="margin-top:10px;">CONFERMA</button>
+    </div>
+    <div class="panel" id="diceDisplayPanel">
+      <h2>ULTIMO ATTACCO</h2>
+      <div id="diceContent"></div>
+    </div>
+    <div class="panel" id="cardsPanel">
+      <h2>LE TUE CARTE</h2>
+      <div id="cardsBox"></div>
+      <button class="gameBtn cards" id="tradeBtn" style="margin-top:9px;" disabled>SCAMBIA TRIS</button>
+      <div class="cardsInfo" id="cardsInfo"></div>
+    </div>
+    <div class="panel">
+      <h2>SCHIERAMENTI</h2>
+      <div id="players"></div>
+    </div>
+    <div class="panel">
+      <h2>CONTINENTI</h2>
+      <div id="contBonusBox"></div>
+    </div>
+    <div class="panel">
+      <div id="actions">
+        <button class="gameBtn secondary" id="endAttackBtn" disabled>PASSA A SPOSTAMENTO →</button>
+        <button class="gameBtn" id="endTurnBtn" disabled>FINE TURNO</button>
+        <button class="gameBtn judge" id="judgeBtn" disabled>⚖️ JUDGE NOW — fine ai punti</button>
+        <button class="gameBtn secondary" id="musicBtn">♪ Musica: ON</button>
+        <button class="gameBtn secondary" id="trackBtn">🎵 Brano: Marcia</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>ANDAMENTO PARTITA</h2>
+      <div class="chartTitle">TERRITORI</div>
+      <svg class="chart" id="chartTerr" viewBox="0 0 280 60" preserveAspectRatio="none"></svg>
+      <div class="chartTitle">ARMATE</div>
+      <svg class="chart" id="chartTroops" viewBox="0 0 280 60" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="panel" style="flex:1;">
+      <h2>REGISTRO</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
+
+<div id="overlay">
+  <div id="overlayInner">
+  <h1>RISIKO</h1>
+  <p>La mappa classica: 42 territori in 6 continenti. Regole del gioco originale — a inizio partita i territori
+  vengono distribuiti a caso e <b>schieri tu</b> le tue armate una a una. Poi, a ogni turno: rinforzi
+  (un'armata ogni 3 territori, minimo 3, più i bonus dei continenti interamente controllati e i tris di carte),
+  attacchi con i dadi (fino a 3 in attacco, 2 in difesa, i pari li vince il difensore) e infine
+  <b>un solo spostamento</b> tra due tuoi territori confinanti. Ogni territorio deve sempre mantenere
+  almeno un'armata. Conquistando almeno un territorio in un turno peschi una carta — ma le carte
+  si possono anche disattivare qui sotto.</p>
+
+  <div class="settingGroup">
+    <div class="settingLabel">CONDIZIONE DI VITTORIA</div>
+    <div class="choiceRow" id="modeRow"></div>
+  </div>
+  <div class="settingGroup">
+    <div class="settingLabel">CARTE E TRIS</div>
+    <div class="choiceRow" id="cardsRow"></div>
+  </div>
+  <div class="settingGroup">
+    <div class="settingLabel">NUMERO DI AVVERSARI</div>
+    <select class="dropdownSelect" id="opponentSelect"></select>
+  </div>
+  <div class="settingGroup">
+    <div class="settingLabel">IL TUO COLORE</div>
+    <div class="choiceRow" id="colorRow"></div>
+  </div>
+  <div class="settingGroup">
+    <div class="settingLabel">DIFFICOLTÀ IA</div>
+    <div class="choiceRow" id="diffRow"></div>
+  </div>
+  <div class="settingGroup">
+    <div class="settingLabel">MUSICA</div>
+    <div class="choiceRow" id="musicRow"></div>
+  </div>
+
+  <div class="legend" id="legendBox"></div>
+  <p><span class="kbd">Click</span> seleziona, attacca, sposta &nbsp; <span class="kbd">Click</span> di nuovo per deselezionare</p>
+  <button class="mainBtn" id="startBtn">INIZIA PARTITA</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ================= CONFIG =================
+  const HUMAN = 0;
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const NAMES = ['Tu','Nemico 1','Nemico 2','Nemico 3','Nemico 4','Nemico 5','Nemico 6','Nemico 7'];
+  const COLOR_PALETTE = [
+    '#2563ff', '#ff1f1f', '#12d449', '#a020f0',
+    '#ff8a00', '#00c8ff', '#ff2ecb', '#ffd400'
+  ];
+
+  // Continents, with the army bonus of the original game.
+  const CONTINENTS = {
+    na: { name:'Nord America', bonus:5, color:'#f2d24b' },
+    sa: { name:'Sud America',  bonus:2, color:'#ef5b5b' },
+    eu: { name:'Europa',       bonus:5, color:'#4a86ff' },
+    af: { name:'Africa',       bonus:3, color:'#f0913c' },
+    as: { name:'Asia',         bonus:7, color:'#3fbf5f' },
+    au: { name:'Australia',    bonus:2, color:'#d45bff' }
+  };
+
+  // The classic 42-territory graph. `n` are the land/sea connections of the original board.
+  const MAP = {
+    alaska:{ name:'Alaska',        cont:'na', x:60, y:0,  n:['nwterr','alberta','kamchatka'] },
+    nwterr:{ name:'Terr. NordOvest',cont:'na', x:160, y:120, n:['alaska','alberta','ontario','groenlandia'] },
+    groenlandia:{ name:'Groenlandia',cont:'na', x:310, y:120, n:['nwterr','ontario','quebec','islanda'] },
+    alberta:{ name:'Alberta',      cont:'na', x:60, y:230, n:['alaska','nwterr','ontario','usaovest'] },
+    ontario:{ name:'Ontario',      cont:'na', x:190, y:230, n:['nwterr','alberta','groenlandia','quebec','usaovest','usaest'] },
+    quebec:{ name:'Québec',        cont:'na', x:320, y:230, n:['groenlandia','ontario','usaest'] },
+    usaovest:{ name:'USA Ovest',   cont:'na', x:95, y:345, n:['alberta','ontario','usaest','americacentrale'] },
+    usaest:{ name:'USA Est',       cont:'na', x:230, y:345, n:['ontario','quebec','usaovest','americacentrale'] },
+    americacentrale:{ name:'Am. Centrale', cont:'na', x:150, y:450, n:['usaovest','usaest','venezuela'] },
+
+    venezuela:{ name:'Venezuela',  cont:'sa', x:110, y:545, n:['americacentrale','brasile','peru'] },
+    brasile:{ name:'Brasile',      cont:'sa', x:250, y:560, n:['venezuela','peru','argentina','nordafrica'] },
+    peru:{ name:'Perù',            cont:'sa', x:105, y:660, n:['venezuela','brasile','argentina'] },
+    argentina:{ name:'Argentina',  cont:'sa', x:200, y:730, n:['peru','brasile'] },
+
+    islanda:{ name:'Islanda',      cont:'eu', x:470, y:150, n:['groenlandia','granbretagna','scandinavia'] },
+    scandinavia:{ name:'Scandinavia',cont:'eu', x:600, y:140, n:['islanda','granbretagna','europanord','ucraina'] },
+    granbretagna:{ name:'G. Bretagna',cont:'eu', x:455, y:255, n:['islanda','scandinavia','europanord','europaovest'] },
+    europanord:{ name:'Europa Nord',cont:'eu', x:590, y:250, n:['granbretagna','scandinavia','ucraina','europasud','europaovest'] },
+    ucraina:{ name:'Ucraina',      cont:'eu', x:700, y:235, n:['scandinavia','europanord','europasud','ural','afghanistan','mediooriente'] },
+    europaovest:{ name:'Europa Ovest',cont:'eu', x:495, y:360, n:['granbretagna','europanord','europasud','nordafrica'] },
+    europasud:{ name:'Europa Sud', cont:'eu', x:635, y:355, n:['europaovest','europanord','ucraina','mediooriente','egitto','nordafrica'] },
+
+    nordafrica:{ name:'Nord Africa',cont:'af', x:515, y:480, n:['brasile','europaovest','europasud','egitto','africaorientale','congo'] },
+    egitto:{ name:'Egitto',        cont:'af', x:650, y:470, n:['nordafrica','europasud','mediooriente','africaorientale'] },
+    congo:{ name:'Congo',          cont:'af', x:495, y:610, n:['nordafrica','africaorientale','sudafrica'] },
+    africaorientale:{ name:'Africa Or.',cont:'af', x:635, y:600, n:['egitto','nordafrica','congo','sudafrica','madagascar'] },
+    sudafrica:{ name:'Sud Africa', cont:'af', x:525, y:730, n:['congo','africaorientale','madagascar'] },
+    madagascar:{ name:'Madagascar',cont:'af', x:655, y:720, n:['sudafrica','africaorientale'] },
+
+    jakutsk:{ name:'Jakutsk',      cont:'as', x:1020, y:115,  n:['siberia','irkutsk','kamchatka'] },
+    ural:{ name:'Ural',            cont:'as', x:830, y:190, n:['ucraina','siberia','cina','afghanistan'] },
+    siberia:{ name:'Siberia',      cont:'as', x:905, y:225, n:['ural','jakutsk','irkutsk','mongolia','cina'] },
+    irkutsk:{ name:'Irkutsk',      cont:'as', x:1020, y:225, n:['siberia','jakutsk','kamchatka','mongolia'] },
+    kamchatka:{ name:'Kamchatka',  cont:'as', x:1160, y:0, n:['jakutsk','irkutsk','mongolia','giappone','alaska'] },
+    afghanistan:{ name:'Afghanistan',cont:'as', x:840, y:305, n:['ucraina','ural','cina','india','mediooriente'] },
+    cina:{ name:'Cina',            cont:'as', x:925, y:340, n:['ural','siberia','mongolia','afghanistan','india','siam'] },
+    mongolia:{ name:'Mongolia',    cont:'as', x:1020, y:335, n:['siberia','irkutsk','kamchatka','giappone','cina'] },
+    giappone:{ name:'Giappone',    cont:'as', x:1140, y:335, n:['kamchatka','mongolia'] },
+    mediooriente:{ name:'Medio Oriente',cont:'as', x:815, y:440, n:['ucraina','europasud','egitto','afghanistan','india'] },
+    india:{ name:'India',          cont:'as', x:930, y:450, n:['mediooriente','afghanistan','cina','siam'] },
+    siam:{ name:'Siam',            cont:'as', x:1030, y:450, n:['india','cina','indonesia'] },
+
+    indonesia:{ name:'Indonesia',  cont:'au', x:1030, y:570, n:['siam','nuovaguinea','australiaocc'] },
+    nuovaguinea:{ name:'Nuova Guinea',cont:'au', x:1150, y:570, n:['indonesia','australiaocc','australiaor'] },
+    australiaocc:{ name:'Australia Occ.',cont:'au', x:1030, y:690, n:['indonesia','nuovaguinea','australiaor'] },
+    australiaor:{ name:'Australia Or.',cont:'au', x:1150, y:690, n:['nuovaguinea','australiaocc'] }
+  };
+  const NODE_R = 27;
+  // Initial armies of the original rules, extended to the extra player counts we allow.
+  const START_ARMIES = { 2:40, 3:35, 4:30, 5:25, 6:20, 7:18, 8:16 };
+  // Escalating value of a traded set, exactly as in the original game.
+  const SET_VALUES = [4,6,8,10,12,15];
+  const SYMBOLS = { F:'🁢', C:'🐴', A:'🎯' };
+  const SYM_NAME = { F:'Fanteria', C:'Cavalleria', A:'Artiglieria', J:'Jolly' };
+
+  let SETTINGS = {
+    numOpponents: 3,
+    playerColor: COLOR_PALETTE[0],
+    aiDifficulty: 'medium',
+    mode: 'objective',      // 'objective' (Risiko) | 'conquest' (Risk)
+    useCards: true,         // the deck of territory cards and its sets
+    musicTrack: 1
+  };
+
+  // ================= STATE =================
+  let MAX_TURNS = 100;
+  let terr, PLAYERS, order, turnPointer, turnNumber, phase, selected, reinforceLeft, alive, gameOver, inputLocked;
+  let history = [];
+  let attackArrow = null;
+  let pendingChoice = null;
+  let STATS = {};
+  let gameStartTime = 0, gameElapsedMs = 0;
+  let deck = [], hands = {}, setsTraded = 0;
+  let conqueredThisTurn = false, fortifyUsed = false;
+  let objectives = {};
+  let setupQueue = [], setupLeft = {};
+  let reinforceBonus = 0;      // armies gained from a compulsory set traded at turn start
+
+  const DICE_EV = {
+    1: { 1: { att:0.5833, def:0.4167 }, 2: { att:0.7454, def:0.2546 } },
+    2: { 1: { att:0.4213, def:0.5787 }, 2: { att:1.2207, def:0.7793 } },
+    3: { 1: { att:0.3403, def:0.6597 }, 2: { att:0.9209, def:1.0791 } }
+  };
+
+  function resetStats(){
+    STATS = {};
+    for(const p of PLAYERS){
+      STATS[p.id] = { placed:0, killed:0, lost:0, attacks:0, attacksWon:0, conquered:0, sets:0, expKilled:0, expLost:0 };
+    }
+  }
+  function luckOf(pid){
+    const s = STATS[pid]; if(!s) return 0;
+    return (s.killed - s.expKilled) + (s.expLost - s.lost);
+  }
+  function luckLabel(v){
+    if(v >= 6) return 'molto fortunato';
+    if(v >= 2) return 'fortunato';
+    if(v > -2) return 'nella media';
+    if(v > -6) return 'sfortunato';
+    return 'molto sfortunato';
+  }
+  function fmtTime(ms){
+    const s = Math.max(0, Math.round(ms/1000));
+    const m = Math.floor(s/60);
+    return m > 0 ? `${m}m ${String(s%60).padStart(2,'0')}s` : `${s}s`;
+  }
+
+  // ================= MAP HELPERS =================
+  function allTerr(){ return Object.keys(MAP).map(id=>terr[id]); }
+  function neighborsOf(t){ return MAP[t.id].n.map(id=>terr[id]); }
+  function ownTerr(pid){ return allTerr().filter(t=>t.owner===pid); }
+  function playerName(pid){ const p = PLAYERS.find(x=>x.id===pid); return p ? p.name : '—'; }
+  function playerColor(pid){ const p = PLAYERS.find(x=>x.id===pid); return p ? p.color : '#888'; }
+  function tName(t){ return MAP[t.id].name; }
+  function contOf(t){ return MAP[t.id].cont; }
+  function contTerrIds(c){ return Object.keys(MAP).filter(id=>MAP[id].cont===c); }
+  function ownsContinent(pid, c){ return contTerrIds(c).every(id=>terr[id].owner===pid); }
+  function continentBonus(pid){
+    let b = 0;
+    for(const c in CONTINENTS) if(ownsContinent(pid,c)) b += CONTINENTS[c].bonus;
+    return b;
+  }
+
+  function buildMap(){
+    const m = {};
+    for(const id in MAP) m[id] = { id, owner:null, troops:0 };
+    return m;
+  }
+
+  // ================= CARDS =================
+  function buildDeck(){
+    const ids = Object.keys(MAP);
+    const d = ids.map((id,i)=>({ terr:id, sym:['F','C','A'][i%3] }));
+    d.push({ terr:null, sym:'J' }, { terr:null, sym:'J' });
+    for(let i=d.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [d[i],d[j]]=[d[j],d[i]]; }
+    return d;
+  }
+  function drawCard(pid){
+    if(!deck.length) deck = buildDeck();
+    const c = deck.pop();
+    hands[pid].push(c);
+    return c;
+  }
+  // Finds a valid set: three of a kind, one of each, or anything completed by a joker.
+  function findSet(hand){
+    const idx = [0,1,2].map(()=>null);
+    const bySym = { F:[], C:[], A:[], J:[] };
+    hand.forEach((c,i)=>bySym[c.sym].push(i));
+    const J = bySym.J;
+    for(const s of ['F','C','A']){
+      if(bySym[s].length >= 3) return [bySym[s][0], bySym[s][1], bySym[s][2]];
+    }
+    if(bySym.F.length && bySym.C.length && bySym.A.length) return [bySym.F[0], bySym.C[0], bySym.A[0]];
+    // jokers complete anything
+    if(J.length >= 1){
+      for(const s of ['F','C','A']) if(bySym[s].length >= 2) return [bySym[s][0], bySym[s][1], J[0]];
+      const pair = ['F','C','A'].filter(s=>bySym[s].length >= 1);
+      if(pair.length >= 2) return [bySym[pair[0]][0], bySym[pair[1]][0], J[0]];
+    }
+    if(J.length >= 2){
+      const any = ['F','C','A'].find(s=>bySym[s].length >= 1);
+      if(any !== undefined) return [bySym[any][0], J[0], J[1]];
+    }
+    if(J.length >= 3) return [J[0],J[1],J[2]];
+    return null;
+  }
+  function setValue(){
+    return setsTraded < SET_VALUES.length ? SET_VALUES[setsTraded]
+                                          : SET_VALUES[SET_VALUES.length-1] + 5*(setsTraded - SET_VALUES.length + 1);
+  }
+  function tradeSet(pid){
+    const set = findSet(hands[pid]);
+    if(!set) return 0;
+    const value = setValue();
+    setsTraded++;
+    set.sort((a,b)=>b-a).forEach(i=>hands[pid].splice(i,1));
+    if(STATS[pid]) STATS[pid].sets++;
+    return value;
+  }
+
+  // ================= OBJECTIVES =================
+  const OBJECTIVES = [
+    { id:'t24', text:'Conquistare 24 territori', check:pid=>ownTerr(pid).length >= 24 },
+    { id:'t18', text:'Conquistare 18 territori con almeno 2 armate ciascuno',
+      check:pid=>ownTerr(pid).filter(t=>t.troops>=2).length >= 18 },
+    { id:'as_af', text:'Conquistare Asia e Africa', check:pid=>ownsContinent(pid,'as') && ownsContinent(pid,'af') },
+    { id:'as_sa', text:'Conquistare Asia e Sud America', check:pid=>ownsContinent(pid,'as') && ownsContinent(pid,'sa') },
+    { id:'na_af', text:'Conquistare Nord America e Africa', check:pid=>ownsContinent(pid,'na') && ownsContinent(pid,'af') },
+    { id:'na_au', text:'Conquistare Nord America e Australia', check:pid=>ownsContinent(pid,'na') && ownsContinent(pid,'au') },
+    { id:'eu_sa_x', text:'Conquistare Europa, Sud America e un terzo continente a scelta',
+      check:pid=>ownsContinent(pid,'eu') && ownsContinent(pid,'sa') &&
+                 ['na','af','as','au'].some(c=>ownsContinent(pid,c)) },
+    { id:'eu_au_x', text:'Conquistare Europa, Australia e un terzo continente a scelta',
+      check:pid=>ownsContinent(pid,'eu') && ownsContinent(pid,'au') &&
+                 ['na','af','as','sa'].some(c=>ownsContinent(pid,c)) }
+  ];
+  function assignObjectives(){
+    objectives = {};
+    const pool = OBJECTIVES.slice().sort(()=>Math.random()-0.5);
+    PLAYERS.forEach((p,i)=>{
+      if(i < pool.length){ objectives[p.id] = { ...pool[i] }; return; }
+      // more players than base missions: fall back to "destroy the X armies"
+      const victim = PLAYERS[(i+1) % PLAYERS.length];
+      objectives[p.id] = {
+        id:'kill'+victim.id,
+        text:`Distruggere le armate di ${victim.name} (se ci riesce un altro giocatore: conquistare 24 territori)`,
+        check:pid=>(!alive.has(victim.id) && lastKiller[victim.id]===pid) || ownTerr(pid).length >= 24
+      };
+    });
+  }
+  let lastKiller = {};
+
+  // ================= SETUP =================
+  function setupGame(){
+    const numPlayers = SETTINGS.numOpponents + 1;
+    const remainingColors = COLOR_PALETTE.filter(c=>c!==SETTINGS.playerColor);
+    remainingColors.sort(()=>Math.random()-0.5);
+    PLAYERS = [];
+    for(let i=0;i<numPlayers;i++){
+      PLAYERS.push({ id:i, name:NAMES[i], color: i===HUMAN ? SETTINGS.playerColor : remainingColors[i-1], human:i===HUMAN });
+    }
+    terr = buildMap();
+    const ids = PLAYERS.map(p=>p.id);
+
+    // Territories are dealt out at random, one army each, exactly as dealing the cards.
+    const shuffledTerr = Object.keys(MAP).sort(()=>Math.random()-0.5);
+    shuffledTerr.forEach((id,i)=>{ terr[id].owner = ids[i % ids.length]; terr[id].troops = 1; });
+
+    deck = SETTINGS.useCards ? buildDeck() : [];
+    hands = {}; ids.forEach(p=>hands[p]=[]);
+    setsTraded = 0;
+    lastKiller = {};
+
+    order = ids.slice();
+    turnPointer = 0; turnNumber = 1;
+    alive = new Set(ids);
+    gameOver = false; selected = null; inputLocked = false;
+    pendingChoice = null; hideChoicePanel();
+    conqueredThisTurn = false; fortifyUsed = false;
+    history = []; attackArrow = null;
+    resetStats();
+    assignObjectives();
+    gameStartTime = Date.now(); gameElapsedMs = 0;
+    viewBoxSet = false;
+    clearLog();
+
+    // Remaining starting armies are placed by hand, one at a time, in turn order.
+    const total = START_ARMIES[numPlayers] || 20;
+    setupLeft = {};
+    ids.forEach(p=>{ setupLeft[p] = Math.max(0, total - ownTerr(p).length); });
+    setupQueue = [];
+    let anyLeft = true, guard = 0;
+    while(anyLeft && guard < 1000){
+      guard++; anyLeft = false;
+      for(const p of ids) if(setupLeft[p] > 0){ setupQueue.push(p); setupLeft[p]--; anyLeft = true; }
+    }
+    const modeLabel = SETTINGS.mode === 'objective' ? 'Obiettivi segreti' : 'Conquista totale';
+    log(`🗺️ Partita a ${numPlayers} giocatori — ${modeLabel}. Territori distribuiti: ${total} armate a testa da schierare.`);
+    if(SETTINGS.mode === 'objective') log(`🎯 Il tuo obiettivo segreto: ${objectives[HUMAN].text}`);
+    updateUI(); render();
+    runSetupPhase();
+  }
+
+  // Alternating placement of the starting armies: the human clicks, the AI places by itself.
+  async function runSetupPhase(){
+    while(setupQueue.length && !gameOver){
+      const pid = setupQueue[0];
+      if(pid === HUMAN){
+        phase = 'setup';
+        inputLocked = false;
+        updateUI(); render();
+        return;                       // wait for the click; onTerrClick resumes the loop
+      }
+      // clicks stay locked while the opponents place, otherwise the player could sneak
+      // in extra armies during the AI's turn
+      inputLocked = true;
+      setupQueue.shift();
+      const t = aiPickSetupTerritory(pid);
+      if(t){ t.troops++; if(STATS[pid]) STATS[pid].placed++; }
+      if(setupQueue.length % 6 === 0){ render(); updateUI(); await sleep(24); }
+    }
+    render(); updateUI();
+    beginRealGame();
+  }
+  function beginRealGame(){
+    log('⚔️ Schieramento completato. Comincia la partita!');
+    pushHistorySnapshot();
+    startTurnFor(order[turnPointer]);
+  }
+  function aiPickSetupTerritory(pid){
+    const mine = ownTerr(pid);
+    if(!mine.length) return null;
+    let best = null, bestScore = -Infinity;
+    for(const t of mine){
+      const enemies = neighborsOf(t).filter(n=>n.owner!==pid);
+      let s = enemies.length*1.5 - t.troops*0.6;
+      const c = contOf(t);
+      const owned = contTerrIds(c).filter(id=>terr[id].owner===pid).length;
+      s += (owned / contTerrIds(c).length) * CONTINENTS[c].bonus * 0.5;   // push toward a full continent
+      s += Math.random()*0.8;
+      if(s > bestScore){ bestScore = s; best = t; }
+    }
+    return best;
+  }
+
+  // ================= REINFORCEMENTS =================
+  function calcReinforcement(pid){
+    return Math.max(3, Math.floor(ownTerr(pid).length/3)) + continentBonus(pid);
+  }
+
+  // ================= COMBAT =================
+  function rollDice(n){ const a=[]; for(let i=0;i<n;i++) a.push(1+Math.floor(Math.random()*6)); return a; }
+
+  function aiConquestAmt(src, dst, min, max, difficulty){
+    if(difficulty === 'easy') return min;
+    if(difficulty !== 'hard' && difficulty !== 'impossible') return Math.round((min+max)/2);
+    let rear = 0;
+    for(const m of neighborsOf(src)) if(m!==dst && m.owner!==src.owner) rear = Math.max(rear, m.troops);
+    if(rear <= 0) return max;
+    const keep = Math.min(max-min, Math.ceil(rear*0.6));
+    return Math.max(min, max - keep);
+  }
+
+  function battle(atk, def, isHuman){
+    attackArrow = { from:{x:MAP[atk.id].x, y:MAP[atk.id].y}, to:{x:MAP[def.id].x, y:MAP[def.id].y} };
+    const atkOwner = atk.owner, defOwner = def.owner;
+    const atkDice = Math.min(3, atk.troops-1);
+    const defDice = Math.min(2, def.troops);
+    const atkRolls = rollDice(atkDice).sort((a,b)=>b-a);
+    const defRolls = rollDice(defDice).sort((a,b)=>b-a);
+    const pairs = Math.min(atkDice, defDice);
+    let atkLoss=0, defLoss=0;
+    for(let i=0;i<pairs;i++){ if(atkRolls[i] > defRolls[i]) defLoss++; else atkLoss++; }
+
+    const sA = STATS[atkOwner];
+    if(sA){
+      sA.attacks++; sA.killed += defLoss; sA.lost += atkLoss;
+      const ev = (DICE_EV[atkDice]||{})[defDice];
+      if(ev){ sA.expKilled += ev.def; sA.expLost += ev.att; }
+    }
+    if(STATS[defOwner]){
+      const sD = STATS[defOwner];
+      sD.killed += atkLoss; sD.lost += defLoss;
+      const ev = (DICE_EV[atkDice]||{})[defDice];
+      if(ev){ sD.expKilled += ev.att; sD.expLost += ev.def; }
+    }
+
+    renderDiceDisplay({ atkRolls, defRolls, atkLoss, defLoss, atkName:playerName(atkOwner), defName:playerName(defOwner) });
+    atk.troops -= atkLoss;
+    const defAfter = def.troops - defLoss;
+    const msg = `⚔️ ${playerName(atkOwner)} ${tName(atk)} → ${playerName(defOwner)} ${tName(def)} — [${atkRolls.join(',')}] vs [${defRolls.join(',')}] · att -${atkLoss}, dif -${defLoss}`;
+
+    if(defAfter > 0){ def.troops = defAfter; log(msg); return false; }
+
+    // Territory taken. Original rule: move at least as many armies as the dice you rolled,
+    // and always leave at least one army behind in the attacking territory.
+    const minAmt = Math.min(atkDice, atk.troops-1);
+    const maxAmt = atk.troops-1;
+    const finalize = (amt)=>{
+      const moved = Math.max(minAmt, Math.min(maxAmt, amt));
+      atk.troops -= moved;
+      def.owner = atkOwner;
+      def.troops = moved;
+      conqueredThisTurn = conqueredThisTurn || (atkOwner === order[turnPointer]);
+      if(STATS[atkOwner]){ STATS[atkOwner].attacksWon++; STATS[atkOwner].conquered++; }
+      log(`🏳️ ${playerName(atkOwner)} conquista ${tName(def)} con ${moved} armate!`);
+      afterConquest(atkOwner, defOwner);
+    };
+    log(msg + ' — 🏳️ TERRITORIO CONQUISTATO!');
+
+    if(isHuman){
+      pendingChoice = {
+        type:'conquest', min:minAmt, max:maxAmt, default:maxAmt,
+        label:`Quante armate spostare in ${tName(def)}? Almeno ${minAmt} (i dadi lanciati), al massimo ${maxAmt}.`,
+        onConfirm:(amt)=>{ finalize(amt); if(checkWin()){ render(); updateUI(); return; } render(); updateUI(); }
+      };
+      showChoicePanel();
+      return 'pending';
+    }
+    finalize(aiConquestAmt(atk, def, minAmt, maxAmt, SETTINGS.aiDifficulty));
+    return true;
+  }
+
+  // Eliminating a player hands their cards to the conqueror, as in the original rules.
+  function afterConquest(winnerId, loserId){
+    if(loserId === null || loserId === undefined) return;
+    if(ownTerr(loserId).length > 0) return;
+    if(alive.has(loserId)){
+      alive.delete(loserId);
+      lastKiller[loserId] = winnerId;
+      const taken = hands[loserId].length;
+      hands[winnerId] = hands[winnerId].concat(hands[loserId]);
+      hands[loserId] = [];
+      log(`💀 ${playerName(loserId)} è stato eliminato da ${playerName(winnerId)}${taken?` — ne eredita ${taken} carte`:''}!`);
+    }
+  }
+
+  function moveTroops(src, dst, amt){
+    if(amt < 1) return false;
+    dst.troops += amt; src.troops -= amt;
+    log(`➡️ ${playerName(src.owner)} sposta ${amt} armate da ${tName(src)} a ${tName(dst)}`);
+    return true;
+  }
+
+  // ================= WIN CONDITIONS =================
+  function scoreOf(pid){
+    const list = ownTerr(pid);
+    const t = list.length, a = list.reduce((s,x)=>s+x.troops,0);
+    return { terr:t, armies:a, score:t*10 + a };
+  }
+  function checkWin(){
+    if(gameOver) return true;
+    for(const p of PLAYERS){
+      if(alive.has(p.id) && ownTerr(p.id).length === 0){
+        alive.delete(p.id);
+        log(`💀 ${playerName(p.id)} non ha più territori.`);
+      }
+    }
+    if(SETTINGS.mode === 'objective'){
+      for(const p of PLAYERS){
+        if(!alive.has(p.id)) continue;
+        const obj = objectives[p.id];
+        if(obj && obj.check(p.id)){
+          endGame(p.id === HUMAN, p.id === HUMAN
+            ? `Hai completato il tuo obiettivo: ${obj.text}.`
+            : `${p.name} ha completato il proprio obiettivo: ${obj.text}.`);
+          return true;
+        }
+      }
+    }
+    if(!alive.has(HUMAN)){ endGame(false, 'Sei stato eliminato: hai perso tutti i territori.'); return true; }
+    if(alive.size === 1){
+      const w = [...alive][0];
+      endGame(w === HUMAN, w === HUMAN ? 'Hai conquistato il mondo intero!' : `${playerName(w)} ha conquistato il mondo.`);
+      return true;
+    }
+    return false;
+  }
+  function judgeGame(reason){
+    if(gameOver) return;
+    const rank = PLAYERS.filter(p=>alive.has(p.id)).map(p=>({p, ...scoreOf(p.id)}));
+    rank.sort((a,b)=>b.score-a.score);
+    const w = rank.length ? rank[0].p.id : HUMAN;
+    const lines = rank.map((r,i)=>`${i+1}° ${r.p.name}: ${r.terr}×10 + ${r.armies} = ${r.score} pt`).join('  ·  ');
+    endGame(w===HUMAN, `${reason} Metrica = territori×10 + armate. ${lines}.`);
+  }
+  function endGame(won, text){
+    gameOver = true; inputLocked = true; phase = 'over';
+    pendingChoice = null; hideChoicePanel();
+    gameElapsedMs = Date.now() - gameStartTime;
+    updateUI(); render(); pushHistorySnapshot(); drawCharts();
+    showOverlay(won ? 'VITTORIA!' : 'SCONFITTA', text, buildRecapHTML());
+  }
+
+  // ================= TURN FLOW =================
+  function startTurnFor(pid){
+    if(gameOver) return;
+    selected = null; attackArrow = null;
+    conqueredThisTurn = false; fortifyUsed = false;
+    if(pid === HUMAN){
+      // mandatory trade with five or more cards, exactly as in the original game
+      while(SETTINGS.useCards && hands[HUMAN].length >= 5 && findSet(hands[HUMAN])){
+        const v = tradeSet(HUMAN);
+        log(`🃏 Hai 5 carte: tris obbligatorio scambiato per ${v} armate.`);
+        reinforceBonus += v;
+      }
+      phase = 'reinforce';
+      reinforceLeft = calcReinforcement(HUMAN) + reinforceBonus;
+      reinforceBonus = 0;
+      inputLocked = false;
+      const cb = continentBonus(HUMAN);
+      log(`➕ Turno ${turnNumber} — ${reinforceLeft} armate da schierare (${ownTerr(HUMAN).length} territori${cb?`, +${cb} dai continenti`:''}).`);
+      updateUI(); render();
+    } else {
+      phase = 'ai'; inputLocked = true;
+      updateUI(); render();
+      runAiTurn(pid).then(()=>{
+        if(checkWin()) return;
+        pushHistorySnapshot(); drawCharts(); advanceTurn();
+      });
+    }
+  }
+
+  function endHumanTurn(){
+    if(SETTINGS.useCards && conqueredThisTurn){
+      const c = drawCard(HUMAN);
+      log(`🃏 Hai conquistato: peschi una carta ${SYM_NAME[c.sym]}.`);
+    }
+    selected = null; inputLocked = true;
+    log(`✅ ${playerName(HUMAN)} termina il turno.`);
+    updateUI(); pushHistorySnapshot(); drawCharts(); advanceTurn();
+  }
+  function advanceTurn(){
+    turnPointer = (turnPointer+1) % order.length;
+    let guard = 0;
+    while(!alive.has(order[turnPointer]) && guard < 20){ turnPointer = (turnPointer+1) % order.length; guard++; }
+    if(order[turnPointer] === HUMAN){
+      turnNumber++;
+      if(turnNumber > MAX_TURNS){ judgeGame(`Raggiunto il limite di ${MAX_TURNS} turni.`); return; }
+    }
+    startTurnFor(order[turnPointer]);
+  }
+
+  // ================= AI =================
+  function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+  function incomingThreat(t, pid){
+    let max = 0;
+    for(const n of neighborsOf(t)){
+      if(n.owner === pid) continue;
+      let force = n.troops;
+      for(const m of neighborsOf(n)) if(m!==t && m.owner===n.owner) force += m.troops;
+      if(force > max) max = force;
+    }
+    return max;
+  }
+  function reinforceScore(t, pid, difficulty){
+    const threat = incomingThreat(t, pid);
+    const buffer = difficulty==='impossible'?2: difficulty==='hard'?1:0;
+    let target = threat>0 ? threat + buffer : 0;
+    let score = target - t.troops;
+    const c = contOf(t);
+    const owned = contTerrIds(c).filter(id=>terr[id].owner===pid).length;
+    const size = contTerrIds(c).length;
+    // holding a whole continent pays a bonus every turn, so its border is worth defending
+    if(owned === size && threat > 0) score += CONTINENTS[c].bonus * 0.45;
+    if(owned === size-1) score += 1.2;
+    let offense = 0;
+    for(const n of neighborsOf(t)){
+      if(n.owner!==pid) offense = Math.max(offense, Math.max(0, 3 - n.troops));
+    }
+    const offW = difficulty==='impossible'?0.6: difficulty==='hard'?0.4:0.25;
+    if(score <= 0) score += offense*offW;
+    if(!neighborsOf(t).some(n=>n.owner!==pid)) score -= 3;
+    return score + Math.random()*0.2;
+  }
+  function aiAttackEligible(a, d, difficulty){
+    if(a.troops < 2) return false;
+    if(difficulty === 'easy') return a.troops > d.troops*1.5 && Math.random() > 0.25;
+    if(difficulty === 'medium') return a.troops > d.troops;
+    const ratio = difficulty === 'impossible' ? 1.45 : 1.3;
+    return a.troops >= d.troops*ratio + 1 || (d.troops <= 1 && a.troops >= d.troops+2);
+  }
+  function aiAttackScore(a, d, difficulty){
+    let score = a.troops - d.troops;
+    const c = contOf(d);
+    const mine = contTerrIds(c).filter(id=>terr[id].owner===a.owner).length;
+    const size = contTerrIds(c).length;
+    if(mine === size-1) score += CONTINENTS[c].bonus * 1.2;      // completes a continent
+    else score += CONTINENTS[c].bonus * 0.12;
+    if(difficulty==='impossible' || difficulty==='hard'){
+      let backup = 0;
+      for(const m of neighborsOf(d)) if(m!==a && m.owner===d.owner) backup += m.troops;
+      score -= backup * (difficulty==='impossible'?0.2:0.12);
+      if(d.owner!==null && ownTerr(d.owner).length<=2) score += 3;
+      let counter = 0;
+      for(const m of neighborsOf(d)) if(m!==a && m.owner!==a.owner) counter = Math.max(counter, m.troops);
+      const hold = a.troops - 1;
+      if(counter > hold) score -= (counter-hold) * (difficulty==='impossible'?0.9:0.6);
+    }
+    return score + Math.random()*0.4;
+  }
+
+  async function runAiTurn(pid){
+    const difficulty = SETTINGS.aiDifficulty;
+    let bonus = 0;
+    while(SETTINGS.useCards && hands[pid].length >= 5 && findSet(hands[pid])){
+      const v = tradeSet(pid); bonus += v;
+      log(`🃏 ${playerName(pid)} scambia un tris obbligatorio per ${v} armate.`);
+    }
+    if(SETTINGS.useCards && difficulty !== 'easy' && hands[pid].length >= 3 && findSet(hands[pid])){
+      const v = tradeSet(pid); bonus += v;
+      log(`🃏 ${playerName(pid)} scambia un tris per ${v} armate.`);
+    }
+    let pts = calcReinforcement(pid) + bonus;
+    if(STATS[pid]) STATS[pid].placed += pts;
+    for(let i=0;i<pts;i++){
+      const mine = ownTerr(pid);
+      if(!mine.length) break;
+      if(difficulty === 'easy'){
+        let border = mine.filter(t=>neighborsOf(t).some(n=>n.owner!==pid));
+        if(!border.length) border = mine;
+        if(Math.random() < 0.35){ mine[Math.floor(Math.random()*mine.length)].troops++; continue; }
+        border.sort((a,b)=>(incomingThreat(b,pid)-b.troops)-(incomingThreat(a,pid)-a.troops));
+        border[0].troops++;
+        continue;
+      }
+      let best=null, bs=-Infinity;
+      for(const t of mine){ const s = reinforceScore(t,pid,difficulty); if(s>bs){bs=s;best=t;} }
+      if(best) best.troops++;
+    }
+    const cb = continentBonus(pid);
+    log(`➕ ${playerName(pid)} schiera ${pts} armate${cb?` (+${cb} dai continenti)`:''}.`);
+    render(); updateUI();
+    await sleep(360);
+    if(gameOver) return;
+
+    const cap = difficulty==='easy'?8: difficulty==='impossible'?60: difficulty==='hard'?40:20;
+    let acts = 0;
+    while(acts < cap && !gameOver){
+      let best=null, bs=-Infinity;
+      for(const t of ownTerr(pid)){
+        for(const n of neighborsOf(t)){
+          if(n.owner === pid) continue;
+          if(!aiAttackEligible(t,n,difficulty)) continue;
+          const s = aiAttackScore(t,n,difficulty);
+          if(s>bs){ bs=s; best={from:t,to:n}; }
+        }
+      }
+      if(!best) break;
+      const before = best.to.owner;
+      battle(best.from, best.to, false);
+      render(); updateUI();
+      acts++;
+      if(checkWin()) return;
+      await sleep(300);
+    }
+
+    // exactly one fortification move per turn, as in the original rules
+    attackArrow = null;
+    if(difficulty !== 'easy'){
+      let bestMove=null, bestGain=-Infinity;
+      for(const src of ownTerr(pid)){
+        if(src.troops < 2) continue;
+        for(const dst of neighborsOf(src)){
+          if(dst.owner !== pid) continue;
+          const gain = reinforceScore(dst,pid,difficulty) - reinforceScore(src,pid,difficulty);
+          if(gain > bestGain){ bestGain = gain; bestMove = {src,dst}; }
+        }
+      }
+      if(bestMove && bestGain > 0.5){
+        moveTroops(bestMove.src, bestMove.dst, bestMove.src.troops-1);
+        render(); updateUI();
+        await sleep(240);
+      }
+    }
+    if(SETTINGS.useCards && conqueredThisTurnFor(pid)){
+      const c = drawCard(pid);
+      log(`🃏 ${playerName(pid)} pesca una carta.`);
+    }
+  }
+  // the AI turn tracks its own conquests through the shared flag
+  function conqueredThisTurnFor(pid){ return conqueredThisTurn && order[turnPointer]===pid; }
+
+  // ================= INPUT =================
+  function onTerrClick(id){
+    if(inputLocked || gameOver || pendingChoice) return;
+    const t = terr[id];
+    if(!t) return;
+
+    if(phase === 'setup'){
+      if(setupQueue[0] !== HUMAN) return;      // not our turn to place
+      if(t.owner === HUMAN){
+        t.troops++;
+        if(STATS[HUMAN]) STATS[HUMAN].placed++;
+        setupQueue.shift();
+        render(); updateUI();
+        runSetupPhase();
+      }
+      return;
+    }
+    if(phase === 'reinforce'){
+      if(t.owner === HUMAN && reinforceLeft > 0){
+        t.troops++;
+        if(STATS[HUMAN]) STATS[HUMAN].placed++;
+        reinforceLeft--;
+        if(reinforceLeft === 0){ phase='attack'; log('⚔️ Fase Attacco: scegli un tuo territorio con almeno 2 armate.'); }
+        render(); updateUI();
+      }
+      return;
+    }
+    if(phase === 'attack'){
+      if(selected && selected !== id){
+        const sel = terr[selected];
+        if(neighborsOf(sel).includes(t) && t.owner !== HUMAN && sel.troops >= 2){
+          const r = battle(sel, t, true);
+          if(r === 'pending'){ render(); updateUI(); return; }
+          if(checkWin()){ render(); updateUI(); return; }
+          if(sel.troops < 2) selected = null;
+          render(); updateUI();
+          return;
+        }
+      }
+      if(selected === id){ selected = null; render(); return; }
+      if(t.owner === HUMAN && t.troops >= 2){ selected = id; render(); return; }
+      return;
+    }
+    if(phase === 'fortify'){
+      if(fortifyUsed) return;
+      if(selected && selected !== id){
+        const sel = terr[selected];
+        if(neighborsOf(sel).includes(t) && t.owner === HUMAN && sel.troops >= 2){
+          const maxAmt = sel.troops - 1;
+          pendingChoice = {
+            type:'move', min:1, max:maxAmt, default:maxAmt,
+            label:`Quante armate spostare da ${tName(sel)} a ${tName(t)}? Da 1 a ${maxAmt} (una deve restare).`,
+            onConfirm:(amt)=>{
+              moveTroops(sel, t, Math.max(1, Math.min(maxAmt, amt)));
+              fortifyUsed = true; selected = null;
+              log('➡️ Spostamento effettuato: ne è concesso uno solo per turno.');
+              render(); updateUI();
+            }
+          };
+          showChoicePanel(); render(); updateUI();
+          return;
+        }
+      }
+      if(selected === id){ selected = null; render(); return; }
+      if(t.owner === HUMAN && t.troops >= 2){ selected = id; render(); return; }
+      return;
+    }
+  }
+
+  document.getElementById('endAttackBtn').addEventListener('click', ()=>{
+    if(inputLocked || gameOver || pendingChoice || phase !== 'attack') return;
+    selected = null; attackArrow = null; phase = 'fortify';
+    log('➡️ Fase Spostamento: un solo spostamento tra due tuoi territori confinanti.');
+    updateUI(); render();
+  });
+  document.getElementById('endTurnBtn').addEventListener('click', ()=>{
+    if(inputLocked || gameOver || pendingChoice) return;
+    if(phase !== 'attack' && phase !== 'fortify') return;
+    endHumanTurn();
+  });
+  document.getElementById('judgeBtn').addEventListener('click', ()=>{
+    if(gameOver || inputLocked || pendingChoice) return;
+    log('⚖️ Judge Now — partita chiusa ai punti.');
+    judgeGame('Partita interrotta e valutata ai punti.');
+  });
+  document.getElementById('tradeBtn').addEventListener('click', ()=>{
+    if(gameOver || inputLocked || pendingChoice) return;
+    if(phase !== 'reinforce') return;
+    if(!findSet(hands[HUMAN])) return;
+    const v = tradeSet(HUMAN);
+    reinforceLeft += v;
+    log(`🃏 Tris scambiato per ${v} armate.`);
+    render(); updateUI();
+  });
+
+  // ================= CHOICE PANEL =================
+  function showChoicePanel(){
+    const p = document.getElementById('choicePanel');
+    p.style.display = 'block';
+    document.getElementById('choiceTitle').textContent = pendingChoice.type==='conquest' ? 'ARMATE PER LA CONQUISTA' : 'ARMATE DA SPOSTARE';
+    document.getElementById('choiceLabel').textContent = pendingChoice.label;
+    const r = document.getElementById('choiceRange');
+    r.min = pendingChoice.min; r.max = pendingChoice.max; r.value = pendingChoice.default;
+    document.getElementById('choiceValue').textContent = pendingChoice.default;
+    r.oninput = ()=>{ document.getElementById('choiceValue').textContent = r.value; };
+  }
+  function hideChoicePanel(){ document.getElementById('choicePanel').style.display = 'none'; }
+  document.getElementById('choiceConfirmBtn').addEventListener('click', ()=>{
+    if(!pendingChoice) return;
+    const amt = parseInt(document.getElementById('choiceRange').value,10);
+    const cb = pendingChoice.onConfirm;
+    pendingChoice = null; hideChoicePanel();
+    cb(amt);
+  });
+
+  // ================= RENDER =================
+  const svg = document.getElementById('board');
+  let viewBoxSet = false;
+
+  function setupViewBox(){
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    for(const id in MAP){
+      minX=Math.min(minX,MAP[id].x); maxX=Math.max(maxX,MAP[id].x);
+      minY=Math.min(minY,MAP[id].y); maxY=Math.max(maxY,MAP[id].y);
+    }
+    const pad = 52;
+    const w = (maxX-minX)+pad*2, h = (maxY-minY)+pad*2;
+    svg.setAttribute('viewBox', `${minX-pad} ${minY-pad} ${w} ${h}`);
+    const availW = (typeof window!=='undefined'? window.innerWidth:1400) - 380;
+    const availH = (typeof window!=='undefined'? window.innerHeight:900) - 60;
+    const scale = Math.min(Math.max(360, Math.min(availW,1120))/w, Math.max(340, Math.min(availH,780))/h, 1.15);
+    svg.setAttribute('width', (w*scale).toFixed(0));
+    svg.setAttribute('height', (h*scale).toFixed(0));
+    viewBoxSet = true;
+  }
+  if(typeof window !== 'undefined'){
+    window.addEventListener('resize', ()=>{ if(!terr) return; viewBoxSet=false; render(); });
+  }
+
+  function render(){
+    if(!terr) return;
+    if(!viewBoxSet) setupViewBox();
+    svg.innerHTML = '';
+
+    // continent backdrops
+    for(const c in CONTINENTS){
+      const ids = contTerrIds(c);
+      let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+      ids.forEach(id=>{ minX=Math.min(minX,MAP[id].x); maxX=Math.max(maxX,MAP[id].x);
+                        minY=Math.min(minY,MAP[id].y); maxY=Math.max(maxY,MAP[id].y); });
+      const pad = NODE_R + 20;
+      const r = document.createElementNS(SVGNS,'rect');
+      r.setAttribute('x', minX-pad); r.setAttribute('y', minY-pad);
+      r.setAttribute('width', (maxX-minX)+pad*2); r.setAttribute('height', (maxY-minY)+pad*2);
+      r.setAttribute('rx', 20);
+      r.setAttribute('fill', CONTINENTS[c].color);
+      r.setAttribute('fill-opacity', ownsContinent(HUMAN, c) ? '0.20' : '0.11');
+      r.setAttribute('stroke', CONTINENTS[c].color);
+      r.setAttribute('stroke-opacity','0.4');
+      r.setAttribute('class','contBox');
+      svg.appendChild(r);
+      // the label sits inside the box: with the continents packed together, putting it
+      // above would make it collide with the box overhead
+      const lb = document.createElementNS(SVGNS,'text');
+      lb.setAttribute('x', minX-pad+11); lb.setAttribute('y', minY-pad+18);
+      lb.setAttribute('class','contLabel');
+      lb.setAttribute('fill', CONTINENTS[c].color);
+      lb.setAttribute('fill-opacity','0.75');
+      lb.textContent = `${CONTINENTS[c].name} +${CONTINENTS[c].bonus}`;
+      svg.appendChild(lb);
+    }
+
+    // edges (drawn once per pair)
+    const done = new Set();
+    for(const id in MAP){
+      for(const nb of MAP[id].n){
+        const k = id < nb ? id+'|'+nb : nb+'|'+id;
+        if(done.has(k)) continue;
+        done.add(k);
+        const l = document.createElementNS(SVGNS,'line');
+        l.setAttribute('x1',MAP[id].x); l.setAttribute('y1',MAP[id].y);
+        l.setAttribute('x2',MAP[nb].x); l.setAttribute('y2',MAP[nb].y);
+        l.setAttribute('class','edge');
+        svg.appendChild(l);
+      }
+    }
+
+    const attackable = new Set(), moveable = new Set();
+    if(selected){
+      const sel = terr[selected];
+      if(phase === 'attack') neighborsOf(sel).forEach(n=>{ if(n.owner!==HUMAN) attackable.add(n.id); });
+      else if(phase === 'fortify') neighborsOf(sel).forEach(n=>{ if(n.owner===HUMAN) moveable.add(n.id); });
+    }
+
+    for(const id in MAP){
+      const t = terr[id], m = MAP[id];
+      const g = document.createElementNS(SVGNS,'g');
+      const canAct = !inputLocked && !pendingChoice &&
+        ((phase==='setup' && t.owner===HUMAN) || (phase==='reinforce' && t.owner===HUMAN) ||
+          phase==='attack' || phase==='fortify');
+      let cls = 'node';
+      if(t.owner===HUMAN && !inputLocked && !pendingChoice && (phase==='attack'||phase==='fortify') && t.troops>=2) cls += ' nodeReady';
+      if(selected===id) cls += ' nodeSelected';
+      else if(attackable.has(id)) cls += ' nodeAttack';
+      else if(moveable.has(id)) cls += ' nodeMove';
+
+      const c = document.createElementNS(SVGNS,'circle');
+      c.setAttribute('cx',m.x); c.setAttribute('cy',m.y); c.setAttribute('r',NODE_R);
+      c.setAttribute('fill', t.owner!==null ? playerColor(t.owner) : '#8a94a6');
+      c.setAttribute('class', cls);
+      if(canAct) c.style.cursor = 'pointer';
+      c.addEventListener('click', ()=>onTerrClick(id));
+      const title = document.createElementNS(SVGNS,'title');
+      title.textContent = `${m.name} — ${playerName(t.owner)} · ${t.troops} armate · ${CONTINENTS[m.cont].name}`;
+      c.appendChild(title);
+      g.appendChild(c);
+
+      const tx = document.createElementNS(SVGNS,'text');
+      tx.setAttribute('x',m.x); tx.setAttribute('y',m.y);
+      tx.setAttribute('class','troopTxt');
+      tx.setAttribute('fill', '#ffffff');
+      tx.setAttribute('stroke','#0a1120'); tx.setAttribute('stroke-width','2.5');
+      tx.setAttribute('paint-order','stroke');
+      tx.textContent = t.troops;
+      g.appendChild(tx);
+
+      const nm = document.createElementNS(SVGNS,'text');
+      nm.setAttribute('x',m.x); nm.setAttribute('y',m.y+NODE_R+12);
+      nm.setAttribute('class','nameTxt');
+      nm.textContent = m.name;
+      g.appendChild(nm);
+      svg.appendChild(g);
+    }
+    drawAttackArrow();
+  }
+
+  function drawAttackArrow(){
+    if(!attackArrow) return;
+    const {from,to} = attackArrow;
+    const dx=to.x-from.x, dy=to.y-from.y, dist=Math.hypot(dx,dy);
+    if(dist < 0.001) return;
+    const ux=dx/dist, uy=dy/dist;
+    const x1=from.x+ux*(NODE_R+2), y1=from.y+uy*(NODE_R+2);
+    const x2=to.x-ux*(NODE_R+6), y2=to.y-uy*(NODE_R+6);
+    const glow = document.createElementNS(SVGNS,'line');
+    glow.setAttribute('x1',x1); glow.setAttribute('y1',y1); glow.setAttribute('x2',x2); glow.setAttribute('y2',y2);
+    glow.setAttribute('stroke','#ff5f5f'); glow.setAttribute('stroke-width','9');
+    glow.setAttribute('stroke-linecap','round'); glow.setAttribute('class','attackArrowGlow');
+    svg.appendChild(glow);
+    const line = document.createElementNS(SVGNS,'line');
+    line.setAttribute('x1',x1); line.setAttribute('y1',y1); line.setAttribute('x2',x2); line.setAttribute('y2',y2);
+    line.setAttribute('stroke','#ffae42'); line.setAttribute('stroke-width','3.5');
+    line.setAttribute('stroke-linecap','round'); line.style.pointerEvents='none';
+    svg.appendChild(line);
+    const bx=x2-ux*13, by=y2-uy*13, px=-uy, py=ux;
+    const head = document.createElementNS(SVGNS,'polygon');
+    head.setAttribute('points', `${x2},${y2} ${bx+px*4.5},${by+py*4.5} ${bx-px*4.5},${by-py*4.5}`);
+    head.setAttribute('fill','#ffae42'); head.style.pointerEvents='none';
+    svg.appendChild(head);
+  }
+
+  // ================= DICE DISPLAY =================
+  const PIP_POS = {
+    1:[[13,13]], 2:[[7,7],[19,19]], 3:[[7,7],[13,13],[19,19]],
+    4:[[7,7],[19,7],[7,19],[19,19]], 5:[[7,7],[19,7],[13,13],[7,19],[19,19]],
+    6:[[7,7],[19,7],[7,13],[19,13],[7,19],[19,19]]
+  };
+  function diceFaceHTML(v){
+    const pips = (PIP_POS[v]||PIP_POS[1]).map(([x,y])=>`<circle cx="${x}" cy="${y}" r="2.6" fill="#1a1a1a"></circle>`).join('');
+    return `<svg width="26" height="26" viewBox="0 0 26 26" style="margin:1px;"><rect x="1" y="1" width="24" height="24" rx="5" fill="#f5f0e6" stroke="#333" stroke-width="1.5"></rect>${pips}</svg>`;
+  }
+  function renderDiceDisplay(i){
+    document.getElementById('diceDisplayPanel').style.display = 'block';
+    document.getElementById('diceContent').innerHTML = `
+      <div class="diceAttackerLine">${i.atkName} attacca ${i.defName}</div>
+      <div class="diceRow"><span class="diceRowLabel">Attacco:</span> ${i.atkRolls.map(diceFaceHTML).join('')}</div>
+      <div class="diceRow"><span class="diceRowLabel">Difesa:</span> ${i.defRolls.map(diceFaceHTML).join('')}</div>
+      <div class="diceLossLine">Perdite — attaccante: ${i.atkLoss}, difensore: ${i.defLoss}</div>`;
+  }
+
+  // ================= CHARTS =================
+  function pushHistorySnapshot(){
+    const snap = {};
+    for(const p of PLAYERS) snap[p.id] = { terr: ownTerr(p.id).length, troops: ownTerr(p.id).reduce((s,t)=>s+t.troops,0) };
+    history.push(snap);
+    if(history.length > 60) history.shift();
+  }
+  function drawLineChart(el, metric){
+    if(!el) return;
+    el.innerHTML = '';
+    const W=280,H=60,padL=4,padR=4,padT=5,padB=3;
+    if(history.length < 2) return;
+    let maxVal = 1;
+    for(const s of history) for(const p of PLAYERS) maxVal = Math.max(maxVal, s[p.id]?s[p.id][metric]:0);
+    const iw=W-padL-padR, ih=H-padT-padB;
+    for(const p of PLAYERS){
+      const pts = history.map((s,i)=>{
+        const v = s[p.id]?s[p.id][metric]:0;
+        const x = padL + (history.length===1?0:i/(history.length-1))*iw;
+        const y = padT + ih - (v/maxVal)*ih;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      const pl = document.createElementNS(SVGNS,'polyline');
+      pl.setAttribute('points',pts); pl.setAttribute('fill','none');
+      pl.setAttribute('stroke',p.color); pl.setAttribute('stroke-width','2');
+      pl.setAttribute('stroke-linejoin','round'); pl.setAttribute('stroke-linecap','round');
+      pl.setAttribute('opacity', alive.has(p.id)?'1':'0.4');
+      el.appendChild(pl);
+    }
+  }
+  function drawCharts(){
+    drawLineChart(document.getElementById('chartTerr'),'terr');
+    drawLineChart(document.getElementById('chartTroops'),'troops');
+  }
+
+  // ================= UI =================
+  const playersEl = document.getElementById('players');
+  const turnInfoEl = document.getElementById('turnInfo');
+  const phaseInfoEl = document.getElementById('phaseInfo');
+  const endAttackBtn = document.getElementById('endAttackBtn');
+  const endTurnBtn = document.getElementById('endTurnBtn');
+  const judgeBtn = document.getElementById('judgeBtn');
+  const tradeBtn = document.getElementById('tradeBtn');
+  const logEl = document.getElementById('log');
+
+  function clearLog(){ logEl.innerHTML=''; }
+  function log(msg){
+    const d = document.createElement('div');
+    d.textContent = msg;
+    logEl.insertBefore(d, logEl.firstChild);
+    while(logEl.children.length > 90) logEl.removeChild(logEl.lastChild);
+  }
+
+  function updateUI(){
+    if(!PLAYERS) return;
+    playersEl.innerHTML = '';
+    for(const p of PLAYERS){
+      const s = scoreOf(p.id);
+      const row = document.createElement('div');
+      row.className = 'playerRow' + (alive.has(p.id)?'':' dead');
+      row.innerHTML = `<span class="swatch" style="background:${p.color};color:${p.color};"></span>
+        <span class="name">${p.name}</span>
+        <span class="stats">${s.terr} terr · ${s.armies} arm${SETTINGS.useCards?` · ${hands[p.id]?hands[p.id].length:0} 🃏`:''}</span>`;
+      playersEl.appendChild(row);
+    }
+    const cur = order[turnPointer];
+    turnInfoEl.textContent = phase==='setup' ? 'Schieramento iniziale' : `Turno ${turnNumber} — ${playerName(cur)}`;
+
+    // continents
+    const cb = document.getElementById('contBonusBox');
+    cb.innerHTML = Object.keys(CONTINENTS).map(c=>{
+      const owner = PLAYERS.find(p=>ownsContinent(p.id,c));
+      const mine = contTerrIds(c).filter(id=>terr[id].owner===HUMAN).length;
+      const tot = contTerrIds(c).length;
+      const who = owner ? `<span class="own" style="color:${owner.color}">${owner.name}</span>` : `${mine}/${tot} tuoi`;
+      return `<div><span style="color:${CONTINENTS[c].color}">■</span> ${CONTINENTS[c].name} <b>+${CONTINENTS[c].bonus}</b> — ${who}</div>`;
+    }).join('');
+
+    // objective
+    const objBox = document.getElementById('objBox');
+    if(SETTINGS.mode === 'objective' && objectives[HUMAN]){
+      objBox.innerHTML = `🎯 ${objectives[HUMAN].text}<span class="hint">Gli obiettivi degli avversari restano segreti.</span>`;
+    } else {
+      objBox.innerHTML = `🌍 Conquista tutti i territori<span class="hint">Vince l'ultimo giocatore rimasto.</span>`;
+    }
+
+    // cards
+    document.getElementById('cardsPanel').style.display = SETTINGS.useCards ? 'block' : 'none';
+    const box = document.getElementById('cardsBox');
+    const myHand = hands[HUMAN] || [];
+    box.innerHTML = myHand.length
+      ? myHand.map(c=>`<div class="card${c.sym==='J'?' jolly':''}" title="${SYM_NAME[c.sym]}">${c.sym==='J'?'★':SYMBOLS[c.sym]}</div>`).join('')
+      : '<span style="font-size:11px;color:#8fa0c0;">Nessuna carta</span>';
+    const canTrade = phase==='reinforce' && !!findSet(myHand) && !inputLocked && !pendingChoice;
+    tradeBtn.disabled = !canTrade;
+    document.getElementById('cardsInfo').textContent =
+      `Prossimo tris: ${setValue()} armate. Con 5 carte lo scambio è obbligatorio. Peschi una carta se conquisti almeno un territorio nel turno.`;
+
+    const humanActive = !gameOver && cur===HUMAN && !inputLocked && !pendingChoice && phase!=='setup';
+    judgeBtn.disabled = !humanActive;
+    endAttackBtn.style.display = (phase==='fortify'||phase==='over'||phase==='setup') ? 'none' : 'block';
+
+    if(gameOver){
+      phaseInfoEl.textContent = 'Partita conclusa.';
+      endAttackBtn.disabled = true; endTurnBtn.disabled = true;
+    } else if(phase === 'setup'){
+      const left = setupQueue.filter(p=>p===HUMAN).length;
+      phaseInfoEl.textContent = `Schiera le tue armate iniziali: ne restano ${left}. Clicca un tuo territorio.`;
+      endAttackBtn.disabled = true; endTurnBtn.disabled = true;
+    } else if(cur !== HUMAN){
+      phaseInfoEl.textContent = `${playerName(cur)} sta giocando...`;
+      endAttackBtn.disabled = true; endTurnBtn.disabled = true;
+    } else if(pendingChoice){
+      phaseInfoEl.textContent = 'Scegli quante armate spostare, poi conferma.';
+      endAttackBtn.disabled = true; endTurnBtn.disabled = true;
+    } else if(phase === 'reinforce'){
+      phaseInfoEl.textContent = `Rinforzi — ${reinforceLeft} armate da schierare sui tuoi territori.`;
+      endAttackBtn.disabled = true; endTurnBtn.disabled = true;
+    } else if(phase === 'attack'){
+      phaseInfoEl.textContent = 'Attacco — servono almeno 2 armate per attaccare. Puoi attaccare quante volte vuoi.';
+      endAttackBtn.disabled = false; endTurnBtn.disabled = false;
+    } else if(phase === 'fortify'){
+      phaseInfoEl.textContent = fortifyUsed
+        ? 'Spostamento già effettuato: puoi solo terminare il turno.'
+        : 'Spostamento — un solo movimento tra due tuoi territori confinanti.';
+      endTurnBtn.disabled = false;
+    }
+  }
+
+  // ================= RECAP =================
+  function buildRecapHTML(){
+    const rows = PLAYERS.map(p=>{
+      const s = STATS[p.id]||{}, sc = scoreOf(p.id), luck = luckOf(p.id);
+      const wr = s.attacks ? Math.round(100*s.attacksWon/s.attacks) : 0;
+      return { p, s, sc, luck, wr, out:!alive.has(p.id) };
+    });
+    rows.sort((a,b)=>b.sc.score-a.sc.score);
+    const body = rows.map(r=>{
+      const s = r.s;
+      const lt = (r.luck>=0?'+':'')+r.luck.toFixed(1);
+      const lc = r.luck>=2?'lkGood':(r.luck<=-2?'lkBad':'lkMid');
+      return `<tr class="${r.out?'outRow':''}">
+        <td><span class="swatch" style="background:${r.p.color};color:${r.p.color};"></span>${r.p.name}${r.out?' †':''}</td>
+        <td>${r.sc.terr}</td><td>${r.sc.armies}</td><td><b>${r.sc.score}</b></td>
+        <td>${s.placed||0}</td><td>${s.killed||0}</td><td>${s.lost||0}</td>
+        <td>${s.attacks||0}</td><td>${s.attacksWon||0} <span class="dim">(${r.wr}%)</span></td>
+        ${SETTINGS.useCards?`<td>${s.sets||0}</td>`:''}
+        <td class="${lc}">${lt}<br><span class="dim">${luckLabel(r.luck)}</span></td>
+      </tr>`;
+    }).join('');
+    const objList = SETTINGS.mode==='objective'
+      ? `<div class="objList">${PLAYERS.map(p=>`<b>${p.name}</b>: ${objectives[p.id]?objectives[p.id].text:'—'}`).join('<br>')}</div>`
+      : '';
+    return `
+      <div class="recapWrap">
+        <div class="recapMeta">
+          <div><span class="rmLabel">DURATA</span>${fmtTime(gameElapsedMs)}</div>
+          <div><span class="rmLabel">TURNI</span>${turnNumber}</div>
+          <div><span class="rmLabel">MODALITÀ</span>${SETTINGS.mode==='objective'?'Obiettivi':'Conquista'}</div>
+          <div><span class="rmLabel">IA</span>${({easy:'Facile',medium:'Media',hard:'Difficile',impossible:'Impossibile'})[SETTINGS.aiDifficulty]}</div>
+          ${SETTINGS.useCards?`<div><span class="rmLabel">TRIS GIOCATI</span>${setsTraded}</div>`:''}
+        </div>
+        <div class="recapScroll">
+        <table class="recapTable">
+          <thead><tr>
+            <th>Giocatore</th><th>Terr.</th><th>Armate</th><th>Punti</th>
+            <th>Schierate</th><th>Uccise</th><th>Perse</th>
+            <th>Attacchi</th><th>Riusciti</th>${SETTINGS.useCards?'<th>Tris</th>':''}<th>Fortuna</th>
+          </tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+        </div>
+        <p class="recapNote">La <b>fortuna</b> confronta l'esito reale dei dadi con quello statisticamente atteso
+        per le stesse tirate: positiva = hai ucciso più e perso meno del previsto.</p>
+        ${objList}
+      </div>`;
+  }
+
+  // ================= MUSIC =================
+  const TRACKS = [
+    { name:'Marcia', tempo:82, bassType:'triangle', leadType:'sine', bassVol:0.14, leadVol:0.08, swing:0,
+      prog:[{bass:'A1',arp:['A3','C4','E4','C4']},{bass:'F1',arp:['F3','A3','C4','A3']},
+            {bass:'C2',arp:['C4','E4','G4','E4']},{bass:'G1',arp:['G3','B3','D4','B3']}] },
+    { name:'Tensione', tempo:60, bassType:'sawtooth', leadType:'triangle', bassVol:0.10, leadVol:0.06, swing:0,
+      prog:[{bass:'D1',arp:['D3','F3','A3','F3']},{bass:'D1',arp:['D3','G3','A3','G3']},
+            {bass:'A#1',arp:['A#2','D3','F3','D3']},{bass:'A1',arp:['A2','C3','E3','C3']}] },
+    { name:'Avventura', tempo:104, bassType:'square', leadType:'sine', bassVol:0.09, leadVol:0.075, swing:0.18,
+      prog:[{bass:'C2',arp:['C4','E4','G4','B4']},{bass:'A1',arp:['A3','C4','E4','G4']},
+            {bass:'F1',arp:['F3','A3','C4','E4']},{bass:'G1',arp:['G3','B3','D4','F4']}] }
+  ];
+  const Music = (function(){
+    let ctx=null, master=null, playing=false, enabled=true, timer=null, nextTime=0, step=0, idx=0;
+    const SEMI = {C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11};
+    function nf(n){ const nm=n.slice(0,-1), oc=+n.slice(-1); return 440*Math.pow(2,(SEMI[nm]+(oc-4)*12-9)/12); }
+    function tone(f,t,d,ty,pk){
+      try{
+        const o=ctx.createOscillator(), g=ctx.createGain();
+        o.type=ty; o.frequency.value=f;
+        g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(pk,t+0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001,t+d);
+        o.connect(g); g.connect(master); o.start(t); o.stop(t+d+0.03);
+      }catch(e){}
+    }
+    function schedule(){
+      try{
+        const T=TRACKS[idx]||TRACKS[0], spb=60/T.tempo;
+        while(nextTime < ctx.currentTime + 0.3){
+          const ch=T.prog[Math.floor(step/4)%T.prog.length], b=step%4;
+          if(b===0) tone(nf(ch.bass),nextTime,spb*4*0.95,T.bassType,T.bassVol);
+          const sw=(T.swing && b%2===1)? spb*T.swing:0;
+          tone(nf(ch.arp[b]),nextTime+sw,spb*0.85,T.leadType,T.leadVol);
+          nextTime+=spb; step++;
+        }
+      }catch(e){}
+    }
+    function start(){
+      const AC=(typeof window!=='undefined')&&(window.AudioContext||window.webkitAudioContext);
+      if(!AC) return;
+      if(!ctx){ try{ ctx=new AC(); master=ctx.createGain(); master.gain.value=enabled?0.6:0; master.connect(ctx.destination);}catch(e){return;} }
+      if(ctx.state==='suspended'){ try{ctx.resume();}catch(e){} }
+      if(playing) return;
+      playing=true; nextTime=ctx.currentTime+0.1; step=0; timer=setInterval(schedule,25);
+    }
+    function toggle(){ enabled=!enabled; if(master){ try{master.gain.value=enabled?0.6:0;}catch(e){} } return enabled; }
+    function setTrack(i){ idx=Math.max(0,Math.min(TRACKS.length-1,i|0)); step=0; if(ctx) nextTime=ctx.currentTime+0.05; return TRACKS[idx].name; }
+    return { start, toggle, setTrack, isEnabled:()=>enabled, trackName:()=>TRACKS[idx].name, count:TRACKS.length };
+  })();
+  const musicBtn = document.getElementById('musicBtn');
+  const trackBtn = document.getElementById('trackBtn');
+  function refreshMusicButtons(){
+    musicBtn.textContent = Music.isEnabled() ? '♪ Musica: ON' : '♪ Musica: OFF';
+    if(trackBtn) trackBtn.textContent = '🎵 Brano: ' + Music.trackName();
+  }
+  musicBtn.addEventListener('click', ()=>{ Music.toggle(); refreshMusicButtons(); });
+  trackBtn.addEventListener('click', ()=>{
+    SETTINGS.musicTrack = (SETTINGS.musicTrack % Music.count) + 1;
+    Music.setTrack(SETTINGS.musicTrack-1); Music.start(); refreshMusicButtons();
+  });
+
+  // ================= OVERLAY =================
+  const overlay = document.getElementById('overlay');
+  function showOverlay(title, text, recapHTML){
+    document.getElementById('overlayInner').innerHTML = `
+      <h1>${title}</h1><p>${text}</p>
+      ${recapHTML||''}
+      <div class="settingGroup"><div class="settingLabel">CONDIZIONE DI VITTORIA</div><div class="choiceRow" id="modeRow"></div></div>
+      <div class="settingGroup"><div class="settingLabel">CARTE E TRIS</div><div class="choiceRow" id="cardsRow"></div></div>
+      <div class="settingGroup"><div class="settingLabel">NUMERO DI AVVERSARI</div><select class="dropdownSelect" id="opponentSelect"></select></div>
+      <div class="settingGroup"><div class="settingLabel">IL TUO COLORE</div><div class="choiceRow" id="colorRow"></div></div>
+      <div class="settingGroup"><div class="settingLabel">DIFFICOLTÀ IA</div><div class="choiceRow" id="diffRow"></div></div>
+      <div class="settingGroup"><div class="settingLabel">MUSICA</div><div class="choiceRow" id="musicRow"></div></div>
+      <div class="legend" id="legendBox"></div>
+      <button class="mainBtn" id="startBtn">GIOCA ANCORA</button>`;
+    overlay.classList.remove('hidden');
+    setupOverlayControls();
+  }
+  function hideOverlay(){ overlay.classList.add('hidden'); }
+
+  function choiceGroup(rowId, options, cur, onPick){
+    const row = document.getElementById(rowId);
+    if(!row) return;
+    row.innerHTML = options.map(o=>`<button class="choiceBtn${o.value===cur?' active':''}" data-v="${o.value}">${o.label}</button>`).join('');
+    row.querySelectorAll('.choiceBtn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        onPick(b.dataset.v);
+        row.querySelectorAll('.choiceBtn').forEach(x=>x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+  }
+  function populateOpponentSelect(){
+    const sel = document.getElementById('opponentSelect');
+    if(!sel) return;
+    sel.innerHTML = '';
+    for(let i=1;i<=7;i++){
+      const o = document.createElement('option');
+      o.value=String(i); o.textContent=i;
+      if(i===SETTINGS.numOpponents) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.onchange = ()=>{ SETTINGS.numOpponents = parseInt(sel.value,10); renderLegend(); };
+  }
+  function renderLegend(){
+    const box = document.getElementById('legendBox');
+    if(!box) return;
+    const total = SETTINGS.numOpponents+1;
+    const items = [`<div><span class="swatch" style="background:${SETTINGS.playerColor};color:${SETTINGS.playerColor};"></span> Tu</div>`];
+    for(let i=1;i<total;i++) items.push(`<div><span class="swatch" style="background:#888;color:#888;"></span> ${NAMES[i]}</div>`);
+    items.push(`<div style="color:#9fb3d9;">Armate iniziali: ${START_ARMIES[total]||20} a testa</div>`);
+    box.innerHTML = items.join('');
+  }
+  function setupOverlayControls(){
+    choiceGroup('modeRow', [
+      {value:'objective', label:'Obiettivi segreti'},
+      {value:'conquest',  label:'Conquista totale'}
+    ], SETTINGS.mode, v=>{ SETTINGS.mode = v; });
+    choiceGroup('cardsRow', [
+      {value:'yes', label:'Con carte'},
+      {value:'no',  label:'Senza carte'}
+    ], SETTINGS.useCards ? 'yes' : 'no', v=>{ SETTINGS.useCards = (v === 'yes'); });
+    populateOpponentSelect();
+    choiceGroup('diffRow', [
+      {value:'easy',label:'Facile'},{value:'medium',label:'Media'},
+      {value:'hard',label:'Difficile'},{value:'impossible',label:'Impossibile'}
+    ], SETTINGS.aiDifficulty, v=>{ SETTINGS.aiDifficulty = v; });
+    choiceGroup('musicRow', [
+      {value:'1',label:'Marcia'},{value:'2',label:'Tensione'},{value:'3',label:'Avventura'}
+    ], String(SETTINGS.musicTrack), v=>{ SETTINGS.musicTrack = parseInt(v,10); Music.setTrack(SETTINGS.musicTrack-1); refreshMusicButtons(); });
+    const colorRow = document.getElementById('colorRow');
+    if(colorRow){
+      colorRow.innerHTML = COLOR_PALETTE.map(c=>`<button class="colorSwatchBtn${c===SETTINGS.playerColor?' active':''}" data-c="${c}" style="background:${c};"></button>`).join('');
+      colorRow.querySelectorAll('.colorSwatchBtn').forEach(b=>{
+        b.addEventListener('click', ()=>{
+          SETTINGS.playerColor = b.dataset.c;
+          colorRow.querySelectorAll('.colorSwatchBtn').forEach(x=>x.classList.remove('active'));
+          b.classList.add('active'); renderLegend();
+        });
+      });
+    }
+    renderLegend(); refreshMusicButtons();
+    document.getElementById('startBtn').addEventListener('click', ()=>{
+      hideOverlay();
+      Music.setTrack(SETTINGS.musicTrack-1); Music.start(); refreshMusicButtons();
+      setupGame();
+    });
+  }
+
+  setupOverlayControls();
+})();
+</script>
+</body>
+</html>
