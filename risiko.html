@@ -44,10 +44,17 @@
     padding: 11px 13px;
   }
   .panel h2 { font-size:12px; letter-spacing:2px; color:#7fa8ff; margin-bottom:7px; font-weight:600; }
+  .panelNote { font-size:10px; color:#7f8ba6; line-height:1.4; margin-top:7px; }
   .playerRow { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:13px; }
   .swatch { width:13px; height:13px; border-radius:3px; flex-shrink:0; box-shadow:0 0 6px currentColor; }
   .playerRow .name { flex:1; }
   .playerRow .stats { color:#9fb3d9; font-size:10.5px; }
+  .playerRow .reinf {
+    flex:0 0 auto; color:#ffd85e; font-weight:800; font-size:11.5px;
+    background:rgba(255,216,94,0.12); border:1px solid rgba(255,216,94,0.35);
+    border-radius:9px; padding:1px 6px; cursor:help;
+  }
+  .playerRow.dead .reinf { color:#9fb3d9; background:none; border-color:transparent; }
   .playerRow.dead { opacity:0.35; text-decoration:line-through; }
   #turnInfo { font-size:14px; font-weight:600; margin-bottom:3px; }
   #phaseInfo { font-size:11px; color:#9fb3d9; line-height:1.45; }
@@ -202,6 +209,8 @@
     <div class="panel">
       <h2>SCHIERAMENTI</h2>
       <div id="players"></div>
+      <div class="panelNote">In giallo le armate che ciascuno riceverà a inizio del proprio turno
+      (territori ÷ 3, minimo 3, più i bonus dei continenti).</div>
     </div>
     <div class="panel">
       <h2>CONTINENTI</h2>
@@ -1280,9 +1289,17 @@
       const s = scoreOf(p.id);
       const row = document.createElement('div');
       row.className = 'playerRow' + (alive.has(p.id)?'':' dead');
+      // armies this player will receive when their next turn starts
+      const fromTerr = Math.max(3, Math.floor(s.terr/3));
+      const fromCont = continentBonus(p.id);
+      const next = fromTerr + fromCont;
+      const tip = `${next} armate al prossimo turno: ${fromTerr} dai territori`
+        + (fromCont ? ` + ${fromCont} dai continenti` : '')
+        + (SETTINGS.useCards ? ', più le armate di eventuali tris' : '');
       row.innerHTML = `<span class="swatch" style="background:${p.color};color:${p.color};"></span>
         <span class="name">${p.name}</span>
-        <span class="stats">${s.terr} terr · ${s.armies} arm${SETTINGS.useCards?` · ${hands[p.id]?hands[p.id].length:0} 🃏`:''}</span>`;
+        <span class="stats">${s.terr} terr · ${s.armies} arm${SETTINGS.useCards?` · ${hands[p.id]?hands[p.id].length:0} 🃏`:''}</span>
+        <span class="reinf" title="${alive.has(p.id)?tip:'Giocatore eliminato'}">${alive.has(p.id)?'+'+next:'—'}</span>`;
       playersEl.appendChild(row);
     }
     const cur = order[turnPointer];
