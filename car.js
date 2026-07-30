@@ -1,0 +1,169 @@
+class Car {
+    constructor(x, y, color, isPlayer = false) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.isPlayer = isPlayer;
+        
+        this.width = 24;
+        this.height = 14;
+        
+        this.angle = 0;
+        this.velocity = { x: 0, y: 0 };
+        
+        // Physics constants
+        this.enginePower = 400;
+        this.brakingPower = 600;
+        this.maxSteer = Math.PI * 0.8; // Reduced steering rate for easier control
+        this.baseGrip = 450; // Increased grip for easier steering on asphalt
+        this.baseFriction = 0.5; // Drag/rolling resistance
+        
+        this.inputs = {
+            up: false,
+            down: false,
+            left: false,
+            right: false
+        };
+        
+        // Race logic
+        this.lap = 0;
+        this.nextWaypoint = 1;
+        this.finished = false;
+        this.hasStarted = false;
+    }
+    
+    update(dt, track) {
+        const surface = track.getSurface(this.x, this.y);
+        
+        // Adjust physics based on surface
+        let currentGrip = this.baseGrip;
+        let currentFriction = this.baseFriction;
+        
+        if (surface === 'grass') {
+            currentGrip *= 0.3; // Slippery!
+            currentFriction *= 2.5; // Slows you down!
+        }
+        
+        // --- Longitudinal forces (Engine, Brakes) ---
+        let forwardForce = 0;
+        if (this.inputs.up) {
+            forwardForce += this.enginePower;
+        }
+        if (this.inputs.down) {
+            forwardForce -= this.brakingPower;
+        }
+        
+        // --- Steering ---
+        const speed = Math.sqrt(this.velocity.x ** 2 + this.velocity.y ** 2);
+        
+        // Only steer if moving
+        if (speed > 10) {
+            // Steering less effective at very high speeds to simulate understeer
+            const steerEffectiveness = speed > 100 ? 100 / speed : 1; 
+            const steerAmount = this.maxSteer * dt * steerEffectiveness;
+            
+            // Allow reversing steer direction if going backwards
+            const dir = (this.velocity.x * Math.cos(this.angle) + this.velocity.y * Math.sin(this.angle) >= 0) ? 1 : -1;
+            
+            if (this.inputs.left) this.angle -= steerAmount * dir;
+            if (this.inputs.right) this.angle += steerAmount * dir;
+        }
+        
+        // Direction vectors
+        const headingX = Math.cos(this.angle);
+        const headingY = Math.sin(this.angle);
+        const rightX = Math.cos(this.angle + Math.PI / 2);
+        const rightY = Math.sin(this.angle + Math.PI / 2);
+        
+        // Apply engine force to velocity
+        this.velocity.x += headingX * forwardForce * dt;
+        this.velocity.y += headingY * forwardForce * dt;
+        
+        // --- Lateral forces (Cornering / Drifting) ---
+        const lateralSpeed = this.velocity.x * rightX + this.velocity.y * rightY;
+        
+        // Desired lateral correction force to stop sliding
+        let lateralForce = -lateralSpeed * 4; // proportional to slip
+        
+        // Clamp to grip limit
+        if (lateralForce > currentGrip) lateralForce = currentGrip;
+        if (lateralForce < -currentGrip) lateralForce = -currentGrip;
+        
+        // Apply lateral force
+        this.velocity.x += rightX * lateralForce * dt;
+        this.velocity.y += rightY * lateralForce * dt;
+        
+        // Apply friction/drag
+        this.velocity.x -= this.velocity.x * currentFriction * dt;
+        this.velocity.y -= this.velocity.y * currentFriction * dt;
+        
+        const previousX = this.x;
+        
+        // Update position
+        this.x += this.velocity.x * dt;
+        this.y += this.velocity.y * dt;
+        
+        // Enforce robust barrier collision
+        track.checkBarrierCollision(this);
+        
+        // Update race progress
+        this.checkWaypoints(track);
+        
+        // Exact finish line crossing (top straight, left to right)
+        if (previousX < 400 && this.x >= 400 && this.y < track.leftCenter.y) {
+            if (this.hasStarted) {
+                this.lap++;
+            }
+            this.hasStarted = true;
+        }
+    }
+    
+    checkWaypoints(track) {
+        const wp = track.waypoints[this.nextWaypoint];
+        const dist = Math.sqrt((this.x - wp.x)**2 + (this.y - wp.y)**2);
+        
+        // 100px radius for waypoint trigger
+        if (dist < 100) {
+            this.nextWaypoint = (this.nextWaypoint + 1) % track.waypoints.length;
+        }
+    }
+    
+    draw(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        
+        // Car shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(-this.width / 2 + 2, -this.height / 2 + 2, this.width, this.height);
+        
+        // Car body
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 4);
+        ctx.fill();
+        
+        // Windshield (front)
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        // Shift it a bit forward. Center is at 0. Front is at width/2.
+        ctx.roundRect(this.width / 8, -this.height / 2 + 2, 6, this.height - 4, 1);
+        ctx.fill();
+        
+        // Spoiler (back)
+        ctx.fillStyle = '#111';
+        ctx.beginPath();
+        // placed at the very back (-width/2)
+        ctx.roundRect(-this.width / 2, -this.height / 2 + 1, 4, this.height - 2, 1);
+        ctx.fill();
+        
+        // Headlights
+        ctx.fillStyle = '#ffffe0';
+        ctx.beginPath();
+        ctx.arc(this.width / 2, -this.height / 2 + 3, 2, 0, Math.PI * 2);
+        ctx.arc(this.width / 2, this.height / 2 - 3, 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.restore();
+    }
+}
