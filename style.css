@@ -13,14 +13,20 @@ body {
 
 #game-container {
     position: relative;
-    width: 800px;
-    height: 600px;
-    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
     background-color: #388E3C; /* Darker grass color for background */
 }
 
 canvas {
     display: block;
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: 10 / 7;
+    object-fit: contain;
 }
 
 #ui-layer {

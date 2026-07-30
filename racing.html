@@ -8,7 +8,7 @@
 </head>
 <body>
     <div id="game-container">
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <canvas id="gameCanvas" width="1000" height="700"></canvas>
         <div id="ui-layer">
             <div id="hud" style="display: none;">
                 <div id="lap-counter">Lap: 1/10</div>
@@ -17,6 +17,13 @@
             </div>
             <div id="menu">
                 <h1>2D Racing</h1>
+                <div class="menu-group">
+                    <label>Track:</label>
+                    <select id="track-select">
+                        <option value="oval">Oval (Simple)</option>
+                        <option value="f1">F1 Circuit (Complex)</option>
+                    </select>
+                </div>
                 <div class="menu-group">
                     <label>Choose your car color:</label>
                     <select id="color-select">

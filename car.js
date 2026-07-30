@@ -14,8 +14,8 @@ class Car {
         // Physics constants
         this.enginePower = 400;
         this.brakingPower = 600;
-        this.maxSteer = Math.PI * 0.8; // Reduced steering rate for easier control
-        this.baseGrip = 450; // Increased grip for easier steering on asphalt
+        this.maxSteer = Math.PI * 1.0; // Increased steering rate for sharper turns
+        this.baseGrip = 600; // Increased grip for much easier steering on asphalt without sliding
         this.baseFriction = 0.5; // Drag/rolling resistance
         
         this.inputs = {
@@ -30,6 +30,7 @@ class Car {
         this.nextWaypoint = 1;
         this.finished = false;
         this.hasStarted = false;
+        this.halfwayMarkerCrossed = false;
     }
     
     update(dt, track) {
@@ -109,10 +110,16 @@ class Car {
         // Update race progress
         this.checkWaypoints(track);
         
-        // Exact finish line crossing (top straight, left to right)
-        if (previousX < 400 && this.x >= 400 && this.y < track.leftCenter.y) {
-            if (this.hasStarted) {
+        // Ensure car goes around the track
+        if (this.x > 650) {
+            this.halfwayMarkerCrossed = true;
+        }
+        
+        // Exact finish line crossing
+        if (track.checkLapCross(previousX, this.y, this.x, this.y)) {
+            if (this.hasStarted && this.halfwayMarkerCrossed) {
                 this.lap++;
+                this.halfwayMarkerCrossed = false;
             }
             this.hasStarted = true;
         }

@@ -26,6 +26,14 @@ class AI {
         
         this.errorTimer = 0;
         this.isMakingError = false;
+        
+        this.raceStarted = false;
+        this.reactionTimer = 0;
+    }
+    
+    startRace() {
+        // Human reaction time: 0.15s to 0.4s
+        this.reactionTimer = 0.15 + Math.random() * 0.25;
     }
     
     update(track, dt) {
@@ -34,6 +42,19 @@ class AI {
         
         // Use a default dt of 0.016 if not provided (when called from updatePhysics, dt is passed to car.update, but ai.update needs it too)
         if (!dt) dt = 0.016;
+        
+        if (!this.raceStarted) {
+            if (this.reactionTimer > 0) {
+                this.reactionTimer -= dt;
+                if (this.reactionTimer <= 0) {
+                    this.raceStarted = true;
+                } else {
+                    return; // Wait for reaction
+                }
+            } else {
+                return; // Haven't been told to start yet
+            }
+        }
         
         // Error logic
         this.errorTimer -= dt;

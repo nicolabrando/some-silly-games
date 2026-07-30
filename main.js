@@ -55,21 +55,29 @@ function startGame() {
     hud.style.display = 'flex';
     
     TOTAL_LAPS = parseInt(document.getElementById('laps-select').value, 10);
+    const trackType = document.getElementById('track-select').value;
     const color = document.getElementById('color-select').value;
     const difficulty = document.getElementById('difficulty-select').value;
     const numOpponents = parseInt(document.getElementById('opponents-select').value, 10);
     
-    track = new Track();
+    if (trackType === 'f1') {
+        track = new F1Track();
+    } else {
+        track = new OvalTrack();
+    }
+    
     cars = [];
     ais = [];
     
     // Spawn positions (Aligned on the grid)
     const numCars = numOpponents + 1;
-    const startX = 370; // Just behind the start line (which is at 400)
+    const startX = trackType === 'f1' ? 470 : (track.leftCenter.x + track.rightCenter.x) / 2 - 30; // Just behind the start line
     
-    // Distribute vertically across the track width
-    const startYMin = track.leftCenter.y - track.radius - track.trackWidth + 15;
-    const startYMax = track.leftCenter.y - track.radius + track.trackWidth - 15;
+    // Let's get y from the track object directly.
+    let baseY = trackType === 'f1' ? 150 : track.leftCenter.y - track.radius;
+    
+    const startYMin = baseY - track.trackWidth + 15;
+    const startYMax = baseY + track.trackWidth - 15;
     const spacingY = numCars > 1 ? (startYMax - startYMin) / (numCars - 1) : 0;
     
     // Player
@@ -85,6 +93,21 @@ function startGame() {
         cars.push(aiCar);
         ais.push(new AI(aiCar, difficulty));
     }
+    
+    // Assign correct initial waypoint
+    cars.forEach(car => {
+        let minDist = Infinity;
+        let closestIdx = 0;
+        for (let i = 0; i < track.waypoints.length; i++) {
+            const wp = track.waypoints[i];
+            const dist = Math.hypot(car.x - wp.x, car.y - wp.y);
+            if (dist < minDist) {
+                minDist = dist;
+                closestIdx = i;
+            }
+        }
+        car.nextWaypoint = (closestIdx + 1) % track.waypoints.length;
+    });
     
     gameState = 'countdown';
     countdownTimer = 0;
@@ -239,6 +262,9 @@ function gameLoop(timestamp) {
         else {
             lightState = 6; // GO!
             gameState = 'playing';
+            
+            // Notify AI that race has started
+            ais.forEach(ai => ai.startRace());
         }
         
         // False start check
