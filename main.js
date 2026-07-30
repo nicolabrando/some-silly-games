@@ -11,6 +11,10 @@ let TOTAL_LAPS = 10;
 let countdownTimer = 0;
 let lightState = 0;
 let goDelay = 0;
+let raceStartTime = 0;
+let leaderFinished = false;
+let leaderRaceTime = 0;
+let raceFinished = false;
 
 // UI Elements
 const menu = document.getElementById('menu');
@@ -22,6 +26,9 @@ const lapCounter = document.getElementById('lap-counter');
 const posCounter = document.getElementById('position-counter');
 const speedometer = document.getElementById('speedometer');
 const resultMessage = document.getElementById('result-message');
+const winnerAnnouncement = document.getElementById('winner-announcement');
+const winnerText = document.getElementById('winner-text');
+const statsBody = document.getElementById('stats-body');
 
 const keys = {
     ArrowUp: false,
@@ -113,6 +120,9 @@ function startGame() {
     countdownTimer = 0;
     lightState = 0;
     goDelay = 2.5 + 0.1 + Math.random() * 3.9; // Wait between 0.1 and 4 seconds before GO
+    leaderFinished = false;
+    raceFinished = false;
+    winnerAnnouncement.style.display = 'none';
     
     lastTime = performance.now();
     requestAnimationFrame(gameLoop);
@@ -192,18 +202,80 @@ function updateHUD() {
     const pos = sortedCars.indexOf(playerCar) + 1;
     posCounter.innerText = `Pos: ${pos}/${cars.length}`;
     
-    // Check win condition
-    if (sortedCars[0].lap >= TOTAL_LAPS) {
+    // Check win condition for the leader
+    if (!leaderFinished && sortedCars[0].finished) {
+        leaderFinished = true;
+        leaderRaceTime = sortedCars[0].raceTime;
+        
+        // Show temporary winner announcement
+        winnerAnnouncement.style.display = 'block';
+        if (sortedCars[0] === playerCar) {
+            winnerText.innerText = "You Won!";
+            winnerText.style.color = "#4CAF50";
+        } else {
+            winnerText.innerText = `${sortedCars[0].color.toUpperCase()} Won!`;
+            winnerText.style.color = sortedCars[0].color;
+        }
+        
+        setTimeout(() => {
+            winnerAnnouncement.style.display = 'none';
+        }, 4000);
+    }
+    
+    // Check if ALL cars have finished
+    if (cars.every(c => c.finished) && !raceFinished) {
+        raceFinished = true;
         gameState = 'gameover';
         hud.style.display = 'none';
+        winnerAnnouncement.style.display = 'none';
         gameOverScreen.style.display = 'block';
+        
         if (sortedCars[0] === playerCar) {
             resultMessage.innerText = "You Won!";
             resultMessage.style.color = "#4CAF50";
         } else {
-            resultMessage.innerText = "You Lost!";
-            resultMessage.style.color = "#E53935";
+            resultMessage.innerText = "Race Finished";
+            resultMessage.style.color = "#fff";
         }
+        
+        // Populate stats table
+        statsBody.innerHTML = '';
+        sortedCars.forEach((c, index) => {
+            const tr = document.createElement('tr');
+            
+            // Format time
+            const formatTime = (ms) => {
+                const totalSeconds = ms / 1000;
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = (totalSeconds % 60).toFixed(3);
+                return `${minutes}:${seconds.padStart(6, '0')}`;
+            };
+            
+            let timeStr = formatTime(c.raceTime);
+            let gapStr = "-";
+            
+            if (index > 0) {
+                if (c.lap < TOTAL_LAPS) {
+                    // Lapped car
+                    const lapsBehind = TOTAL_LAPS - c.lap;
+                    gapStr = `+${lapsBehind} lap${lapsBehind > 1 ? 's' : ''}`;
+                } else {
+                    const gapMs = c.raceTime - leaderRaceTime;
+                    gapStr = `+${(gapMs / 1000).toFixed(3)}s`;
+                }
+            }
+            
+            const reactStr = c.reactionTime ? `${c.reactionTime.toFixed(3)}s` : '-';
+            
+            tr.innerHTML = `
+                <td>${index + 1}</td>
+                <td style="color: ${c.color}; text-transform: capitalize;">${c.color} ${c.isPlayer ? '(You)' : ''}</td>
+                <td>${timeStr}</td>
+                <td>${gapStr}</td>
+                <td>${reactStr}</td>
+            `;
+            statsBody.appendChild(tr);
+        });
     }
 }
 
@@ -262,6 +334,7 @@ function gameLoop(timestamp) {
         else {
             lightState = 6; // GO!
             gameState = 'playing';
+            raceStartTime = performance.now();
             
             // Notify AI that race has started
             ais.forEach(ai => ai.startRace());
@@ -292,6 +365,15 @@ function gameLoop(timestamp) {
     
     if (gameState === 'playing') {
         countdownTimer += dt;
+        
+        // Track player reaction time on first input
+        if (!playerCar.inputRecorded && (keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight)) {
+            playerCar.reactionTime = (performance.now() - raceStartTime) / 1000;
+            playerCar.inputRecorded = true;
+        }
+        
+        track.leaderFinished = leaderFinished;
+        track.currentRaceTime = performance.now() - raceStartTime;
         
         updatePhysics(dt);
         updateHUD();

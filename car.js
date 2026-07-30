@@ -31,6 +31,10 @@ class Car {
         this.finished = false;
         this.hasStarted = false;
         this.halfwayMarkerCrossed = false;
+        
+        this.raceTime = null;
+        this.reactionTime = null;
+        this.inputRecorded = false;
     }
     
     update(dt, track) {
@@ -45,8 +49,17 @@ class Car {
             currentFriction *= 2.5; // Slows you down!
         }
         
+        if (this.finished) {
+            // Suspend commands, let it coast by inertia
+            this.inputs.up = false;
+            this.inputs.down = false;
+            this.inputs.left = false;
+            this.inputs.right = false;
+        }
+        
         // --- Longitudinal forces (Engine, Brakes) ---
         let forwardForce = 0;
+        
         if (this.inputs.up) {
             forwardForce += this.enginePower;
         }
@@ -120,6 +133,15 @@ class Car {
             if (this.hasStarted && this.halfwayMarkerCrossed) {
                 this.lap++;
                 this.halfwayMarkerCrossed = false;
+                
+                // If the car crosses the finish line and the leader has already finished,
+                // OR if the car itself just completed the last lap.
+                if (this.lap >= TOTAL_LAPS || (track.leaderFinished && this.lap > 0)) {
+                    if (!this.finished) {
+                        this.finished = true;
+                        this.raceTime = track.currentRaceTime; // passed via track object for convenience
+                    }
+                }
             }
             this.hasStarted = true;
         }

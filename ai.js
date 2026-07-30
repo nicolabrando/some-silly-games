@@ -34,6 +34,7 @@ class AI {
     startRace() {
         // Human reaction time: 0.15s to 0.4s
         this.reactionTimer = 0.15 + Math.random() * 0.25;
+        this.car.reactionTime = this.reactionTimer;
     }
     
     update(track, dt) {

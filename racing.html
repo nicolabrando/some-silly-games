@@ -59,9 +59,25 @@
                 </div>
                 <button id="start-btn">Start Race</button>
             </div>
-            <div id="game-over" style="display: none;">
+            <div id="game-over" style="display: none; padding: 20px; min-width: 400px;">
                 <h1 id="result-message">You Won!</h1>
+                <table id="stats-table" style="width: 100%; margin-bottom: 20px; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid #fff;">
+                            <th>Pos</th>
+                            <th>Car</th>
+                            <th>Time</th>
+                            <th>Gap</th>
+                            <th>Reaction</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stats-body">
+                    </tbody>
+                </table>
                 <button id="restart-btn">Play Again</button>
+            </div>
+            <div id="winner-announcement" style="display: none; position: absolute; top: 20%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; border: 2px solid #555; text-align: center; font-size: 24px;">
+                <h2 id="winner-text" style="margin: 0;"></h2>
             </div>
         </div>
     </div>

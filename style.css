@@ -100,3 +100,8 @@ button:hover {
     font-weight: bold;
     text-shadow: 2px 2px 2px black;
 }
+
+#stats-table th, #stats-table td {
+    padding: 8px;
+    text-align: center;
+}
