@@ -11,12 +11,12 @@ class Car {
         this.angle = 0;
         this.velocity = { x: 0, y: 0 };
         
-        // Physics constants
-        this.enginePower = 400;
-        this.brakingPower = 600;
-        this.maxSteer = Math.PI * 1.0; // Increased steering rate for sharper turns
-        this.baseGrip = 600; // Increased grip for much easier steering on asphalt without sliding
-        this.baseFriction = 0.5; // Drag/rolling resistance
+        // Physics constants (Arcade feel, easy to drive)
+        this.enginePower = 350;
+        this.brakingPower = 700;
+        this.maxSteer = Math.PI * 0.8; // Smoother steering
+        this.baseGrip = 1200; // Extremely high grip to prevent sliding
+        this.baseFriction = 0.7; // Higher drag so it slows down naturally and limits top speed
         
         this.inputs = {
             up: false,
@@ -96,8 +96,8 @@ class Car {
         // --- Lateral forces (Cornering / Drifting) ---
         const lateralSpeed = this.velocity.x * rightX + this.velocity.y * rightY;
         
-        // Desired lateral correction force to stop sliding
-        let lateralForce = -lateralSpeed * 4; // proportional to slip
+        // Desired lateral correction force to stop sliding (high multiplier for arcade feel)
+        let lateralForce = -lateralSpeed * 10; // snappy alignment
         
         // Clamp to grip limit
         if (lateralForce > currentGrip) lateralForce = currentGrip;
