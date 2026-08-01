@@ -28,6 +28,7 @@
     margin: 0;
     padding: 0;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
 }
 
 body {
@@ -152,6 +153,8 @@ header {
     opacity: 0.7;
     /* Avoid text selection/highlight on mobile */
     user-select: none;
+    -webkit-user-select: none;
+    touch-action: none; /* Prevents double-tap to zoom on the buttons specifically */
 }
 
 .simon-btn:active {
@@ -239,10 +242,13 @@ header {
 }
 
 .status-text {
-    font-size: 1.2rem;
+    font-size: 1rem;
     font-weight: 800;
-    letter-spacing: 2px;
+    letter-spacing: 1px;
     color: var(--text-muted);
+    text-align: center;
+    width: 100%;
+    line-height: 1.2;
 }
 
 .hidden {
