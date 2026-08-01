@@ -97,6 +97,44 @@ class AI {
         const dy = (targetWP.y + this.pathOffset.y) - this.car.y;
         let angleToTarget = Math.atan2(dy, dx);
         
+        // --- Collision Avoidance ---
+        if (typeof cars !== 'undefined') {
+            let avoidX = 0;
+            let avoidY = 0;
+            let nearbyCars = 0;
+            
+            for (const otherCar of cars) {
+                if (otherCar === this.car || otherCar.isBroken) continue;
+                
+                const distToOther = Math.sqrt((this.car.x - otherCar.x)**2 + (this.car.y - otherCar.y)**2);
+                const avoidRadius = 70; // Start avoiding if within 70 pixels
+                
+                if (distToOther < avoidRadius && distToOther > 0.1) {
+                    // Stronger repulsion the closer they are
+                    const repulsionStrength = 1.0 - (distToOther / avoidRadius);
+                    const pushX = (this.car.x - otherCar.x) / distToOther;
+                    const pushY = (this.car.y - otherCar.y) / distToOther;
+                    
+                    avoidX += pushX * repulsionStrength;
+                    avoidY += pushY * repulsionStrength;
+                    nearbyCars++;
+                }
+            }
+            
+            if (nearbyCars > 0) {
+                // Blend the avoidance vector into the target direction
+                // The more cars nearby, the stronger the avoidance
+                const blendFactor = Math.min(0.8, nearbyCars * 0.4); 
+                const targetDirX = Math.cos(angleToTarget);
+                const targetDirY = Math.sin(angleToTarget);
+                
+                const finalDirX = targetDirX * (1 - blendFactor) + avoidX * blendFactor;
+                const finalDirY = targetDirY * (1 - blendFactor) + avoidY * blendFactor;
+                
+                angleToTarget = Math.atan2(finalDirY, finalDirX);
+            }
+        }
+        
         if (this.isMakingError) {
             // Steer in slightly the wrong direction
             angleToTarget += 0.5 * (Math.random() > 0.5 ? 1 : -1);

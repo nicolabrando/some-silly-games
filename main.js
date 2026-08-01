@@ -152,17 +152,69 @@ function startGame(forceTrackType = null) {
     ais = [];
     
     const numCars = isChampionship ? championshipState.participants.length : (numOpponents + 1);
-    const startX = track.startX;
-    let baseY = track.startY;
     
-    // Create an array of spawn positions (x, y)
+    // Find closest waypoint to start line
+    let startIdx = 0;
+    let minDist = Infinity;
+    track.waypoints.forEach((wp, idx) => {
+        const d = Math.hypot(wp.x - track.startX, wp.y - track.startY);
+        if (d < minDist) { minDist = d; startIdx = idx; }
+    });
+    
+    const getGridPos = (distBackward, lateralOffset) => {
+        let traveled = 0;
+        let currIdx = startIdx;
+        let prevWP = track.waypoints[currIdx];
+        
+        // Edge case: if we want distance 0
+        if (distBackward === 0) {
+            let nextIdx = (currIdx - 1 + track.waypoints.length) % track.waypoints.length;
+            let nextWP = track.waypoints[nextIdx];
+            let dx = prevWP.x - nextWP.x;
+            let dy = prevWP.y - nextWP.y;
+            let len = Math.hypot(dx, dy);
+            let nx = dy / len;
+            let ny = -dx / len;
+            return { x: prevWP.x + nx * lateralOffset, y: prevWP.y + ny * lateralOffset, angle: Math.atan2(dy, dx) };
+        }
+        
+        while(traveled < distBackward) {
+            let nextIdx = (currIdx - 1 + track.waypoints.length) % track.waypoints.length;
+            let nextWP = track.waypoints[nextIdx];
+            let segmentDist = Math.hypot(nextWP.x - prevWP.x, nextWP.y - prevWP.y);
+            
+            if (traveled + segmentDist >= distBackward) {
+                let t = (distBackward - traveled) / segmentDist;
+                if (segmentDist === 0) t = 0;
+                let px = prevWP.x + (nextWP.x - prevWP.x) * t;
+                let py = prevWP.y + (nextWP.y - prevWP.y) * t;
+                
+                let dx = prevWP.x - nextWP.x;
+                let dy = prevWP.y - nextWP.y;
+                let len = Math.hypot(dx, dy);
+                let nx = dy / len;
+                let ny = -dx / len;
+                
+                let angle = Math.atan2(dy, dx);
+                
+                return { x: px + nx * lateralOffset, y: py + ny * lateralOffset, angle: angle };
+            }
+            
+            traveled += segmentDist;
+            currIdx = nextIdx;
+            prevWP = nextWP;
+        }
+        return { x: prevWP.x, y: prevWP.y, angle: 0 };
+    };
+    
+    // Create an array of spawn positions (x, y, angle)
     const gridPositions = [];
     for(let i=0; i<numCars; i++) {
         // Staggered by 30px backward each position.
         // Alternate side: +20px and -20px from center.
-        const xPos = startX - (i * 30);
-        const yPos = baseY + (i % 2 === 0 ? 20 : -20);
-        gridPositions.push({x: xPos, y: yPos});
+        const distBackward = i * 30;
+        const lateralOffset = (i % 2 === 0 ? 20 : -20);
+        gridPositions.push(getGridPos(distBackward, lateralOffset));
     }
     
     let currentParticipants = [];
@@ -172,12 +224,20 @@ function startGame(forceTrackType = null) {
         currentParticipants = [...championshipState.participants];
     } else {
         // 1. Add Player
-        currentParticipants.push({ isPlayer: true, color: color, skillVariation: 1 });
+        currentParticipants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: 'You' });
         // 2. Add AI Opponents
         const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white', 'green', 'cyan', 'pink', 'gray', 'lime', 'black'];
         const aiColors = possibleColors.filter(c => c !== color);
+        // Shuffle drivers for single race
+        const legendaryDrivers = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso'];
+        const randomDrivers = [...legendaryDrivers].sort(() => Math.random() - 0.5);
         for (let i = 0; i < numOpponents; i++) {
-            currentParticipants.push({ isPlayer: false, color: aiColors[i % aiColors.length], skillVariation: null });
+            currentParticipants.push({ 
+                isPlayer: false, 
+                color: aiColors[i % aiColors.length], 
+                skillVariation: null,
+                driverName: randomDrivers[i % randomDrivers.length]
+            });
         }
     }
     
@@ -196,7 +256,8 @@ function startGame(forceTrackType = null) {
         car.driverName = p.driverName;
         car.startX = gridPos.x;
         car.startY = gridPos.y;
-        car.startAngle = 0;
+        car.startAngle = gridPos.angle; // New property to store the grid angle
+        car.angle = gridPos.angle;      // Set initial angle
         cars.push(car);
         
         if (p.isPlayer) {

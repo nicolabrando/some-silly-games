@@ -15,12 +15,12 @@ class Car {
         this.health = 100;
         this.isBroken = false;
         
-        // Physics constants (Arcade feel, extremely easy to drive)
+        // Physics constants (Drift physics)
         this.enginePower = 300;
         this.brakingPower = 800;
         this.maxSteer = Math.PI * 0.7; // Very smooth steering
-        this.baseGrip = 3000; // Impossible to slide
-        this.baseFriction = 0.85; // Very high drag so it stops immediately when throttle is released
+        this.baseGrip = 1200; // Lower grip to allow sliding
+        this.baseFriction = 0.85; // Drag
         
         this.inputs = {
             up: false,
@@ -76,7 +76,8 @@ class Car {
         // Only steer if moving
         if (speed > 10) {
             // Steering less effective at very high speeds to simulate understeer
-            const steerEffectiveness = 1; // Removed penalty for extreme arcade feel
+            // Harsher penalty to make cornering difficult at max speed
+            const steerEffectiveness = Math.max(0.15, 1 - (speed / 650)); 
             const steerAmount = this.maxSteer * dt * steerEffectiveness;
             
             // Allow reversing steer direction if going backwards
@@ -99,8 +100,8 @@ class Car {
         // --- Lateral forces (Cornering / Drifting) ---
         const lateralSpeed = this.velocity.x * rightX + this.velocity.y * rightY;
         
-        // Desired lateral correction force to stop sliding (very high multiplier for extreme arcade feel)
-        let lateralForce = -lateralSpeed * 20; // instant alignment
+        // Desired lateral correction force to stop sliding
+        let lateralForce = -lateralSpeed * 5; // Much softer alignment for drifting
         
         // Clamp to grip limit
         if (lateralForce > currentGrip) lateralForce = currentGrip;
@@ -228,7 +229,7 @@ class Car {
         }
         
         // Draw driver name
-        if (this.driverName && typeof isChampionship !== 'undefined' && isChampionship) {
+        if (this.driverName) {
             ctx.font = '10px Arial';
             ctx.fillStyle = '#fff';
             ctx.textAlign = 'center';
