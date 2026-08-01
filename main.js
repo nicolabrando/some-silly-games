@@ -61,6 +61,7 @@ restartBtn.addEventListener('click', () => {
 quitBtn.addEventListener('click', () => {
     gameState = 'menu';
     hud.style.display = 'none';
+    if (isMobile) mobileControls.style.display = 'none';
     menu.style.display = 'block';
     if (typeof stopAudio === 'function') stopAudio();
 });
@@ -70,7 +71,6 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
 const mobileControls = document.getElementById('mobile-controls');
 
 if (isMobile) {
-    mobileControls.style.display = 'flex';
     const btnUp = document.getElementById('btnUp');
     const btnDown = document.getElementById('btnDown');
     const btnLeft = document.getElementById('btnLeft');
@@ -91,6 +91,7 @@ if (isMobile) {
 function startGame() {
     menu.style.display = 'none';
     hud.style.display = 'flex';
+    if (isMobile) mobileControls.style.display = 'flex';
     
     TOTAL_LAPS = parseInt(document.getElementById('laps-select').value, 10);
     const trackType = document.getElementById('track-select').value;
@@ -312,6 +313,7 @@ function updateHUD() {
         gameState = 'gameover';
         hud.style.display = 'none';
         winnerAnnouncement.style.display = 'none';
+        if (isMobile) mobileControls.style.display = 'none';
         gameOverScreen.style.display = 'block';
         
         if (typeof stopAudio === 'function') {
@@ -440,6 +442,7 @@ function gameLoop(timestamp) {
         if (keys.ArrowUp) {
             gameState = 'gameover';
             hud.style.display = 'none';
+            if (isMobile) mobileControls.style.display = 'none';
             gameOverScreen.style.display = 'block';
             resultMessage.innerText = "False Start!";
             resultMessage.style.color = "#E53935";

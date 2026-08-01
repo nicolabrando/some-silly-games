@@ -114,9 +114,6 @@ button:hover {
 }
 
 #quitBtn {
-    position: absolute;
-    top: 0px;
-    right: 0px;
     background-color: #f44336;
     color: white;
     border: none;
@@ -128,6 +125,7 @@ button:hover {
     pointer-events: auto;
     font-family: monospace;
     width: auto;
+    margin-left: 10px;
 }
 
 #quitBtn:hover {
@@ -137,35 +135,36 @@ button:hover {
 #mobile-controls {
     position: absolute;
     bottom: 20px;
-    left: 0;
-    width: 100%;
+    left: 20px;
+    right: 20px;
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    pointer-events: none; /* Let touches pass through the container */
+    justify-content: space-between;
+    pointer-events: none;
 }
 
-.control-row {
+#mobile-left-group, #mobile-right-group {
     display: flex;
-    gap: 20px;
-    justify-content: center;
+    gap: 15px;
 }
 
 #mobile-controls button {
-    background: rgba(255, 255, 255, 0.2);
-    border: 2px solid rgba(255, 255, 255, 0.5);
+    width: 60px;
+    height: 60px;
+    border-radius: 30px;
+    background: rgba(0, 0, 0, 0.4);
     color: white;
-    border-radius: 50%;
-    width: 80px;
-    height: 80px;
-    font-size: 18px;
     font-weight: bold;
-    pointer-events: auto; /* Buttons accept touches */
+    font-size: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    pointer-events: auto;
     user-select: none;
     -webkit-user-select: none;
+    touch-action: manipulation;
+    padding: 0;
+    margin: 0;
 }
 
 #mobile-controls button:active {
-    background: rgba(255, 255, 255, 0.5);
+    background: rgba(0, 0, 0, 0.8);
+    border-color: white;
 }
