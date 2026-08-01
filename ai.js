@@ -13,15 +13,15 @@ class AI {
             this.corneringPatience = 0.8;
             this.steeringSmoothness = 0.05;
         } else if (this.difficulty === 'medium') {
-            this.targetSpeed = 300 * this.skillVariation; // Faster medium
-            this.lookAheadDistance = 90;
-            this.corneringPatience = 0.4;
-            this.steeringSmoothness = 0.15;
-        } else {
-            this.targetSpeed = 500 * this.skillVariation; // Very fast for hard
+            this.targetSpeed = 500 * this.skillVariation; // Was hard, now medium
             this.lookAheadDistance = 150;
             this.corneringPatience = 0.1;
-            this.steeringSmoothness = 0.3; // Snappy steering
+            this.steeringSmoothness = 0.3;
+        } else {
+            this.targetSpeed = 700 * this.skillVariation; // Extreme mode
+            this.lookAheadDistance = 200;
+            this.corneringPatience = 0.02;
+            this.steeringSmoothness = 0.5; // Very snappy
         }
         
         this.errorTimer = 0;

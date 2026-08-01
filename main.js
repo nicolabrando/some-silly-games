@@ -136,6 +136,14 @@ function startGame(forceTrackType = null) {
         track = new PeanutTrack();
     } else if (trackType === 'circomassimo') {
         track = new CircoMassimoTrack();
+    } else if (trackType === 'circle') {
+        track = new CircleTrack();
+    } else if (trackType === 'serpent') {
+        track = new SerpentTrack();
+    } else if (trackType === 'quadrato') {
+        track = new QuadratoTrack();
+    } else if (trackType === 'thunder') {
+        track = new ThunderTrack();
     } else {
         track = new OvalTrack();
     }
@@ -185,6 +193,7 @@ function startGame(forceTrackType = null) {
         const p = currentParticipants[i];
         
         const car = new Car(gridPos.x, gridPos.y, p.color, p.isPlayer);
+        car.driverName = p.driverName;
         car.startX = gridPos.x;
         car.startY = gridPos.y;
         car.startAngle = 0;
@@ -351,10 +360,11 @@ function updateHUD() {
         // Show temporary winner announcement
         winnerAnnouncement.style.display = 'block';
         if (sortedCars[0] === playerCar) {
-            winnerText.innerText = "You Won!";
+            winnerText.innerText = "You Finished First!";
             winnerText.style.color = "#4CAF50";
         } else {
-            winnerText.innerText = `${sortedCars[0].color.toUpperCase()} Won!`;
+            const nameDisplay = sortedCars[0].driverName ? `${sortedCars[0].driverName} (${sortedCars[0].color})` : sortedCars[0].color.toUpperCase();
+            winnerText.innerText = `${nameDisplay} Finished First!`;
             winnerText.style.color = sortedCars[0].color;
         }
         
@@ -448,9 +458,11 @@ function updateHUD() {
             
             const reactStr = c.reactionTime ? `${c.reactionTime.toFixed(3)}s` : '-';
             
+            const nameDisplay = c.driverName ? `${c.driverName} (${c.color})` : `${c.color} ${c.isPlayer ? '(You)' : ''}`;
+            
             tr.innerHTML = `
                 <td>${index + 1}</td>
-                <td style="color: ${c.color}; text-transform: capitalize;">${c.color} ${c.isPlayer ? '(You)' : ''} ${isChampionship && ptsEarned > 0 ? `[+${ptsEarned} pts]` : ''}</td>
+                <td style="color: ${c.color}; font-weight: bold; text-transform: capitalize;">${nameDisplay} ${isChampionship && ptsEarned > 0 ? `[+${ptsEarned} pts]` : ''}</td>
                 <td>${timeStr}</td>
                 <td>${gapStr}</td>
                 <td>${reactStr}</td>
@@ -471,9 +483,12 @@ function updateHUD() {
                 else if (idx === 1) tr.style.color = 'silver';
                 else if (idx === 2) tr.style.color = '#cd7f32';
                 
+                const participant = championshipState.participants.find(p => p.color === col);
+                const nameDisplay = participant && participant.driverName ? `${participant.driverName} (${col})` : col;
+                
                 tr.innerHTML = `
                     <td>${idx + 1}</td>
-                    <td style="color: ${col}; text-transform: capitalize; font-weight: bold;">${col}</td>
+                    <td style="color: ${col}; font-weight: bold;">${nameDisplay}</td>
                     <td>${championshipState.points[col]} pts</td>
                 `;
                 champRecapBody.appendChild(tr);
@@ -556,19 +571,22 @@ function gameLoop(timestamp) {
         
         cars.forEach(car => {
             if (!car.isPlayer) {
-                if (car.aiJumpTime !== null && countdownTimer >= car.aiJumpTime && lightState < 5) {
+                if (car.aiJumpTime !== null && countdownTimer >= car.aiJumpTime && lightState < 6) {
                     car.inputs.up = true;
                 } else {
                     car.inputs.up = false;
                 }
             }
             
-            if (car.inputs.up && lightState < 5 && !car.jumpStartPenalty && !isFalseStartResetting) {
+            const hasMoved = Math.abs(car.velocity.x) > 0.1 || Math.abs(car.velocity.y) > 0.1;
+            
+            if ((car.inputs.up || hasMoved) && lightState < 6 && !car.jumpStartPenalty && !isFalseStartResetting) {
                 car.jumpStartPenalty = true;
                 isFalseStartResetting = true;
                 // Show banner
                 winnerAnnouncement.style.display = 'block';
-                winnerText.innerText = `${car.color.toUpperCase()} False Start! +5s Penalty`;
+                const nameDisplay = car.driverName ? `${car.driverName} (${car.color})` : car.color.toUpperCase();
+                winnerText.innerText = `${nameDisplay} False Start! +5s Penalty`;
                 winnerText.style.color = car.color === 'white' || car.color === 'yellow' || car.color === 'lime' || car.color === 'cyan' ? '#000' : car.color;
                 if (winnerText.style.color === '#000') {
                     winnerAnnouncement.style.backgroundColor = 'rgba(255,255,255,0.8)';
@@ -680,20 +698,26 @@ function startChampionship() {
     const aiColors = possibleColors.filter(c => c !== color);
     
     championshipState = {
-        tracks: ['oval', 'peanut', 'f1', 'circomassimo'],
+        tracks: ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent', 'quadrato'],
         currentTrackIndex: 0,
         points: {},
         participants: [],
         difficulty: difficulty
     };
     
+    // Famous names list
+    let availableNames = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso'];
+    // Shuffle names
+    availableNames.sort(() => Math.random() - 0.5);
+    
     // Initialize points and persistent AI modifiers
-    championshipState.participants.push({ isPlayer: true, color: color, skillVariation: 1 });
+    championshipState.participants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: "You" });
     championshipState.points[color] = 0;
     
     for (let i = 0; i < numOpponents; i++) {
         let aiCol = aiColors[i % aiColors.length];
-        championshipState.participants.push({ isPlayer: false, color: aiCol, skillVariation: 0.8 + (Math.random() * 0.3) });
+        let name = availableNames[i % availableNames.length];
+        championshipState.participants.push({ isPlayer: false, color: aiCol, skillVariation: 0.8 + (Math.random() * 0.3), driverName: name });
         championshipState.points[aiCol] = 0;
     }
     
@@ -723,9 +747,12 @@ function showChampionshipFinal() {
         else if (idx === 1) tr.style.color = 'silver';
         else if (idx === 2) tr.style.color = '#cd7f32'; // bronze
         
+        const participant = championshipState.participants.find(p => p.color === color);
+        const nameDisplay = participant && participant.driverName ? `${participant.driverName} (${color})` : color;
+        
         tr.innerHTML = `
             <td>${idx + 1}</td>
-            <td style="color: ${color}; text-transform: capitalize; font-weight: bold;">${color}</td>
+            <td style="color: ${color}; font-weight: bold;">${nameDisplay}</td>
             <td>${championshipState.points[color]} pts</td>
         `;
         champStatsBody.appendChild(tr);

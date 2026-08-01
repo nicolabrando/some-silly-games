@@ -223,7 +223,19 @@ class Car {
             else if (healthRatio > 0.25) ctx.fillStyle = '#FFC107'; // Yellow
             else ctx.fillStyle = '#F44336'; // Red
             
+            
             ctx.fillRect(this.x - barWidth / 2, this.y - this.height - 10, barWidth * healthRatio, barHeight);
+        }
+        
+        // Draw driver name
+        if (this.driverName && typeof isChampionship !== 'undefined' && isChampionship) {
+            ctx.font = '10px Arial';
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = 'black';
+            ctx.shadowBlur = 3;
+            ctx.fillText(this.driverName, this.x, this.y - this.height - 15);
+            ctx.shadowBlur = 0; // reset
         }
     }
 }

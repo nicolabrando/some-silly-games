@@ -146,7 +146,7 @@ class SegmentedTrack {
     }
     
     checkLapCross(prevX, prevY, currX, currY) {
-        if (prevX < this.startX && currX >= this.startX && currY < 350) {
+        if (prevX < this.startX && currX >= this.startX && Math.abs(currY - this.startY) < this.trackWidth * 1.5) {
             return true;
         }
         return false;
@@ -328,10 +328,10 @@ class CircoMassimoTrack extends SegmentedTrack {
         this.trackWidth = 50;
         this.grassWidth = 70;
         
-        const cx1 = 200;
-        const cx2 = 800;
+        const cx1 = 150;
+        const cx2 = 850;
         const cy = 350;
-        const r = 100;
+        const r = 60;
         
         this.startX = 500;
         this.startY = cy - r;
@@ -342,6 +342,110 @@ class CircoMassimoTrack extends SegmentedTrack {
             { type: 'line', x1: cx2, y1: cy + r, x2: cx1, y2: cy + r },
             { type: 'arc', cx: cx1, cy: cy, r: r, start: Math.PI/2, end: -Math.PI/2, ccw: false }
         ];
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+class CircleTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 80;
+        this.grassWidth = 100;
+        
+        const cx = 500;
+        const cy = 350;
+        const r = 250;
+        
+        this.segments = [
+            { type: 'arc', cx: cx, cy: cy, r: r, start: -Math.PI/2, end: Math.PI/2, ccw: false },
+            { type: 'arc', cx: cx, cy: cy, r: r, start: Math.PI/2, end: -Math.PI/2, ccw: false }
+        ];
+        
+        this.startX = 500;
+        this.startY = cy - r;
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+class SerpentTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 55;
+        this.grassWidth = 75;
+        
+        this.segments = [
+            { type: 'line', x1: 250, y1: 600, x2: 780, y2: 600 },
+            { type: 'arc', cx: 780, cy: 480, r: 120, start: Math.PI/2, end: -Math.PI/2, ccw: true },
+            { type: 'line', x1: 780, y1: 360, x2: 480, y2: 360 },
+            { type: 'arc', cx: 480, cy: 270, r: 90, start: Math.PI/2, end: Math.PI, ccw: false },
+            { type: 'line', x1: 390, y1: 270, x2: 390, y2: 180 },
+            { type: 'arc', cx: 310, cy: 180, r: 80, start: 0, end: -Math.PI/2, ccw: true },
+            { type: 'line', x1: 310, y1: 100, x2: 200, y2: 100 },
+            { type: 'arc', cx: 200, cy: 180, r: 80, start: -Math.PI/2, end: -Math.PI, ccw: true },
+            { type: 'line', x1: 120, y1: 180, x2: 120, y2: 470 },
+            { type: 'arc', cx: 250, cy: 470, r: 130, start: Math.PI, end: Math.PI/2, ccw: true }
+        ];
+        
+        this.startX = 500;
+        this.startY = 600;
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+class ThunderTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 60;
+        this.grassWidth = 80;
+        
+        this.segments = [
+            { type: 'line', x1: 170, y1: 570, x2: 825, y2: 570 },
+            { type: 'arc', cx: 825, cy: 480, r: 90, start: Math.PI/2, end: -Math.PI/2, ccw: true },
+            { type: 'line', x1: 825, y1: 390, x2: 730, y2: 390 },
+            { type: 'arc', cx: 730, cy: 270, r: 120, start: Math.PI/2, end: Math.PI, ccw: false },
+            { type: 'line', x1: 610, y1: 270, x2: 610, y2: 200 },
+            { type: 'arc', cx: 520, cy: 200, r: 90, start: 0, end: -Math.PI, ccw: true },
+            { type: 'line', x1: 430, y1: 200, x2: 430, y2: 320 },
+            { type: 'arc', cx: 350, cy: 320, r: 80, start: 0, end: Math.PI/2, ccw: false },
+            { type: 'line', x1: 350, y1: 400, x2: 170, y2: 400 },
+            { type: 'arc', cx: 170, cy: 485, r: 85, start: -Math.PI/2, end: -Math.PI * 1.5, ccw: true }
+        ];
+        
+        this.startX = 500;
+        this.startY = 570;
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+class QuadratoTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 70;
+        this.grassWidth = 90;
+        
+        const L = 100; // inner boundary
+        const R = 900;
+        const T = 100;
+        const B = 600;
+        const r = 100; // corner radius
+        
+        this.segments = [
+            { type: 'line', x1: L+r, y1: T, x2: R-r, y2: T },
+            { type: 'arc', cx: R-r, cy: T+r, r: r, start: -Math.PI/2, end: 0, ccw: false },
+            { type: 'line', x1: R, y1: T+r, x2: R, y2: B-r },
+            { type: 'arc', cx: R-r, cy: B-r, r: r, start: 0, end: Math.PI/2, ccw: false },
+            { type: 'line', x1: R-r, y1: B, x2: L+r, y2: B },
+            { type: 'arc', cx: L+r, cy: B-r, r: r, start: Math.PI/2, end: Math.PI, ccw: false },
+            { type: 'line', x1: L, y1: B-r, x2: L, y2: T+r },
+            { type: 'arc', cx: L+r, cy: T+r, r: r, start: Math.PI, end: -Math.PI/2, ccw: false }
+        ];
+        
+        this.startX = 500;
+        this.startY = T;
         
         this.waypoints = this.generateWaypoints();
     }
