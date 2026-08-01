@@ -33,7 +33,6 @@ class Car {
         this.lap = 0;
         this.nextWaypoint = 1;
         this.finished = false;
-        this.hasStarted = false;
         this.halfwayMarkerCrossed = false;
         
         this.raceTime = null;
@@ -134,7 +133,7 @@ class Car {
         
         // Exact finish line crossing
         if (track.checkLapCross(previousX, this.y, this.x, this.y)) {
-            if (this.hasStarted && this.halfwayMarkerCrossed) {
+            if (this.halfwayMarkerCrossed) {
                 this.lap++;
                 this.halfwayMarkerCrossed = false;
                 
@@ -144,10 +143,12 @@ class Car {
                     if (!this.finished) {
                         this.finished = true;
                         this.raceTime = track.currentRaceTime; // passed via track object for convenience
+                        if (this.jumpStartPenalty) {
+                            this.raceTime += 5000; // 5 seconds penalty
+                        }
                     }
                 }
             }
-            this.hasStarted = true;
         }
     }
     

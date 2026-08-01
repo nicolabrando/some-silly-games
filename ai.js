@@ -1,24 +1,24 @@
 class AI {
-    constructor(car, difficulty) {
+    constructor(car, difficulty, skillVariation = null) {
         this.car = car;
         this.difficulty = difficulty; // 'easy', 'medium', 'hard'
         
         // Add random variation to make them unique (0.8x to 1.1x multiplier)
-        this.skillVariation = 0.8 + (Math.random() * 0.3);
+        this.skillVariation = skillVariation !== null ? skillVariation : (0.8 + (Math.random() * 0.3));
         
-        // Configure difficulty parameters
+        // Configure difficulty parameters (Increased speeds for v5)
         if (this.difficulty === 'easy') {
-            this.targetSpeed = 140 * this.skillVariation; // Slower for easy
+            this.targetSpeed = 150 * this.skillVariation; // Slower for easy
             this.lookAheadDistance = 50;
             this.corneringPatience = 0.8;
             this.steeringSmoothness = 0.05;
         } else if (this.difficulty === 'medium') {
-            this.targetSpeed = 260 * this.skillVariation; // Faster medium
+            this.targetSpeed = 300 * this.skillVariation; // Faster medium
             this.lookAheadDistance = 90;
             this.corneringPatience = 0.4;
             this.steeringSmoothness = 0.15;
         } else {
-            this.targetSpeed = 450 * this.skillVariation; // Very fast for hard
+            this.targetSpeed = 500 * this.skillVariation; // Very fast for hard
             this.lookAheadDistance = 150;
             this.corneringPatience = 0.1;
             this.steeringSmoothness = 0.3; // Snappy steering
@@ -26,6 +26,12 @@ class AI {
         
         this.errorTimer = 0;
         this.isMakingError = false;
+        
+        // Random offset so AIs don't follow the exact same path
+        this.pathOffset = {
+            x: (Math.random() - 0.5) * 40,
+            y: (Math.random() - 0.5) * 40
+        };
         
         this.raceStarted = false;
         this.reactionTimer = 0;
@@ -86,9 +92,9 @@ class AI {
              targetWP = track.waypoints[targetIndex];
         }
         
-        // Calculate angle to target
-        const dx = targetWP.x - this.car.x;
-        const dy = targetWP.y - this.car.y;
+        // Calculate angle to target with path offset
+        const dx = (targetWP.x + this.pathOffset.x) - this.car.x;
+        const dy = (targetWP.y + this.pathOffset.y) - this.car.y;
         let angleToTarget = Math.atan2(dy, dx);
         
         if (this.isMakingError) {

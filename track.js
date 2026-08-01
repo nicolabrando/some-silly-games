@@ -133,7 +133,7 @@ class SegmentedTrack {
                 car.x -= nx * push;
                 car.y -= ny * push;
                 
-                car.takeDamage(0.1); // 0.1 HP damage per frame while grinding the wall
+                car.takeDamage(0.5); // Increased barrier damage
                 
                 // Tangent projection for sliding effect (non-sticky wall)
                 const tx = -ny;
@@ -173,22 +173,34 @@ class SegmentedTrack {
     }
 
     draw(ctx) {
-        ctx.lineCap = 'round';
+        ctx.lineCap = 'butt'; // Crucial for segmented drawing without huge overlap
         ctx.lineJoin = 'round';
         
-        // 1. Outer Barrier Base (Red)
+        const dashLen = 100; // Increased length for better visibility
+
+        
+        // 1. Outer Barrier (Green segment)
         this.drawPath(ctx);
         ctx.lineWidth = this.grassWidth * 2 + 10;
-        ctx.strokeStyle = '#d32f2f';
+        ctx.strokeStyle = '#009246'; // Distinct Italian Green
+        ctx.setLineDash([dashLen, dashLen * 2]);
+        ctx.lineDashOffset = 0;
         ctx.stroke();
         
-        // 2. Outer Barrier Stripes (White)
+        // 2. Outer Barrier (White segment)
         this.drawPath(ctx);
-        ctx.lineWidth = this.grassWidth * 2 + 10;
-        ctx.strokeStyle = '#fff';
-        ctx.setLineDash([20, 20]);
+        ctx.strokeStyle = '#ffffff'; // White
+        ctx.lineDashOffset = -dashLen;
         ctx.stroke();
+        
+        // 3. Outer Barrier (Red segment)
+        this.drawPath(ctx);
+        ctx.strokeStyle = '#d32f2f'; // Italian Red
+        ctx.lineDashOffset = -dashLen * 2;
+        ctx.stroke();
+        
         ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
         
         // 3. Grass Margin (Dark Green)
         this.drawPath(ctx);
@@ -255,8 +267,8 @@ class OvalTrack extends SegmentedTrack {
 class F1Track extends SegmentedTrack {
     constructor() {
         super();
-        this.trackWidth = 45;
-        this.grassWidth = 65;
+        this.trackWidth = 60;
+        this.grassWidth = 80;
         this.startX = 450;
         this.startY = 100;
         
@@ -278,10 +290,10 @@ class F1Track extends SegmentedTrack {
 class PeanutTrack extends SegmentedTrack {
     constructor() {
         super();
-        this.trackWidth = 55;
-        this.grassWidth = 70;
+        this.trackWidth = 70;
+        this.grassWidth = 85;
         const dx = 250;
-        const dy = 800;
+        const dy = 1000;
         const theta = Math.atan2(dy, dx);
         
         const cx1 = 250;
@@ -289,10 +301,10 @@ class PeanutTrack extends SegmentedTrack {
         const cy = 350;
         const rSmall = 125;
         
-        // Distance is sqrt(250^2 + 800^2) = 838
-        // So R_big = 838 - 125 = 713
+        // Distance is sqrt(250^2 + 1000^2) = 1030.7
+        // So R_big = 1030.7 - 125 = 905.7
         
-        const rBig = 713;
+        const rBig = 905.7;
         const cyTop = cy - dy;
         const cyBot = cy + dy;
         
@@ -304,6 +316,31 @@ class PeanutTrack extends SegmentedTrack {
             { type: 'arc', cx: 500, cy: cyTop, r: rBig, start: Math.PI - theta, end: theta, ccw: true },
             { type: 'arc', cx: cx2, cy: cy, r: rSmall, start: Math.PI + theta, end: Math.PI - theta, ccw: false },
             { type: 'arc', cx: 500, cy: cyBot, r: rBig, start: -theta, end: -Math.PI + theta, ccw: true }
+        ];
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+class CircoMassimoTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 50;
+        this.grassWidth = 70;
+        
+        const cx1 = 200;
+        const cx2 = 800;
+        const cy = 350;
+        const r = 100;
+        
+        this.startX = 500;
+        this.startY = cy - r;
+        
+        this.segments = [
+            { type: 'line', x1: cx1, y1: cy - r, x2: cx2, y2: cy - r },
+            { type: 'arc', cx: cx2, cy: cy, r: r, start: -Math.PI/2, end: Math.PI/2, ccw: false },
+            { type: 'line', x1: cx2, y1: cy + r, x2: cx1, y2: cy + r },
+            { type: 'arc', cx: cx1, cy: cy, r: r, start: Math.PI/2, end: -Math.PI/2, ccw: false }
         ];
         
         this.waypoints = this.generateWaypoints();
