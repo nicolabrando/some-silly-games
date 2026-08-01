@@ -1,0 +1,325 @@
+:root {
+    --bg-dark: #0f172a;
+    --bg-darker: #020617;
+    --text-light: #f8fafc;
+    --text-muted: #94a3b8;
+    
+    /* Simon Colors - Normal */
+    --color-green: #10b981;
+    --color-red: #ef4444;
+    --color-yellow: #eab308;
+    --color-blue: #3b82f6;
+
+    /* Simon Colors - Active/Glow */
+    --color-green-glow: #34d399;
+    --color-red-glow: #f87171;
+    --color-yellow-glow: #fde047;
+    --color-blue-glow: #60a5fa;
+
+    /* Glow Shadows */
+    --shadow-green: 0 0 30px 5px rgba(16, 185, 129, 0.6);
+    --shadow-red: 0 0 30px 5px rgba(239, 68, 68, 0.6);
+    --shadow-yellow: 0 0 30px 5px rgba(234, 179, 8, 0.6);
+    --shadow-blue: 0 0 30px 5px rgba(59, 130, 246, 0.6);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background: radial-gradient(circle at center, var(--bg-dark), var(--bg-darker));
+    color: var(--text-light);
+    height: 100vh;
+    height: 100dvh; /* Mobile viewport fix */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+
+.app-container {
+    width: 100%;
+    max-width: 500px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 2rem 1.5rem;
+}
+
+/* Header & Scores */
+header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    margin-bottom: auto;
+}
+
+.logo {
+    font-size: 3rem;
+    font-weight: 800;
+    letter-spacing: 4px;
+    background: linear-gradient(90deg, var(--text-light), var(--text-muted));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+.scores {
+    display: flex;
+    gap: 1rem;
+    width: 100%;
+}
+
+.score-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.75rem;
+    border-radius: 16px;
+}
+
+.glass {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.glass-dark {
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.value {
+    font-size: 1.5rem;
+    font-weight: 800;
+}
+
+/* Game Area */
+.game-area {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: auto;
+}
+
+.simon-board {
+    position: relative;
+    width: min(90vw, 400px);
+    aspect-ratio: 1;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 50%;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    box-shadow: 
+        0 0 50px rgba(0, 0, 0, 0.5),
+        inset 0 0 20px rgba(255, 255, 255, 0.02);
+}
+
+.row {
+    display: flex;
+    gap: 15px;
+    flex: 1;
+}
+
+.simon-btn {
+    flex: 1;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0.7;
+    /* Avoid text selection/highlight on mobile */
+    user-select: none;
+}
+
+.simon-btn:active {
+    transform: scale(0.96);
+}
+
+/* Button Shapes */
+.simon-btn.green {
+    background-color: var(--color-green);
+    border-top-left-radius: 100%;
+}
+.simon-btn.red {
+    background-color: var(--color-red);
+    border-top-right-radius: 100%;
+}
+.simon-btn.yellow {
+    background-color: var(--color-yellow);
+    border-bottom-left-radius: 100%;
+}
+.simon-btn.blue {
+    background-color: var(--color-blue);
+    border-bottom-right-radius: 100%;
+}
+
+/* Active States */
+.simon-btn.green.active {
+    background-color: var(--color-green-glow);
+    box-shadow: var(--shadow-green);
+    opacity: 1;
+}
+.simon-btn.red.active {
+    background-color: var(--color-red-glow);
+    box-shadow: var(--shadow-red);
+    opacity: 1;
+}
+.simon-btn.yellow.active {
+    background-color: var(--color-yellow-glow);
+    box-shadow: var(--shadow-yellow);
+    opacity: 1;
+}
+.simon-btn.blue.active {
+    background-color: var(--color-blue-glow);
+    box-shadow: var(--shadow-blue);
+    opacity: 1;
+}
+
+/* Unclickable state when showing sequence */
+.unclickable {
+    pointer-events: none;
+}
+
+/* Center Display */
+.center-display {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 35%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.start-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-light);
+    font-family: inherit;
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: transform 0.2s, opacity 0.2s;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+}
+
+.start-btn:active {
+    transform: scale(0.9);
+}
+
+.status-text {
+    font-size: 1.2rem;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Modal */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    opacity: 0;
+    animation: fadeIn 0.3s forwards;
+    padding: 1.5rem;
+}
+
+@keyframes fadeIn {
+    to { opacity: 1; }
+}
+
+.modal-content {
+    padding: 2.5rem 2rem;
+    border-radius: 24px;
+    text-align: center;
+    width: 100%;
+    max-width: 340px;
+    transform: translateY(20px);
+    animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideUp {
+    to { transform: translateY(0); }
+}
+
+.modal-content h2 {
+    font-size: 2.2rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-light);
+}
+
+.final-score-text {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    margin-bottom: 2rem;
+}
+
+.highlight {
+    color: var(--color-green-glow);
+    font-size: 1.5rem;
+    font-weight: 800;
+}
+
+.primary-btn {
+    background: linear-gradient(135deg, var(--color-blue), var(--color-blue-glow));
+    color: white;
+    border: none;
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+    font-family: inherit;
+    border-radius: 12px;
+    cursor: pointer;
+    width: 100%;
+    transition: transform 0.2s, box-shadow 0.2s;
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+}
+
+.primary-btn:active {
+    transform: translateY(2px);
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+}
