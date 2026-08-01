@@ -11,12 +11,16 @@ class Car {
         this.angle = 0;
         this.velocity = { x: 0, y: 0 };
         
-        // Physics constants (Arcade feel, easy to drive)
-        this.enginePower = 350;
-        this.brakingPower = 700;
-        this.maxSteer = Math.PI * 0.8; // Smoother steering
-        this.baseGrip = 1200; // Extremely high grip to prevent sliding
-        this.baseFriction = 0.7; // Higher drag so it slows down naturally and limits top speed
+        this.maxHealth = 100;
+        this.health = 100;
+        this.isBroken = false;
+        
+        // Physics constants (Arcade feel, extremely easy to drive)
+        this.enginePower = 300;
+        this.brakingPower = 800;
+        this.maxSteer = Math.PI * 0.7; // Very smooth steering
+        this.baseGrip = 3000; // Impossible to slide
+        this.baseFriction = 0.85; // Very high drag so it stops immediately when throttle is released
         
         this.inputs = {
             up: false,
@@ -49,7 +53,7 @@ class Car {
             currentFriction *= 2.5; // Slows you down!
         }
         
-        if (this.finished) {
+        if (this.finished || this.isBroken) {
             // Suspend commands, let it coast by inertia
             this.inputs.up = false;
             this.inputs.down = false;
@@ -73,7 +77,7 @@ class Car {
         // Only steer if moving
         if (speed > 10) {
             // Steering less effective at very high speeds to simulate understeer
-            const steerEffectiveness = speed > 100 ? 100 / speed : 1; 
+            const steerEffectiveness = 1; // Removed penalty for extreme arcade feel
             const steerAmount = this.maxSteer * dt * steerEffectiveness;
             
             // Allow reversing steer direction if going backwards
@@ -96,8 +100,8 @@ class Car {
         // --- Lateral forces (Cornering / Drifting) ---
         const lateralSpeed = this.velocity.x * rightX + this.velocity.y * rightY;
         
-        // Desired lateral correction force to stop sliding (high multiplier for arcade feel)
-        let lateralForce = -lateralSpeed * 10; // snappy alignment
+        // Desired lateral correction force to stop sliding (very high multiplier for extreme arcade feel)
+        let lateralForce = -lateralSpeed * 20; // instant alignment
         
         // Clamp to grip limit
         if (lateralForce > currentGrip) lateralForce = currentGrip;
@@ -157,6 +161,15 @@ class Car {
         }
     }
     
+    takeDamage(amount) {
+        if (this.isBroken || this.finished) return;
+        this.health -= amount;
+        if (this.health <= 0) {
+            this.health = 0;
+            this.isBroken = true;
+        }
+    }
+    
     draw(ctx) {
         ctx.save();
         ctx.translate(this.x, this.y);
@@ -194,5 +207,22 @@ class Car {
         ctx.fill();
         
         ctx.restore();
+        
+        // Draw Health Bar
+        if (this.health > 0) {
+            const barWidth = 24;
+            const barHeight = 4;
+            const healthRatio = this.health / this.maxHealth;
+            
+            ctx.fillStyle = '#000'; // border
+            ctx.fillRect(this.x - barWidth / 2 - 1, this.y - this.height - 10 - 1, barWidth + 2, barHeight + 2);
+            
+            // color based on health
+            if (healthRatio > 0.5) ctx.fillStyle = '#4CAF50'; // Green
+            else if (healthRatio > 0.25) ctx.fillStyle = '#FFC107'; // Yellow
+            else ctx.fillStyle = '#F44336'; // Red
+            
+            ctx.fillRect(this.x - barWidth / 2, this.y - this.height - 10, barWidth * healthRatio, barHeight);
+        }
     }
 }

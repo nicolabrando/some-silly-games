@@ -8,20 +8,20 @@ class AI {
         
         // Configure difficulty parameters
         if (this.difficulty === 'easy') {
-            this.targetSpeed = 160 * this.skillVariation;
+            this.targetSpeed = 140 * this.skillVariation; // Slower for easy
             this.lookAheadDistance = 50;
             this.corneringPatience = 0.8;
             this.steeringSmoothness = 0.05;
         } else if (this.difficulty === 'medium') {
-            this.targetSpeed = 220 * this.skillVariation;
-            this.lookAheadDistance = 80;
+            this.targetSpeed = 260 * this.skillVariation; // Faster medium
+            this.lookAheadDistance = 90;
             this.corneringPatience = 0.4;
-            this.steeringSmoothness = 0.1;
+            this.steeringSmoothness = 0.15;
         } else {
-            this.targetSpeed = 300 * this.skillVariation;
-            this.lookAheadDistance = 120;
-            this.corneringPatience = 0.2;
-            this.steeringSmoothness = 0.2;
+            this.targetSpeed = 450 * this.skillVariation; // Very fast for hard
+            this.lookAheadDistance = 150;
+            this.corneringPatience = 0.1;
+            this.steeringSmoothness = 0.3; // Snappy steering
         }
         
         this.errorTimer = 0;
@@ -32,8 +32,8 @@ class AI {
     }
     
     startRace() {
-        // Human reaction time: 0.15s to 0.4s
-        this.reactionTimer = 0.15 + Math.random() * 0.25;
+        // Reaction time +50% compared to before
+        this.reactionTimer = (0.15 + Math.random() * 0.25) * 1.5;
         this.car.reactionTime = this.reactionTimer;
     }
     
@@ -65,7 +65,7 @@ class AI {
                 this.errorTimer = 2 + Math.random() * 3; // Drive normally for 2-5 seconds
             } else {
                 // Chance to make an error based on difficulty
-                const errorChance = this.difficulty === 'easy' ? 0.3 : (this.difficulty === 'medium' ? 0.15 : 0.05);
+                const errorChance = this.difficulty === 'easy' ? 0.4 : (this.difficulty === 'medium' ? 0.15 : 0.02);
                 if (Math.random() < errorChance) {
                     this.isMakingError = true;
                     this.errorTimer = 0.2 + Math.random() * 0.5; // Make mistake for 0.2 to 0.7 seconds

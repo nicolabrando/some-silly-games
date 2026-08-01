@@ -25,6 +25,7 @@ const restartBtn = document.getElementById('restart-btn');
 const lapCounter = document.getElementById('lap-counter');
 const posCounter = document.getElementById('position-counter');
 const speedometer = document.getElementById('speedometer');
+const quitBtn = document.getElementById('quitBtn');
 const resultMessage = document.getElementById('result-message');
 const winnerAnnouncement = document.getElementById('winner-announcement');
 const winnerText = document.getElementById('winner-text');
@@ -57,6 +58,36 @@ restartBtn.addEventListener('click', () => {
     menu.style.display = 'block';
 });
 
+quitBtn.addEventListener('click', () => {
+    gameState = 'menu';
+    hud.style.display = 'none';
+    menu.style.display = 'block';
+    if (typeof stopAudio === 'function') stopAudio();
+});
+
+// Mobile Controls detection and mapping
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const mobileControls = document.getElementById('mobile-controls');
+
+if (isMobile) {
+    mobileControls.style.display = 'flex';
+    const btnUp = document.getElementById('btnUp');
+    const btnDown = document.getElementById('btnDown');
+    const btnLeft = document.getElementById('btnLeft');
+    const btnRight = document.getElementById('btnRight');
+    
+    const bindTouch = (btn, keyName) => {
+        btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[keyName] = true; });
+        btn.addEventListener('touchend', (e) => { e.preventDefault(); keys[keyName] = false; });
+        btn.addEventListener('touchcancel', (e) => { e.preventDefault(); keys[keyName] = false; });
+    };
+    
+    bindTouch(btnUp, 'ArrowUp');
+    bindTouch(btnDown, 'ArrowDown');
+    bindTouch(btnLeft, 'ArrowLeft');
+    bindTouch(btnRight, 'ArrowRight');
+}
+
 function startGame() {
     menu.style.display = 'none';
     hud.style.display = 'flex';
@@ -69,6 +100,8 @@ function startGame() {
     
     if (trackType === 'f1') {
         track = new F1Track();
+    } else if (trackType === 'peanut') {
+        track = new PeanutTrack();
     } else {
         track = new OvalTrack();
     }
@@ -78,28 +111,43 @@ function startGame() {
     
     // Spawn positions (Aligned on the grid)
     const numCars = numOpponents + 1;
-    const startX = trackType === 'f1' ? 470 : (track.leftCenter.x + track.rightCenter.x) / 2 - 30; // Just behind the start line
-    
-    // Let's get y from the track object directly.
-    let baseY = trackType === 'f1' ? 150 : track.leftCenter.y - track.radius;
+    const startX = track.startX;
+    let baseY = track.startY;
     
     const startYMin = baseY - track.trackWidth + 15;
     const startYMax = baseY + track.trackWidth - 15;
     const spacingY = numCars > 1 ? (startYMax - startYMin) / (numCars - 1) : 0;
     
+    // Create an array of Y positions and shuffle it for random grid start
+    const yPositions = [];
+    for(let i=0; i<numCars; i++) {
+        yPositions.push(startYMin + spacingY * i);
+    }
+    // Fisher-Yates shuffle
+    for (let i = yPositions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [yPositions[i], yPositions[j]] = [yPositions[j], yPositions[i]];
+    }
+    
     // Player
-    playerCar = new Car(startX, startYMin, color, true);
+    playerCar = new Car(startX, yPositions[0], color, true);
     cars.push(playerCar);
     
     // AI Opponents
     const aiColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white'].filter(c => c !== color);
     
     for (let i = 0; i < numOpponents; i++) {
-        const aiY = startYMin + spacingY * (i + 1);
+        const aiY = yPositions[i + 1];
         const aiCar = new Car(startX, aiY, aiColors[i % aiColors.length], false);
         cars.push(aiCar);
         ais.push(new AI(aiCar, difficulty));
     }
+    
+    // Generous health proportional to laps
+    cars.forEach(car => {
+        car.maxHealth = 100 * Math.max(1, TOTAL_LAPS);
+        car.health = car.maxHealth;
+    });
     
     // Assign correct initial waypoint
     cars.forEach(car => {
@@ -123,6 +171,11 @@ function startGame() {
     leaderFinished = false;
     raceFinished = false;
     winnerAnnouncement.style.display = 'none';
+    
+    // Initialize Web Audio API
+    if (typeof initAudio === 'function') {
+        initAudio();
+    }
     
     lastTime = performance.now();
     requestAnimationFrame(gameLoop);
@@ -156,21 +209,32 @@ function updatePhysics(dt) {
             if (dist < minDist) {
                 // push apart
                 const overlap = minDist - dist;
-                const pushX = (dx / dist) * overlap * 0.5;
-                const pushY = (dy / dist) * overlap * 0.5;
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const pushX = nx * overlap * 0.5;
+                const pushY = ny * overlap * 0.5;
                 c1.x -= pushX;
                 c1.y -= pushY;
                 c2.x += pushX;
                 c2.y += pushY;
                 
-                // Average out velocities to simulate collision
-                const elasticity = 0.5;
-                const avgVx = (c1.velocity.x + c2.velocity.x) * elasticity;
-                const avgVy = (c1.velocity.y + c2.velocity.y) * elasticity;
-                c1.velocity.x = avgVx;
-                c1.velocity.y = avgVy;
-                c2.velocity.x = avgVx;
-                c2.velocity.y = avgVy;
+                // Bounce velocities along the normal
+                const relVx = c2.velocity.x - c1.velocity.x;
+                const relVy = c2.velocity.y - c1.velocity.y;
+                const velAlongNormal = relVx * nx + relVy * ny;
+                
+                if (velAlongNormal < 0) {
+                    const restitution = 0.5; // Bounciness
+                    const impulse = -(1 + restitution) * velAlongNormal / 2;
+                    c1.velocity.x -= impulse * nx;
+                    c1.velocity.y -= impulse * ny;
+                    c2.velocity.x += impulse * nx;
+                    c2.velocity.y += impulse * ny;
+                }
+                
+                // Apply damage
+                c1.takeDamage(0.5);
+                c2.takeDamage(0.5);
             }
         }
     }
@@ -189,6 +253,16 @@ function updateHUD() {
     
     // Position Calculation
     const sortedCars = [...cars].sort((a, b) => {
+        // If both finished, sort by lap first (lapped cars have fewer laps), then finish time
+        if (a.finished && b.finished) {
+            if (a.lap !== b.lap) return b.lap - a.lap;
+            return a.raceTime - b.raceTime;
+        }
+        // If only one finished, it's ahead
+        if (a.finished) return -1;
+        if (b.finished) return 1;
+        
+        // Otherwise, sort by race progress
         if (a.lap !== b.lap) return b.lap - a.lap;
         // Same lap, who is further along?
         if (a.nextWaypoint !== b.nextWaypoint) return b.nextWaypoint - a.nextWaypoint;
@@ -222,20 +296,39 @@ function updateHUD() {
         }, 4000);
     }
     
-    // Check if ALL cars have finished
-    if (cars.every(c => c.finished) && !raceFinished) {
+    if (playerCar.isBroken && !playerCar.notifiedBroken) {
+        playerCar.notifiedBroken = true;
+        winnerAnnouncement.style.display = 'block';
+        winnerText.innerText = "Car Destroyed!";
+        winnerText.style.color = "#F44336";
+        setTimeout(() => {
+            winnerAnnouncement.style.display = 'none';
+        }, 4000);
+    }
+    
+    // Check if ALL cars have finished or broken
+    if (cars.every(c => c.finished || c.isBroken) && !raceFinished) {
         raceFinished = true;
         gameState = 'gameover';
         hud.style.display = 'none';
         winnerAnnouncement.style.display = 'none';
         gameOverScreen.style.display = 'block';
         
-        if (sortedCars[0] === playerCar) {
-            resultMessage.innerText = "You Won!";
-            resultMessage.style.color = "#4CAF50";
+        if (typeof stopAudio === 'function') {
+            stopAudio();
+        }
+        
+        if (sortedCars[0].finished) {
+            if (sortedCars[0] === playerCar) {
+                resultMessage.innerText = "You Won!";
+                resultMessage.style.color = "#4CAF50";
+            } else {
+                resultMessage.innerText = "Race Finished";
+                resultMessage.style.color = "#fff";
+            }
         } else {
-            resultMessage.innerText = "Race Finished";
-            resultMessage.style.color = "#fff";
+            resultMessage.innerText = "No one finished!";
+            resultMessage.style.color = "#F44336";
         }
         
         // Populate stats table
@@ -254,7 +347,10 @@ function updateHUD() {
             let timeStr = formatTime(c.raceTime);
             let gapStr = "-";
             
-            if (index > 0) {
+            if (c.isBroken && !c.finished) {
+                timeStr = "DNF";
+                gapStr = "DNF";
+            } else if (index > 0) {
                 if (c.lap < TOTAL_LAPS) {
                     // Lapped car
                     const lapsBehind = TOTAL_LAPS - c.lap;
@@ -359,6 +455,11 @@ function gameLoop(timestamp) {
             drawLights(ctx);
         }
         
+        if (typeof updateEngineSound === 'function') {
+            const speed = Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2);
+            updateEngineSound(speed, keys.ArrowUp);
+        }
+        
         requestAnimationFrame(gameLoop);
         return;
     }
@@ -390,6 +491,11 @@ function gameLoop(timestamp) {
         // Hide lights after 1.5s of GO
         if (countdownTimer < goDelay + 1.5) {
             drawLights(ctx);
+        }
+        
+        if (typeof updateEngineSound === 'function') {
+            const speed = Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2);
+            updateEngineSound(speed, playerCar.inputs.up);
         }
         
         requestAnimationFrame(gameLoop);

@@ -1,211 +1,11 @@
-class OvalTrack {
+class SegmentedTrack {
     constructor() {
-        this.leftCenter = { x: 300, y: 350 };
-        this.rightCenter = { x: 700, y: 350 };
-        this.radius = 160;
-        
-        this.trackWidth = 80;      // Half width of the asphalt
-        this.grassWidth = 120;     // Half width to the barrier (includes track + grass)
-        
-        this.waypoints = this.generateWaypoints();
-    }
-
-    generateWaypoints() {
-        const waypoints = [];
-        const numArcPoints = 12;
-        
-        // Clockwise direction
-        // Top straight
-        waypoints.push({ x: this.leftCenter.x, y: this.leftCenter.y - this.radius });
-        waypoints.push({ x: (this.leftCenter.x + this.rightCenter.x) / 2, y: this.leftCenter.y - this.radius });
-        waypoints.push({ x: this.rightCenter.x, y: this.rightCenter.y - this.radius });
-
-        // Right arc
-        for (let i = 1; i <= numArcPoints; i++) {
-            const angle = -Math.PI / 2 + (i * Math.PI) / numArcPoints;
-            waypoints.push({
-                x: this.rightCenter.x + this.radius * Math.cos(angle),
-                y: this.rightCenter.y + this.radius * Math.sin(angle)
-            });
-        }
-
-        // Bottom straight
-        waypoints.push({ x: this.rightCenter.x, y: this.rightCenter.y + this.radius });
-        waypoints.push({ x: (this.leftCenter.x + this.rightCenter.x) / 2, y: this.leftCenter.y + this.radius });
-        waypoints.push({ x: this.leftCenter.x, y: this.leftCenter.y + this.radius });
-
-        // Left arc
-        for (let i = 1; i < numArcPoints; i++) {
-            const angle = Math.PI / 2 + (i * Math.PI) / numArcPoints;
-            waypoints.push({
-                x: this.leftCenter.x + this.radius * Math.cos(angle),
-                y: this.leftCenter.y + this.radius * Math.sin(angle)
-            });
-        }
-        
-        return waypoints;
-    }
-
-    getSurface(x, y) {
-        let dist;
-        if (x < this.leftCenter.x) {
-            dist = Math.sqrt(Math.pow(x - this.leftCenter.x, 2) + Math.pow(y - this.leftCenter.y, 2)) - this.radius;
-        } else if (x > this.rightCenter.x) {
-            dist = Math.sqrt(Math.pow(x - this.rightCenter.x, 2) + Math.pow(y - this.rightCenter.y, 2)) - this.radius;
-        } else {
-            if (y < this.leftCenter.y) dist = y - (this.leftCenter.y - this.radius);
-            else dist = y - (this.leftCenter.y + this.radius);
-        }
-        dist = Math.abs(dist);
-
-        if (dist <= this.trackWidth) return 'track';
-        return 'grass';
-    }
-    
-    checkBarrierCollision(car) {
-        let cx, cy;
-        const x = car.x;
-        const y = car.y;
-        
-        if (x < this.leftCenter.x) {
-            cx = this.leftCenter.x; cy = this.leftCenter.y;
-        } else if (x > this.rightCenter.x) {
-            cx = this.rightCenter.x; cy = this.rightCenter.y;
-        } else {
-            cx = x; cy = this.leftCenter.y;
-        }
-        
-        const dx = x - cx;
-        const dy = y - cy;
-        const currentRadius = Math.sqrt(dx*dx + dy*dy);
-        
-        // Boundaries (using 12 as car collision radius)
-        const innerLimit = this.radius - this.grassWidth + 12;
-        const outerLimit = this.radius + this.grassWidth - 12;
-        
-        let hit = false;
-        let nx = dx / currentRadius;
-        let ny = dy / currentRadius;
-        
-        if (currentRadius < innerLimit) {
-            const push = innerLimit - currentRadius;
-            car.x += nx * push;
-            car.y += ny * push;
-            hit = true;
-        } else if (currentRadius > outerLimit) {
-            const push = currentRadius - outerLimit;
-            car.x -= nx * push;
-            car.y -= ny * push;
-            hit = true;
-        }
-        
-        if (hit) {
-            // Dampen velocity to prevent sliding along walls too fast
-            car.velocity.x *= 0.8;
-            car.velocity.y *= 0.8;
-        }
-    }
-
-    draw(ctx) {
-        // Draw Grass area (lighter green)
-        ctx.fillStyle = '#4CAF50';
-        ctx.beginPath();
-        this.addCapsuleSubpath(ctx, this.leftCenter, this.rightCenter, this.radius + this.grassWidth);
-        ctx.fill();
-
-        // Outer barrier
-        ctx.lineWidth = 10;
-        ctx.strokeStyle = '#d32f2f';
-        ctx.stroke();
-
-        // Inner barrier and grass
-        ctx.fillStyle = '#2e7d32'; // dark grass inside
-        ctx.beginPath();
-        this.addCapsuleSubpath(ctx, this.leftCenter, this.rightCenter, this.radius - this.grassWidth);
-        ctx.fill();
-        ctx.lineWidth = 10;
-        ctx.strokeStyle = '#d32f2f';
-        ctx.stroke();
-
-        // Draw Asphalt
-        ctx.fillStyle = '#555';
-        ctx.beginPath();
-        this.addCapsuleSubpath(ctx, this.leftCenter, this.rightCenter, this.radius + this.trackWidth); // Outer asphalt
-        this.addCapsuleSubpath(ctx, this.leftCenter, this.rightCenter, this.radius - this.trackWidth, true); // Inner hole, CCW
-        ctx.fill('evenodd');
-
-        // Draw Start/Finish line
-        this.drawStartLine(ctx);
-    }
-
-    addCapsuleSubpath(ctx, leftCenter, rightCenter, radius, ccw = false) {
-        if (!ccw) {
-            // Clockwise
-            ctx.moveTo(leftCenter.x, leftCenter.y + radius); // bottom left
-            ctx.arc(leftCenter.x, leftCenter.y, radius, Math.PI / 2, -Math.PI / 2, false); // left side
-            ctx.lineTo(rightCenter.x, rightCenter.y - radius); // top right
-            ctx.arc(rightCenter.x, rightCenter.y, radius, -Math.PI / 2, Math.PI / 2, false); // right side
-            ctx.closePath(); // bottom right to bottom left
-        } else {
-            // Counter-clockwise
-            ctx.moveTo(leftCenter.x, leftCenter.y - radius); // top left
-            ctx.arc(leftCenter.x, leftCenter.y, radius, -Math.PI / 2, Math.PI / 2, true); // left side
-            ctx.lineTo(rightCenter.x, rightCenter.y + radius); // bottom right
-            ctx.arc(rightCenter.x, rightCenter.y, radius, Math.PI / 2, -Math.PI / 2, true); // right side
-            ctx.closePath(); // top right to top left
-        }
-    }
-    
-    drawStartLine(ctx) {
-        ctx.fillStyle = '#fff';
-        const startX = (this.leftCenter.x + this.rightCenter.x) / 2;
-        const startY = this.leftCenter.y - this.radius - this.trackWidth;
-        const width = 10;
-        const height = this.trackWidth * 2;
-        
-        // Draw checkered pattern
-        for (let i = 0; i < height; i += 10) {
-            for (let j = 0; j < width; j += 5) {
-                if ((i / 10 + j / 5) % 2 === 0) {
-                    ctx.fillRect(startX + j, startY + i, 5, 10);
-                } else {
-                    ctx.fillStyle = '#000';
-                    ctx.fillRect(startX + j, startY + i, 5, 10);
-                    ctx.fillStyle = '#fff';
-                }
-            }
-        }
-    }
-    
-    // Generalized lap cross check for both tracks
-    checkLapCross(prevX, prevY, currX, currY) {
-        // Start line is on the top straight, going right
-        const midX = (this.leftCenter.x + this.rightCenter.x) / 2;
-        if (prevX < midX && currX >= midX && currY < this.leftCenter.y) {
-            return true;
-        }
-        return false;
-    }
-}
-
-class F1Track {
-    constructor() {
-        this.trackWidth = 50;      // Wider asphalt
-        this.grassWidth = 70;      // Reduced to 70 so inner red barriers don't overlap with grass
-        
-        // Center line segments for F1 track (Spaced out and centered for 1000x700)
-        this.segments = [
-            { type: 'line', x1: 300, y1: 150, x2: 700, y2: 150 },
-            { type: 'arc', cx: 700, cy: 337.5, r: 187.5, start: -Math.PI/2, end: Math.PI/2, ccw: false },
-            { type: 'line', x1: 700, y1: 525, x2: 600, y2: 525 },
-            { type: 'arc', cx: 600, cy: 450, r: 75, start: Math.PI/2, end: Math.PI, ccw: false },
-            { type: 'line', x1: 525, y1: 450, x2: 525, y2: 375 },
-            { type: 'arc', cx: 450, cy: 375, r: 75, start: 0, end: -Math.PI/2, ccw: true },
-            { type: 'line', x1: 450, y1: 300, x2: 300, y2: 300 },
-            { type: 'arc', cx: 300, cy: 225, r: 75, start: Math.PI/2, end: -Math.PI/2, ccw: false }
-        ];
-        
-        this.waypoints = this.generateWaypoints();
+        // To be overridden by subclasses
+        this.trackWidth = 75;
+        this.grassWidth = 95;
+        this.segments = [];
+        this.startX = 500;
+        this.startY = 150;
     }
 
     generateWaypoints() {
@@ -328,19 +128,25 @@ class F1Track {
             
             if (len > maxAllowed) {
                 const push = len - maxAllowed;
-                car.x -= (dx / len) * push;
-                car.y -= (dy / len) * push;
+                const nx = dx / len;
+                const ny = dy / len;
+                car.x -= nx * push;
+                car.y -= ny * push;
                 
-                // Dampen velocity
-                car.velocity.x *= 0.8;
-                car.velocity.y *= 0.8;
+                car.takeDamage(0.1); // 0.1 HP damage per frame while grinding the wall
+                
+                // Tangent projection for sliding effect (non-sticky wall)
+                const tx = -ny;
+                const ty = nx;
+                const vDotT = car.velocity.x * tx + car.velocity.y * ty;
+                car.velocity.x = tx * vDotT * 0.98;
+                car.velocity.y = ty * vDotT * 0.98;
             }
         }
     }
     
     checkLapCross(prevX, prevY, currX, currY) {
-        // Start line is on the top straight, x=500, going right
-        if (prevX < 500 && currX >= 500 && currY < 250) {
+        if (prevX < this.startX && currX >= this.startX && currY < 350) {
             return true;
         }
         return false;
@@ -370,19 +176,27 @@ class F1Track {
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         
-        // Outer barrier red
+        // 1. Outer Barrier Base (Red)
         this.drawPath(ctx);
         ctx.lineWidth = this.grassWidth * 2 + 10;
         ctx.strokeStyle = '#d32f2f';
         ctx.stroke();
         
-        // Grass (dark green)
+        // 2. Outer Barrier Stripes (White)
+        this.drawPath(ctx);
+        ctx.lineWidth = this.grassWidth * 2 + 10;
+        ctx.strokeStyle = '#fff';
+        ctx.setLineDash([20, 20]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        // 3. Grass Margin (Dark Green)
         this.drawPath(ctx);
         ctx.lineWidth = this.grassWidth * 2;
         ctx.strokeStyle = '#2e7d32';
         ctx.stroke();
-        
-        // Track Asphalt
+
+        // 4. Track Asphalt (Dark Grey)
         this.drawPath(ctx);
         ctx.lineWidth = this.trackWidth * 2;
         ctx.strokeStyle = '#555';
@@ -393,8 +207,7 @@ class F1Track {
     
     drawStartLine(ctx) {
         ctx.fillStyle = '#fff';
-        const startX = 500;
-        const startY = 150 - this.trackWidth;
+        const startY = this.startY - this.trackWidth;
         const width = 10;
         const height = this.trackWidth * 2;
         
@@ -402,13 +215,97 @@ class F1Track {
         for (let i = 0; i < height; i += 10) {
             for (let j = 0; j < width; j += 5) {
                 if ((i / 10 + j / 5) % 2 === 0) {
-                    ctx.fillRect(startX + j, startY + i, 5, 10);
+                    ctx.fillRect(this.startX + j, startY + i, 5, 10);
                 } else {
                     ctx.fillStyle = '#000';
-                    ctx.fillRect(startX + j, startY + i, 5, 10);
+                    ctx.fillRect(this.startX + j, startY + i, 5, 10);
                     ctx.fillStyle = '#fff';
                 }
             }
         }
+    }
+}
+
+class OvalTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 80;
+        this.grassWidth = 110;
+        
+        const cx1 = 350;
+        const cx2 = 650;
+        const cy = 350;
+        const r = 180; // Scaled to look round and fit perfectly within 1000x700
+        
+        this.startX = 500;
+        this.startY = cy - r;
+        
+        this.segments = [
+            { type: 'line', x1: cx1, y1: cy - r, x2: cx2, y2: cy - r },
+            { type: 'arc', cx: cx2, cy: cy, r: r, start: -Math.PI/2, end: Math.PI/2, ccw: false },
+            { type: 'line', x1: cx2, y1: cy + r, x2: cx1, y2: cy + r },
+            { type: 'arc', cx: cx1, cy: cy, r: r, start: Math.PI/2, end: -Math.PI/2, ccw: false }
+        ];
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+
+class F1Track extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 45;
+        this.grassWidth = 65;
+        this.startX = 450;
+        this.startY = 100;
+        
+        this.segments = [
+            { type: 'line', x1: 250, y1: 100, x2: 650, y2: 100 },
+            { type: 'arc', cx: 650, cy: 312.5, r: 212.5, start: -Math.PI/2, end: Math.PI/2, ccw: false },
+            { type: 'line', x1: 650, y1: 525, x2: 550, y2: 525 },
+            { type: 'arc', cx: 550, cy: 450, r: 75, start: Math.PI/2, end: Math.PI, ccw: false },
+            { type: 'line', x1: 475, y1: 450, x2: 475, y2: 375 },
+            { type: 'arc', cx: 400, cy: 375, r: 75, start: 0, end: -Math.PI/2, ccw: true },
+            { type: 'line', x1: 400, y1: 300, x2: 250, y2: 300 },
+            { type: 'arc', cx: 250, cy: 200, r: 100, start: Math.PI/2, end: -Math.PI/2, ccw: false }
+        ];
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+class PeanutTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 55;
+        this.grassWidth = 70;
+        const dx = 250;
+        const dy = 800;
+        const theta = Math.atan2(dy, dx);
+        
+        const cx1 = 250;
+        const cx2 = 750;
+        const cy = 350;
+        const rSmall = 125;
+        
+        // Distance is sqrt(250^2 + 800^2) = 838
+        // So R_big = 838 - 125 = 713
+        
+        const rBig = 713;
+        const cyTop = cy - dy;
+        const cyBot = cy + dy;
+        
+        this.startX = 500;
+        this.startY = cyTop + rBig;
+        
+        this.segments = [
+            { type: 'arc', cx: cx1, cy: cy, r: rSmall, start: theta, end: 2 * Math.PI - theta, ccw: false },
+            { type: 'arc', cx: 500, cy: cyTop, r: rBig, start: Math.PI - theta, end: theta, ccw: true },
+            { type: 'arc', cx: cx2, cy: cy, r: rSmall, start: Math.PI + theta, end: Math.PI - theta, ccw: false },
+            { type: 'arc', cx: 500, cy: cyBot, r: rBig, start: -theta, end: -Math.PI + theta, ccw: true }
+        ];
+        
+        this.waypoints = this.generateWaypoints();
     }
 }

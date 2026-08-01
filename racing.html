@@ -14,6 +14,7 @@
                 <div id="lap-counter">Lap: 1/10</div>
                 <div id="position-counter">Pos: 1/4</div>
                 <div id="speedometer">0 km/h</div>
+                <button id="quitBtn" class="hud-btn">Quit</button>
             </div>
             <div id="menu">
                 <h1>2D Racing</h1>
@@ -22,6 +23,7 @@
                     <select id="track-select">
                         <option value="oval">Oval (Simple)</option>
                         <option value="f1">F1 Circuit (Complex)</option>
+                        <option value="peanut">Peanut Track</option>
                     </select>
                 </div>
                 <div class="menu-group">
@@ -80,10 +82,22 @@
                 <h2 id="winner-text" style="margin: 0;"></h2>
             </div>
         </div>
+        
+        <div id="mobile-controls" style="display: none;">
+            <div class="control-row">
+                <button id="btnUp">Gas</button>
+            </div>
+            <div class="control-row">
+                <button id="btnLeft">Left</button>
+                <button id="btnDown">Brake</button>
+                <button id="btnRight">Right</button>
+            </div>
+        </div>
     </div>
     <script src="track.js"></script>
     <script src="car.js"></script>
     <script src="ai.js"></script>
+    <script src="audio.js"></script>
     <script src="main.js"></script>
 </body>
 </html>
