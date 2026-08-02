@@ -170,6 +170,31 @@
   .recapNote { font-size:11px !important; color:#9fb3d9 !important; margin-top:9px !important; line-height:1.5; }
   .objList { font-size:11px; color:#9fb3d9; margin-top:8px; line-height:1.6; text-align:left; max-width:640px; }
   .objList b { color:#dfe6f5; }
+
+  @media (max-width: 900px) {
+    #app {
+      flex-direction: column;
+      align-items: stretch;
+      padding: 10px;
+    }
+    #sidebar {
+      width: 100%;
+    }
+    #boardWrap {
+      width: 100%;
+      padding: 5px;
+    }
+    svg#board {
+      width: 100%;
+      height: auto;
+    }
+    #overlayInner {
+      padding: 10px;
+    }
+    #overlay h1 {
+      font-size: 24px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -1135,11 +1160,17 @@
     const pad = 52;
     const w = (maxX-minX)+pad*2, h = (maxY-minY)+pad*2;
     svg.setAttribute('viewBox', `${minX-pad} ${minY-pad} ${w} ${h}`);
-    const availW = (typeof window!=='undefined'? window.innerWidth:1400) - 380;
-    const availH = (typeof window!=='undefined'? window.innerHeight:900) - 60;
-    const scale = Math.min(Math.max(360, Math.min(availW,1120))/w, Math.max(340, Math.min(availH,780))/h, 1.15);
-    svg.setAttribute('width', (w*scale).toFixed(0));
-    svg.setAttribute('height', (h*scale).toFixed(0));
+    
+    if (typeof window !== 'undefined' && window.innerWidth <= 900) {
+      svg.removeAttribute('width');
+      svg.removeAttribute('height');
+    } else {
+      const availW = (typeof window!=='undefined'? window.innerWidth:1400) - 380;
+      const availH = (typeof window!=='undefined'? window.innerHeight:900) - 60;
+      const scale = Math.min(Math.max(360, Math.min(availW,1120))/w, Math.max(340, Math.min(availH,780))/h, 1.15);
+      svg.setAttribute('width', (w*scale).toFixed(0));
+      svg.setAttribute('height', (h*scale).toFixed(0));
+    }
     viewBoxSet = true;
   }
   if(typeof window !== 'undefined'){
