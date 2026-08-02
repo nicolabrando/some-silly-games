@@ -101,11 +101,11 @@ class AI {
         let angleToTarget = Math.atan2(dy, dx);
         
         // --- Collision Avoidance ---
+        let avoidX = 0;
+        let avoidY = 0;
+        let nearbyAvoids = 0;
+        
         if (typeof cars !== 'undefined') {
-            let avoidX = 0;
-            let avoidY = 0;
-            let nearbyCars = 0;
-            
             for (const otherCar of cars) {
                 if (otherCar === this.car || otherCar.isBroken) continue;
                 
@@ -120,22 +120,44 @@ class AI {
                     
                     avoidX += pushX * repulsionStrength;
                     avoidY += pushY * repulsionStrength;
-                    nearbyCars++;
+                    nearbyAvoids++;
                 }
             }
+        }
+        
+        // --- Barrier Avoidance ---
+        if (track && track.getClosestPoint) {
+            const distData = track.getClosestPoint(this.car.x, this.car.y);
+            const distToBarrier = track.grassWidth - distData.dist; // Distance remaining to the wall
+            const barrierAvoidRadius = 35; // Start steering away if within 35px of the wall
             
-            if (nearbyCars > 0) {
-                // Blend the avoidance vector into the target direction
-                // The more cars nearby, the stronger the avoidance
-                const blendFactor = Math.min(0.8, nearbyCars * 0.4); 
-                const targetDirX = Math.cos(angleToTarget);
-                const targetDirY = Math.sin(angleToTarget);
+            if (distToBarrier < barrierAvoidRadius) {
+                const repulsionStrength = 1.0 - (Math.max(0, distToBarrier) / barrierAvoidRadius);
                 
-                const finalDirX = targetDirX * (1 - blendFactor) + avoidX * blendFactor;
-                const finalDirY = targetDirY * (1 - blendFactor) + avoidY * blendFactor;
+                const dxCenter = distData.projX - this.car.x;
+                const dyCenter = distData.projY - this.car.y;
+                const lenCenter = Math.hypot(dxCenter, dyCenter);
                 
-                angleToTarget = Math.atan2(finalDirY, finalDirX);
+                if (lenCenter > 0.1) {
+                    // Push away from wall very strongly
+                    avoidX += (dxCenter / lenCenter) * repulsionStrength * 2.5;
+                    avoidY += (dyCenter / lenCenter) * repulsionStrength * 2.5;
+                    nearbyAvoids++;
+                }
             }
+        }
+        
+        if (nearbyAvoids > 0) {
+            // Blend the avoidance vector into the target direction
+            // The more things to avoid, the stronger the avoidance
+            const blendFactor = Math.min(0.9, nearbyAvoids * 0.4); 
+            const targetDirX = Math.cos(angleToTarget);
+            const targetDirY = Math.sin(angleToTarget);
+            
+            const finalDirX = targetDirX * (1 - blendFactor) + avoidX * blendFactor;
+            const finalDirY = targetDirY * (1 - blendFactor) + avoidY * blendFactor;
+            
+            angleToTarget = Math.atan2(finalDirY, finalDirX);
         }
         
         if (this.isMakingError) {
@@ -190,7 +212,7 @@ class AI {
             if (this.car.inputs.up && speed < 30) {
                 this.stuckTimer += dt;
                 if (this.stuckTimer > 1.0) { // Stuck for 1 second
-                    this.reverseTimer = 1.0 + Math.random() * 0.5; // Reverse for 1-1.5 seconds
+                    this.reverseTimer = 0.5; // Exactly 0.5 seconds reverse
                     this.stuckTimer = 0;
                 }
             } else {

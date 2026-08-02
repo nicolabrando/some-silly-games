@@ -451,3 +451,54 @@ class QuadratoTrack extends SegmentedTrack {
         this.waypoints = this.generateWaypoints();
     }
 }
+
+class TriangleTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 70;
+        this.grassWidth = 90;
+        
+        this.segments = [
+            { type: 'line', x1: 250.00, y1: 570.00, x2: 750.00, y2: 570.00 },
+            { type: 'arc', cx: 750.00, cy: 500.00, r: 70, start: 1.5708, end: -0.7289, ccw: true },
+            { type: 'line', x1: 802.22, y1: 453.38, x2: 552.22, y2: 173.38 },
+            { type: 'arc', cx: 500.00, cy: 220.00, r: 70, start: -0.7289, end: -2.4127, ccw: true },
+            { type: 'line', x1: 447.78, y1: 173.38, x2: 197.78, y2: 453.38 },
+            { type: 'arc', cx: 250.00, cy: 500.00, r: 70, start: -2.4127, end: 1.5708, ccw: true }
+        ];
+        
+        this.startX = 500;
+        this.startY = 570;
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+class PettineTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 70;
+        this.grassWidth = 75; // reduced so curbs do not overwrite each other
+        
+        this.segments = [
+            { type: 'line', x1: 150, y1: 150, x2: 800, y2: 150 },
+            { type: 'arc', cx: 800, cy: 230, r: 80, start: -Math.PI/2, end: Math.PI/2, ccw: false },
+            { type: 'arc', cx: 800, cy: 390, r: 80, start: -Math.PI/2, end: -Math.PI, ccw: true },
+            { type: 'line', x1: 720, y1: 390, x2: 720, y2: 520 },
+            { type: 'arc', cx: 640, cy: 520, r: 80, start: 0, end: Math.PI, ccw: false },
+            { type: 'line', x1: 560, y1: 520, x2: 560, y2: 390 },
+            { type: 'arc', cx: 480, cy: 390, r: 80, start: 0, end: -Math.PI, ccw: true },
+            { type: 'line', x1: 400, y1: 390, x2: 400, y2: 520 },
+            { type: 'arc', cx: 320, cy: 520, r: 80, start: 0, end: Math.PI, ccw: false },
+            { type: 'line', x1: 240, y1: 520, x2: 240, y2: 390 },
+            { type: 'arc', cx: 160, cy: 390, r: 80, start: 0, end: -Math.PI/2, ccw: true },
+            { type: 'line', x1: 160, y1: 310, x2: 150, y2: 310 },
+            { type: 'arc', cx: 150, cy: 230, r: 80, start: Math.PI/2, end: Math.PI*1.5, ccw: false }
+        ];
+        
+        this.startX = 500;
+        this.startY = 150;
+        
+        this.waypoints = this.generateWaypoints();
+    }
+}

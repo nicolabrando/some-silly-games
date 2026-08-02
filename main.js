@@ -142,6 +142,10 @@ function startGame(forceTrackType = null) {
         track = new SerpentTrack();
     } else if (trackType === 'quadrato') {
         track = new QuadratoTrack();
+    } else if (trackType === 'triangle') {
+        track = new TriangleTrack();
+    } else if (trackType === 'pettine') {
+        track = new PettineTrack();
     } else if (trackType === 'thunder') {
         track = new ThunderTrack();
     } else {
@@ -287,17 +291,25 @@ function startGame(forceTrackType = null) {
             }
         }
         
+        // 5. Initialize closest waypoint for all cars
+        let closestWp = 0;
         let minDist = Infinity;
-        let closestIdx = 0;
-        for (let i = 0; i < track.waypoints.length; i++) {
-            const wp = track.waypoints[i];
-            const dist = Math.hypot(car.x - wp.x, car.y - wp.y);
-            if (dist < minDist) {
+        for (let j=0; j<track.waypoints.length; j++) {
+            const wp = track.waypoints[j];
+            // Check if waypoint is ahead (using dot product)
+            const dx = wp.x - car.x;
+            const dy = wp.y - car.y;
+            const dist = Math.hypot(dx, dy);
+            const angleToWp = Math.atan2(dy, dx);
+            let angleDiff = Math.abs(car.angle - angleToWp);
+            if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+            
+            if (angleDiff < Math.PI / 2 && dist < minDist) {
                 minDist = dist;
-                closestIdx = i;
+                closestWp = j;
             }
         }
-        car.nextWaypoint = (closestIdx + 1) % track.waypoints.length;
+        car.nextWaypoint = closestWp;
     });
     
     gameState = 'countdown';
@@ -759,7 +771,7 @@ function startChampionship() {
     const aiColors = possibleColors.filter(c => c !== color);
     
     championshipState = {
-        tracks: ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent', 'quadrato'],
+        tracks: ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent', 'quadrato', 'triangle', 'pettine', 'thunder'],
         currentTrackIndex: 0,
         points: {},
         participants: [],
