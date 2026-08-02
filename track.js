@@ -146,7 +146,8 @@ class SegmentedTrack {
     }
     
     checkLapCross(prevX, prevY, currX, currY) {
-        if (prevX < this.startX && currX >= this.startX && Math.abs(currY - this.startY) < this.trackWidth * 1.5) {
+        // Broaden the Y check so we don't miss cars on the grass/barrier
+        if (prevX < this.startX && currX >= this.startX && Math.abs(currY - this.startY) < this.grassWidth + 100) {
             return true;
         }
         return false;

@@ -212,7 +212,7 @@ function startGame(forceTrackType = null) {
     for(let i=0; i<numCars; i++) {
         // Staggered by 30px backward each position.
         // Alternate side: +20px and -20px from center.
-        const distBackward = i * 30;
+        const distBackward = 35 + i * 30; // 35px base offset to ensure pole position is behind the start line
         const lateralOffset = (i % 2 === 0 ? 20 : -20);
         gridPositions.push(getGridPos(distBackward, lateralOffset));
     }

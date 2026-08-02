@@ -77,7 +77,7 @@ class Car {
         if (speed > 10) {
             // Steering less effective at very high speeds to simulate understeer
             // Harsher penalty to make cornering difficult at max speed
-            const steerEffectiveness = Math.max(0.15, 1 - (speed / 650)); 
+            const steerEffectiveness = Math.max(0.10, 1 - (speed / 500)); 
             const steerAmount = this.maxSteer * dt * steerEffectiveness;
             
             // Allow reversing steer direction if going backwards
@@ -101,7 +101,7 @@ class Car {
         const lateralSpeed = this.velocity.x * rightX + this.velocity.y * rightY;
         
         // Desired lateral correction force to stop sliding
-        let lateralForce = -lateralSpeed * 5; // Much softer alignment for drifting
+        let lateralForce = -lateralSpeed * 3.5; // Much softer alignment for drifting to make high speed cornering require braking
         
         // Clamp to grip limit
         if (lateralForce > currentGrip) lateralForce = currentGrip;
@@ -157,8 +157,8 @@ class Car {
         const wp = track.waypoints[this.nextWaypoint];
         const dist = Math.sqrt((this.x - wp.x)**2 + (this.y - wp.y)**2);
         
-        // 100px radius for waypoint trigger
-        if (dist < 100) {
+        // 200px radius for waypoint trigger to avoid missing them if driving wide
+        if (dist < 200) {
             this.nextWaypoint = (this.nextWaypoint + 1) % track.waypoints.length;
         }
     }

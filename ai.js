@@ -35,6 +35,9 @@ class AI {
         
         this.raceStarted = false;
         this.reactionTimer = 0;
+        
+        this.stuckTimer = 0;
+        this.reverseTimer = 0;
     }
     
     startRace() {
@@ -165,6 +168,34 @@ class AI {
             this.car.inputs.down = true; // brake
         } else if (speed < target) {
             this.car.inputs.up = true; // throttle
+        }
+        
+        // --- Stuck Detection & Reverse Logic ---
+        if (this.reverseTimer > 0) {
+            this.reverseTimer -= dt;
+            this.car.inputs.up = false;
+            this.car.inputs.down = true; // reverse
+            
+            // Reverse steering direction while backing up to swing the nose around
+            if (angleDiff > 0) {
+                this.car.inputs.left = true;
+                this.car.inputs.right = false;
+            } else {
+                this.car.inputs.right = true;
+                this.car.inputs.left = false;
+            }
+            
+        } else {
+            // Check if stuck (trying to move forward but speed is very low)
+            if (this.car.inputs.up && speed < 30) {
+                this.stuckTimer += dt;
+                if (this.stuckTimer > 1.0) { // Stuck for 1 second
+                    this.reverseTimer = 1.0 + Math.random() * 0.5; // Reverse for 1-1.5 seconds
+                    this.stuckTimer = 0;
+                }
+            } else {
+                this.stuckTimer = Math.max(0, this.stuckTimer - dt); // Gradually reset
+            }
         }
     }
 }
