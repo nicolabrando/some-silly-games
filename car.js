@@ -37,8 +37,14 @@ class Car {
         this.halfwayMarkerCrossed = false;
         
         this.raceTime = null;
+        this.lapStartTime = 0;
+        this.lastLapTime = null;
+        this.bestLapTime = null;
         this.reactionTime = null;
         this.inputRecorded = false;
+        
+        // Effects & Slipstream
+        this.isDrafting = false;
     }
     
     update(dt, track) {
@@ -47,6 +53,15 @@ class Car {
         // Adjust physics based on surface
         let currentGrip = this.baseGrip;
         let currentFriction = this.baseFriction;
+        
+        // Rain effect on asphalt
+        if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass') {
+            currentGrip *= 0.6; // Slippery!
+            // Senna bonus in rain
+            if (this.driverName === 'Ayrton Senna') {
+                currentGrip *= 1.3; // Much better grip than others in the rain
+            }
+        }
         
         if (surface === 'grass') {
             currentGrip *= 0.3; // Slippery!
@@ -66,6 +81,10 @@ class Car {
         
         if (this.inputs.up) {
             forwardForce += this.enginePower;
+            if (this.isDrafting) {
+                // Slipstream boost (e.g. 15% more power and less drag below)
+                forwardForce += this.enginePower * 0.15;
+            }
         }
         if (this.inputs.down) {
             forwardForce -= this.brakingPower;
@@ -113,8 +132,51 @@ class Car {
         this.velocity.y += rightY * lateralForce * dt;
         
         // Apply friction/drag
-        this.velocity.x -= this.velocity.x * currentFriction * dt;
-        this.velocity.y -= this.velocity.y * currentFriction * dt;
+        let drag = currentFriction;
+        if (this.isDrafting) drag *= 0.8; // 20% less drag when drafting
+        
+        this.velocity.x -= this.velocity.x * drag * dt;
+        this.velocity.y -= this.velocity.y * drag * dt;
+        
+        // --- Emit Effects (Skid Marks & Particles) ---
+        // Emit skidmarks if lateral sliding is high
+        if (typeof globalSkidMarks !== 'undefined' && Math.abs(lateralSpeed) > 60 && !this.isBroken) {
+            // Drop a skidmark 
+            globalSkidMarks.push({
+                x: this.x,
+                y: this.y,
+                angle: this.angle,
+                width: this.width,
+                opacity: 0.5,
+                time: Date.now()
+            });
+        }
+        
+        // Emit particles
+        if (typeof globalParticles !== 'undefined' && speed > 50 && !this.isBroken) {
+            // Mud/grass particles
+            if (surface === 'grass' && Math.random() < 0.3) {
+                globalParticles.push({
+                    x: this.x - headingX * 10,
+                    y: this.y - headingY * 10,
+                    vx: -headingX * 20 + (Math.random()-0.5)*20,
+                    vy: -headingY * 20 + (Math.random()-0.5)*20,
+                    life: 1.0,
+                    type: 'mud'
+                });
+            }
+            // Rain spray particles (check if it's raining via global var)
+            if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass' && Math.random() < 0.4) {
+                globalParticles.push({
+                    x: this.x - headingX * 12,
+                    y: this.y - headingY * 12,
+                    vx: -headingX * 10 + (Math.random()-0.5)*15,
+                    vy: -headingY * 10 + (Math.random()-0.5)*15,
+                    life: 0.6,
+                    type: 'spray'
+                });
+            }
+        }
         
         const previousX = this.x;
         
@@ -138,6 +200,16 @@ class Car {
             if (this.halfwayMarkerCrossed) {
                 this.lap++;
                 this.halfwayMarkerCrossed = false;
+                
+                // Calculate lap time
+                if (typeof track.currentRaceTime !== 'undefined' && this.lap > 1) {
+                    const currentLapTime = track.currentRaceTime - this.lapStartTime;
+                    this.lastLapTime = currentLapTime;
+                    if (this.bestLapTime === null || currentLapTime < this.bestLapTime) {
+                        this.bestLapTime = currentLapTime;
+                    }
+                }
+                this.lapStartTime = typeof track.currentRaceTime !== 'undefined' ? track.currentRaceTime : 0;
                 
                 // If the car crosses the finish line and the leader has already finished,
                 // OR if the car itself just completed the last lap.

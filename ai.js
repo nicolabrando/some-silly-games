@@ -24,6 +24,39 @@ class AI {
             this.steeringSmoothness = 0.5; // Very snappy
         }
         
+        // --- Unique Driving Styles ---
+        if (this.car.driverName) {
+            switch(this.car.driverName) {
+                case 'Max Verstappen':
+                    this.targetSpeed *= 1.1;
+                    this.corneringPatience = 0.01; // Extremely late braking
+                    this.steeringSmoothness = 0.6;
+                    break;
+                case 'Alain Prost':
+                    this.steeringSmoothness = 0.1; // Very smooth
+                    this.corneringPatience = 0.15; // Clean lines
+                    this.pathOffset = { x: 0, y: 0 }; // Perfect racing line
+                    break;
+                case 'Ayrton Senna':
+                    this.targetSpeed *= 1.05;
+                    this.steeringSmoothness = 0.2;
+                    // Will get bonus in rain via main.js
+                    break;
+                case 'Michael Schumacher':
+                    this.targetSpeed *= 1.08;
+                    this.corneringPatience = 0.05;
+                    break;
+                case 'Lewis Hamilton':
+                    this.targetSpeed *= 1.05;
+                    this.lookAheadDistance = 250; // Looks far ahead
+                    break;
+                case 'Fernando Alonso':
+                    this.corneringPatience = 0.08;
+                    this.steeringSmoothness = 0.4; // Aggressive steering
+                    break;
+            }
+        }
+        
         this.errorTimer = 0;
         this.isMakingError = false;
         
@@ -50,7 +83,7 @@ class AI {
         // Reset inputs
         this.car.inputs = { up: false, down: false, left: false, right: false };
         
-        // Use a default dt of 0.016 if not provided (when called from updatePhysics, dt is passed to car.update, but ai.update needs it too)
+        // Use a default dt of 0.016 if not provided
         if (!dt) dt = 0.016;
         
         if (!this.raceStarted) {
@@ -84,16 +117,27 @@ class AI {
             }
         }
         
-        // Find next waypoint to target
-        let targetIndex = this.car.nextWaypoint;
-        let targetWP = track.waypoints[targetIndex];
-        
-        // If we are close to the target, look ahead to the next one for smoother steering
-        const distToCurrent = Math.sqrt((this.car.x - targetWP.x)**2 + (this.car.y - targetWP.y)**2);
-        if (distToCurrent < this.lookAheadDistance) {
-             targetIndex = (targetIndex + 1) % track.waypoints.length;
-             targetWP = track.waypoints[targetIndex];
+        // 1. Find the closest waypoint to the car (Track progress)
+        let closestDist = Infinity;
+        let closestIndex = 0;
+        for (let i = 0; i < track.waypoints.length; i++) {
+            const wp = track.waypoints[i];
+            const d2 = (this.car.x - wp.x)**2 + (this.car.y - wp.y)**2;
+            if (d2 < closestDist) {
+                closestDist = d2;
+                closestIndex = i;
+            }
         }
+        
+        // 2. Dynamic Lookahead based on speed and stats
+        const speed = Math.sqrt(this.car.velocity.x**2 + this.car.velocity.y**2);
+        
+        let lookAheadPoints = Math.floor(this.lookAheadDistance / 20) + Math.floor(speed / 100);
+        if (lookAheadPoints < 2) lookAheadPoints = 2; // Always look at least a bit ahead
+        if (lookAheadPoints > 15) lookAheadPoints = 15;
+        
+        let targetIndex = (closestIndex + lookAheadPoints) % track.waypoints.length;
+        let targetWP = track.waypoints[targetIndex];
         
         // Calculate angle to target with path offset
         const dx = (targetWP.x + this.pathOffset.x) - this.car.x;
@@ -113,10 +157,20 @@ class AI {
                 const avoidRadius = 70; // Start avoiding if within 70 pixels
                 
                 if (distToOther < avoidRadius && distToOther > 0.1) {
-                    // Stronger repulsion the closer they are
-                    const repulsionStrength = 1.0 - (distToOther / avoidRadius);
-                    const pushX = (this.car.x - otherCar.x) / distToOther;
-                    const pushY = (this.car.y - otherCar.y) / distToOther;
+                    const isDraftingOther = this.car.isDrafting; 
+                    const repulsionStrength = isDraftingOther ? 1.5 : (1.0 - (distToOther / avoidRadius));
+                    
+                    let pushX = (this.car.x - otherCar.x) / distToOther;
+                    let pushY = (this.car.y - otherCar.y) / distToOther;
+                    
+                    // If drafting, swerve laterally relative to heading
+                    if (isDraftingOther) {
+                        const headingX = Math.cos(this.car.angle);
+                        const headingY = Math.sin(this.car.angle);
+                        const side = this.pathOffset.x > 0 ? 1 : -1;
+                        pushX = -headingY * side;
+                        pushY = headingX * side;
+                    }
                     
                     avoidX += pushX * repulsionStrength;
                     avoidY += pushY * repulsionStrength;
@@ -125,31 +179,43 @@ class AI {
             }
         }
         
-        // --- Barrier Avoidance ---
+        // --- Barrier & Grass Avoidance ---
+        let targetSpeedMultiplier = 1.0;
         if (track && track.getClosestPoint) {
             const distData = track.getClosestPoint(this.car.x, this.car.y);
-            const distToBarrier = track.grassWidth - distData.dist; // Distance remaining to the wall
-            const barrierAvoidRadius = 35; // Start steering away if within 35px of the wall
+            const distToCenter = distData.dist;
             
-            if (distToBarrier < barrierAvoidRadius) {
-                const repulsionStrength = 1.0 - (Math.max(0, distToBarrier) / barrierAvoidRadius);
-                
+            // If on grass or very close to wall, slow down drastically and steer to center
+            if (distToCenter > track.trackWidth * 0.7) {
+                targetSpeedMultiplier = 0.4; // Slow down to regain control
                 const dxCenter = distData.projX - this.car.x;
                 const dyCenter = distData.projY - this.car.y;
                 const lenCenter = Math.hypot(dxCenter, dyCenter);
-                
                 if (lenCenter > 0.1) {
-                    // Push away from wall very strongly
-                    avoidX += (dxCenter / lenCenter) * repulsionStrength * 2.5;
-                    avoidY += (dyCenter / lenCenter) * repulsionStrength * 2.5;
+                    avoidX += (dxCenter / lenCenter) * 3.0; // Strong push to center
+                    avoidY += (dyCenter / lenCenter) * 3.0;
                     nearbyAvoids++;
+                }
+            } else {
+                // Normal barrier avoidance
+                const distToBarrier = track.grassWidth - distData.dist;
+                const barrierAvoidRadius = 35;
+                if (distToBarrier < barrierAvoidRadius) {
+                    const repulsionStrength = 1.0 - (Math.max(0, distToBarrier) / barrierAvoidRadius);
+                    const dxCenter = distData.projX - this.car.x;
+                    const dyCenter = distData.projY - this.car.y;
+                    const lenCenter = Math.hypot(dxCenter, dyCenter);
+                    if (lenCenter > 0.1) {
+                        avoidX += (dxCenter / lenCenter) * repulsionStrength * 2.5;
+                        avoidY += (dyCenter / lenCenter) * repulsionStrength * 2.5;
+                        nearbyAvoids++;
+                    }
                 }
             }
         }
         
         if (nearbyAvoids > 0) {
             // Blend the avoidance vector into the target direction
-            // The more things to avoid, the stronger the avoidance
             const blendFactor = Math.min(0.9, nearbyAvoids * 0.4); 
             const targetDirX = Math.cos(angleToTarget);
             const targetDirY = Math.sin(angleToTarget);
@@ -161,7 +227,6 @@ class AI {
         }
         
         if (this.isMakingError) {
-            // Steer in slightly the wrong direction
             angleToTarget += 0.5 * (Math.random() > 0.5 ? 1 : -1);
         }
         
@@ -170,6 +235,52 @@ class AI {
         while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
         while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
         
+        let target = this.targetSpeed * targetSpeedMultiplier;
+        if (this.isMakingError) {
+             target *= 1.2; // Accelerate when shouldn't!
+        }
+        
+        // --- Intelligent Wrong-Way Recovery (K-Turn) ---
+        if (Math.abs(angleDiff) > Math.PI / 2) { // More than 90 degrees wrong way
+            if (speed > 40) {
+                // Going too fast the wrong way, slam the brakes
+                this.car.inputs.down = true;
+                this.car.inputs.up = false;
+                if (angleDiff > 0) this.car.inputs.right = true;
+                else this.car.inputs.left = true;
+            } else {
+                // Stopped or slow: K-Turn
+                this.car.inputs.up = false;
+                this.car.inputs.down = true; // Reverse
+                // When reversing, steering left swings the nose to the right relative to the world
+                if (angleDiff > 0) {
+                    this.car.inputs.left = true;
+                } else {
+                    this.car.inputs.right = true;
+                }
+            }
+            this.stuckTimer = 0; // Reset stuck timer while recovering
+            return;
+        }
+        
+        // --- Stuck Detection (Forward) ---
+        if (this.stuckTimer > 1.0) {
+            // We are currently reversing to get unstuck from a wall
+            this.stuckTimer += dt;
+            this.car.inputs.up = false;
+            this.car.inputs.down = true; // Reverse
+            
+            // Steer arbitrarily to dislodge
+            this.car.inputs.left = (this.pathOffset.x > 0);
+            this.car.inputs.right = !this.car.inputs.left;
+            
+            if (this.stuckTimer > 1.8) {
+                this.stuckTimer = 0; // Done reversing
+            }
+            return;
+        }
+        
+        // --- Normal Driving ---
         // Steering
         if (angleDiff > this.steeringSmoothness) {
             this.car.inputs.right = true;
@@ -178,46 +289,17 @@ class AI {
         }
         
         // Speed control
-        const speed = Math.sqrt(this.car.velocity.x**2 + this.car.velocity.y**2);
-        
-        let target = this.targetSpeed;
-        if (this.isMakingError) {
-             target *= 1.2; // Accelerate when shouldn't!
-        }
-        
-        // If angle difference is large, we need to brake or coast
         if (Math.abs(angleDiff) > this.corneringPatience && speed > target * 0.5) {
             this.car.inputs.down = true; // brake
         } else if (speed < target) {
             this.car.inputs.up = true; // throttle
         }
         
-        // --- Stuck Detection & Reverse Logic ---
-        if (this.reverseTimer > 0) {
-            this.reverseTimer -= dt;
-            this.car.inputs.up = false;
-            this.car.inputs.down = true; // reverse
-            
-            // Reverse steering direction while backing up to swing the nose around
-            if (angleDiff > 0) {
-                this.car.inputs.left = true;
-                this.car.inputs.right = false;
-            } else {
-                this.car.inputs.right = true;
-                this.car.inputs.left = false;
-            }
-            
+        // Update stuck timer if we are trying to go forward but stuck
+        if (this.car.inputs.up && speed < 30) {
+            this.stuckTimer += dt;
         } else {
-            // Check if stuck (trying to move forward but speed is very low)
-            if (this.car.inputs.up && speed < 30) {
-                this.stuckTimer += dt;
-                if (this.stuckTimer > 1.0) { // Stuck for 1 second
-                    this.reverseTimer = 0.5; // Exactly 0.5 seconds reverse
-                    this.stuckTimer = 0;
-                }
-            } else {
-                this.stuckTimer = Math.max(0, this.stuckTimer - dt); // Gradually reset
-            }
+            this.stuckTimer = Math.max(0, this.stuckTimer - dt);
         }
     }
 }

@@ -42,6 +42,7 @@ class SegmentedTrack {
                 }
             }
         }
+        
         return waypoints;
     }
     

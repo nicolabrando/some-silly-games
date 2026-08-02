@@ -16,6 +16,10 @@ let leaderFinished = false;
 let leaderRaceTime = 0;
 let raceFinished = false;
 let isFalseStartResetting = false;
+// v7 Globals
+let globalSkidMarks = [];
+let globalParticles = [];
+let isRaining = false;
 
 // Championship State
 let isChampionship = false;
@@ -123,6 +127,26 @@ function startGame(forceTrackType = null) {
     menu.style.display = 'none';
     hud.style.display = 'flex';
     if (isMobile) mobileControls.style.display = 'flex';
+    
+    // Reset effects
+    globalSkidMarks = [];
+    globalParticles = [];
+    isRaining = Math.random() < 0.20; // 20% chance of rain
+    
+    // UI for weather
+    let weatherIndicator = document.getElementById('weather-indicator');
+    if (!weatherIndicator) {
+        weatherIndicator = document.createElement('div');
+        weatherIndicator.id = 'weather-indicator';
+        weatherIndicator.style.position = 'absolute';
+        weatherIndicator.style.top = '10px';
+        weatherIndicator.style.right = '150px';
+        weatherIndicator.style.color = 'white';
+        weatherIndicator.style.fontFamily = 'monospace';
+        weatherIndicator.style.fontSize = '18px';
+        hud.appendChild(weatherIndicator);
+    }
+    weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
     
     TOTAL_LAPS = parseInt(document.getElementById('laps-select').value, 10);
     const trackType = forceTrackType || document.getElementById('track-select').value;
@@ -345,6 +369,48 @@ function updatePhysics(dt) {
     // Update all cars
     cars.forEach(car => car.update(dt, track));
     
+    // --- Slipstreaming (Drafting) Check ---
+    cars.forEach(car => {
+        car.isDrafting = false; // Reset drafting state
+        for (const otherCar of cars) {
+            if (car === otherCar || otherCar.isBroken) continue;
+            
+            // Check if 'car' is directly behind 'otherCar'
+            const dx = otherCar.x - car.x;
+            const dy = otherCar.y - car.y;
+            const dist = Math.hypot(dx, dy);
+            
+            // Drafting distance between 30 and 180 pixels
+            if (dist > 30 && dist < 180) {
+                // Check if the angle to the other car aligns with our heading
+                const angleToOther = Math.atan2(dy, dx);
+                let angleDiff = Math.abs(car.angle - angleToOther);
+                if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+                
+                // Also check if the other car is moving in roughly the same direction
+                let headingDiff = Math.abs(car.angle - otherCar.angle);
+                if (headingDiff > Math.PI) headingDiff = 2 * Math.PI - headingDiff;
+                
+                // If within a narrow cone (15 degrees)
+                if (angleDiff < 0.25 && headingDiff < 0.5) {
+                    car.isDrafting = true;
+                    // Draw a subtle wind line for feedback
+                    if (Math.random() < 0.2) {
+                        globalParticles.push({
+                            x: car.x + (Math.random()-0.5)*10,
+                            y: car.y + (Math.random()-0.5)*10,
+                            vx: Math.cos(car.angle)*50,
+                            vy: Math.sin(car.angle)*50,
+                            life: 0.3,
+                            type: 'wind'
+                        });
+                    }
+                    break; // Only draft off one car at a time
+                }
+            }
+        }
+    });
+    
     // Simple Circle Collision between cars
     for (let i = 0; i < cars.length; i++) {
         for (let j = i + 1; j < cars.length; j++) {
@@ -530,6 +596,7 @@ function updateHUD() {
             }
             
             const reactStr = c.reactionTime ? `${c.reactionTime.toFixed(3)}s` : '-';
+            const bestLapStr = c.bestLapTime < Infinity ? formatTime(c.bestLapTime) : '-';
             
             const nameDisplay = c.driverName ? `${c.driverName} (${c.color})` : `${c.color} ${c.isPlayer ? '(You)' : ''}`;
             
@@ -537,6 +604,7 @@ function updateHUD() {
                 <td>${index + 1}</td>
                 <td style="color: ${c.color}; font-weight: bold; text-transform: capitalize;">${nameDisplay} ${isChampionship && ptsEarned > 0 ? `[+${ptsEarned} pts]` : ''}</td>
                 <td>${timeStr}</td>
+                <td style="color: #4CAF50;">${bestLapStr}</td>
                 <td>${gapStr}</td>
                 <td>${reactStr}</td>
             `;
@@ -741,8 +809,87 @@ function gameLoop(timestamp) {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         track.draw(ctx);
         
+        // --- Draw Skid Marks ---
+        for (let i = globalSkidMarks.length - 1; i >= 0; i--) {
+            const mark = globalSkidMarks[i];
+            const age = (Date.now() - mark.time) / 1000;
+            
+            // Fade out after 3 seconds
+            if (age > 3) {
+                mark.opacity -= 0.02; // Slower fade
+            }
+            if (mark.opacity <= 0) {
+                globalSkidMarks.splice(i, 1);
+                continue;
+            }
+            
+            ctx.save();
+            ctx.translate(mark.x, mark.y);
+            ctx.rotate(mark.angle);
+            ctx.fillStyle = `rgba(0, 0, 0, ${mark.opacity * 0.3})`;
+            ctx.fillRect(-mark.width/2, -5, mark.width, 10);
+            ctx.restore();
+        }
+        
         // Draw Cars
-        cars.forEach(car => car.draw(ctx));
+        // Draw broken/finished cars first so active ones draw on top
+        const renderSorted = [...cars].sort((a, b) => {
+            if (a.isBroken !== b.isBroken) return a.isBroken ? -1 : 1;
+            if (a.finished !== b.finished) return a.finished ? -1 : 1;
+            return 0;
+        });
+        
+        renderSorted.forEach(car => car.draw(ctx));
+        
+        // --- Draw Particles ---
+        for (let i = globalParticles.length - 1; i >= 0; i--) {
+            const p = globalParticles[i];
+            p.life -= dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            
+            if (p.life <= 0) {
+                globalParticles.splice(i, 1);
+                continue;
+            }
+            
+            ctx.save();
+            if (p.type === 'mud') {
+                ctx.fillStyle = `rgba(101, 67, 33, ${p.life})`;
+                ctx.fillRect(p.x, p.y, 4, 4);
+            } else if (p.type === 'spray') {
+                ctx.fillStyle = `rgba(200, 200, 220, ${p.life * 0.5})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                ctx.fill();
+            } else if (p.type === 'wind') {
+                ctx.strokeStyle = `rgba(255, 255, 255, ${p.life})`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(p.x, p.y);
+                ctx.lineTo(p.x - p.vx*0.1, p.y - p.vy*0.1);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+        
+        // --- Draw Rain overlay ---
+        if (isRaining) {
+            ctx.fillStyle = 'rgba(100, 120, 150, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Fast rain streaks
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            for (let i = 0; i < 50; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                ctx.moveTo(x, y);
+                ctx.lineTo(x - 5, y + 25);
+            }
+            ctx.stroke();
+        }
         
         // Hide lights after 1.5s of GO
         if (countdownTimer < goDelay + 1.5) {
