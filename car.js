@@ -17,7 +17,7 @@ class Car {
         
         // Physics constants (Drift physics)
         this.enginePower = 300;
-        this.brakingPower = 800;
+        this.brakingPower = 150; // Reduced for less abrupt braking
         this.maxSteer = Math.PI * 0.7; // Very smooth steering
         this.baseGrip = 1200; // Lower grip to allow sliding
         this.baseFriction = 0.85; // Drag
@@ -32,6 +32,7 @@ class Car {
         // Race logic
         this.lap = 0;
         this.nextWaypoint = 1;
+        this.waypointProgress = 0; // Absolute waypoint counter for accurate rankings
         this.finished = false;
         this.halfwayMarkerCrossed = false;
         
@@ -160,6 +161,7 @@ class Car {
         // 200px radius for waypoint trigger to avoid missing them if driving wide
         if (dist < 200) {
             this.nextWaypoint = (this.nextWaypoint + 1) % track.waypoints.length;
+            this.waypointProgress++;
         }
     }
     

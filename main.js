@@ -413,8 +413,8 @@ function updateHUD() {
         
         // Otherwise, sort by race progress
         if (a.lap !== b.lap) return b.lap - a.lap;
-        // Same lap, who is further along?
-        if (a.nextWaypoint !== b.nextWaypoint) return b.nextWaypoint - a.nextWaypoint;
+        // Same lap, who has passed more waypoints?
+        if (a.waypointProgress !== b.waypointProgress) return b.waypointProgress - a.waypointProgress;
         // Same waypoint target, who is closer to it?
         const wp = track.waypoints[a.nextWaypoint];
         const distA = (a.x - wp.x)**2 + (a.y - wp.y)**2;
