@@ -45,6 +45,11 @@ class Car {
         
         // Effects & Slipstream
         this.isDrafting = false;
+
+        // Blue flag (set each frame by main.js when a car on a higher lap closes in)
+        this.blueFlag = false;
+        this.blueFlagTimer = 0;
+        this.blueFlagFrom = null;
     }
     
     update(dt, track) {
@@ -56,11 +61,14 @@ class Car {
         
         // Rain effect on asphalt
         if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass') {
-            currentGrip *= 0.35; // Very slippery!
-            // Senna bonus in rain
-            if (this.driverName === 'Ayrton Senna') {
-                currentGrip *= 1.4; // Still slippery, but much better than others
-            }
+            // 0.20, not 0.35. In this car model the *steering rate* is the
+            // binding limit almost everywhere; above ~0.25 the wet grip clamp
+            // never actually engages, so rain cost nothing but a few km/h of
+            // top speed and wet-weather skill was completely inert.
+            currentGrip *= 0.20;
+            // Wet-weather skill, from the driver style table in ai.js.
+            // Senna 1.42, Schumacher 1.28, Hamilton 1.26 ... Lauda 0.90.
+            if (this.wetGripBonus) currentGrip *= this.wetGripBonus;
         }
         
         if (surface === 'grass') {
@@ -195,8 +203,11 @@ class Car {
             this.halfwayMarkerCrossed = true;
         }
         
-        // Exact finish line crossing
-        if (track.checkLapCross(previousX, this.y, this.x, this.y)) {
+        // Exact finish line crossing.
+        // Once the car is classified it must stop scoring laps: while it coasts
+        // to a halt it can drift back over the line and gain a phantom lap,
+        // which would push it up the final standings.
+        if (!this.finished && !this.isBroken && track.checkLapCross(previousX, this.y, this.x, this.y)) {
             if (this.halfwayMarkerCrossed) {
                 this.lap++;
                 this.halfwayMarkerCrossed = false;
@@ -302,6 +313,36 @@ class Car {
             ctx.fillRect(this.x - barWidth / 2, this.y - this.height - 10, barWidth * healthRatio, barHeight);
         }
         
+        // Blue flag: this car is about to be lapped and must move over.
+        if (this.blueFlag) {
+            const bx = this.x + 14;
+            const by = this.y - this.height - 26;
+            const wave = Math.sin(Date.now() / 90) * 2;
+
+            ctx.save();
+            // pole
+            ctx.strokeStyle = '#e8e8e8';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(bx, by);
+            ctx.lineTo(bx, by + 15);
+            ctx.stroke();
+
+            // pennant
+            ctx.fillStyle = '#1565ff';
+            ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(bx + 1, by + 0.5);
+            ctx.quadraticCurveTo(bx + 8, by + 1 + wave, bx + 16, by + 1 - wave);
+            ctx.lineTo(bx + 16, by + 10 - wave);
+            ctx.quadraticCurveTo(bx + 8, by + 10 + wave, bx + 1, by + 9.5);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        }
+
         // Draw driver name
         if (this.driverName) {
             ctx.font = '10px Arial';

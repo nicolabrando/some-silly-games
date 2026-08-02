@@ -27,6 +27,7 @@ const AI_PROFILES = {
         straightFactor: 0.68,   // fraction of top speed on the straights
         brakeConfidence: 0.55,  // lower => brakes earlier
         lineBlend: 0.35,        // 0 = centre line, 1 = full racing line
+        radiusOptimism: 0.0,    // 0 = worst radius of the neighbourhood, 1 = local radius
         lookBase: 58,
         lookSpeed: 0.26,
         steerTau: 0.11,         // steering low-pass (s)
@@ -35,38 +36,108 @@ const AI_PROFILES = {
         errorMag: 0.20,
         overtake: 0.30,         // willingness to move off-line to pass
         safeGap: 46,            // px kept from the car ahead
-        gapGain: 1.1            // how hard the gap is closed
+        gapGain: 1.1,           // how hard the gap is closed
+        defend: 0.0,            // how much it covers the line under attack
+        lineLevel: 'standard',
+        maxCorner: 0.85         // ceiling after driver-style multipliers
     },
     medium: {
-        cornerFactor: 0.87,
-        straightFactor: 0.90,
-        brakeConfidence: 0.78,
-        lineBlend: 0.75,
-        lookBase: 46,
-        lookSpeed: 0.21,
-        steerTau: 0.07,
-        reaction: [0.25, 0.50],
-        errorChance: 0.10,
-        errorMag: 0.11,
-        overtake: 0.65,
-        safeGap: 34,
-        gapGain: 1.5
+        cornerFactor: 0.95,
+        straightFactor: 0.96,
+        brakeConfidence: 0.86,
+        lineBlend: 0.85,
+        radiusOptimism: 0.25,
+        lookBase: 44,
+        lookSpeed: 0.20,
+        steerTau: 0.06,
+        reaction: [0.22, 0.42],
+        errorChance: 0.06,
+        errorMag: 0.09,
+        overtake: 0.75,
+        safeGap: 32,
+        gapGain: 1.6,
+        defend: 0.25,
+        lineLevel: 'standard',
+        maxCorner: 1.00
     },
     hard: {
-        cornerFactor: 1.0,
+        cornerFactor: 1.08,
         straightFactor: 1.0,
-        brakeConfidence: 0.95,
+        brakeConfidence: 1.02,
         lineBlend: 1.0,
+        radiusOptimism: 0.55,
         lookBase: 38,
         lookSpeed: 0.17,
         steerTau: 0.04,
-        reaction: [0.13, 0.24],
-        errorChance: 0.02,
-        errorMag: 0.05,
+        reaction: [0.11, 0.19],
+        errorChance: 0.008,
+        errorMag: 0.04,
         overtake: 1.0,
-        safeGap: 26,
-        gapGain: 1.9
+        safeGap: 25,
+        gapGain: 1.9,
+        defend: 0.55,
+        lineLevel: 'standard',
+        maxCorner: 1.13
+    },
+    impossible: {
+        // 1.16 is the measured optimum: swept solo across every layout, lap
+        // time bottoms out here and starts rising again past ~1.25 as the car
+        // begins to scrub instead of turn.
+        cornerFactor: 1.16,
+        straightFactor: 1.0,
+        brakeConfidence: 1.12,
+        lineBlend: 1.0,
+        radiusOptimism: 1.0,
+        lookBase: 34,
+        lookSpeed: 0.155,
+        steerTau: 0.028,
+        reaction: [0.085, 0.135],
+        errorChance: 0.0,
+        errorMag: 0.0,
+        overtake: 1.0,
+        safeGap: 22,
+        gapGain: 2.2,
+        defend: 0.85,
+        lineLevel: 'fast',      // measured-optimal line, only at this level
+        maxCorner: 1.19
     }
+};
+
+// -----------------------------------------------------------------------------
+//  DRIVER STYLES
+//  Multipliers applied on top of the difficulty profile, so a personality
+//  colours *how* a driver is quick without letting anyone escape the physics.
+//    corner/straight : pace
+//    brake           : how late they brake (>1 = later)
+//    steerTau        : <1 = sharper, more nervous hands; >1 = smoother
+//    err             : mistake frequency
+//    overtake/gap    : wheel-to-wheel aggression (gap <1 = sits closer)
+//    defend          : how hard they cover the line when attacked
+//    wet             : grip multiplier in the rain (also used by car.js)
+//    cleanAir        : pace bonus when there is nobody within ~160px ahead
+// -----------------------------------------------------------------------------
+const AI_DRIVER_STYLES = {
+    // Blinding one-lap pace and total commitment; peerless in the wet, and
+    // occasionally a fraction over the edge.
+    'Ayrton Senna':       { corner: 1.045, straight: 1.000, brake: 1.05, steerTau: 0.75, err: 1.60, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.42, cleanAir: 1.000 },
+    // The Professor: minimum inputs, brakes early, carries speed, never errs.
+    'Alain Prost':        { corner: 1.020, straight: 1.020, brake: 0.88, steerTau: 1.45, err: 0.25, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 1.02, cleanAir: 1.010 },
+    // Relentless metronome, brutal on defence, superb in the rain.
+    'Michael Schumacher': { corner: 1.030, straight: 1.005, brake: 1.08, steerTau: 0.95, err: 0.45, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.28, cleanAir: 1.000 },
+    // Latest braker on the grid, never lifts, never yields.
+    'Max Verstappen':     { corner: 1.025, straight: 1.000, brake: 1.15, steerTau: 0.70, err: 0.80, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 1.10, cleanAir: 0.998 },
+    // Huge entry speed, reads the track a long way ahead, thrives in the mixed.
+    'Lewis Hamilton':     { corner: 1.030, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.55, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.26, cleanAir: 1.000 },
+    // Extracts more than the car has; unbeatable wheel to wheel.
+    'Fernando Alonso':    { corner: 1.015, straight: 0.995, brake: 1.10, steerTau: 0.85, err: 0.50, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.10, cleanAir: 0.997 },
+    // Qualifying specialist: devastating in clean air, fussier in traffic.
+    'Sebastian Vettel':   { corner: 1.020, straight: 1.020, brake: 1.00, steerTau: 0.88, err: 0.70, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.94, cleanAir: 1.030 },
+    // Famously smooth; looks slow, is not.
+    'Jim Clark':          { corner: 1.030, straight: 1.005, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.16, cleanAir: 1.005 },
+    // The computer: calculated risk, mechanical sympathy, no heroics.
+    'Niki Lauda':         { corner: 0.995, straight: 1.010, brake: 0.92, steerTau: 1.20, err: 0.30, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 0.90, cleanAir: 1.010 },
+    // Wins at the slowest speed necessary; never over-drives, superb racecraft.
+    'Juan Manuel Fangio': { corner: 1.000, straight: 1.000, brake: 0.94, steerTau: 1.30, err: 0.30, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.16, cleanAir: 1.005 }
 };
 
 // Physics constants mirrored from car.js - keep in sync if the car changes.
@@ -116,6 +187,7 @@ class AI {
         this.errorTimer = 1 + Math.random() * 2;
         this.errorAngle = 0;
         this.followSpeed = Infinity;
+        this.blueFlagLift = 1;
         this.jamTimer = 0;
         this.startCaution = 0;
         this.breakoutTimer = 0;
@@ -129,31 +201,35 @@ class AI {
 
     applyDriverStyle() {
         const p = this.p;
-        switch (this.car.driverName) {
-            case 'Max Verstappen':
-                p.brakeConfidence *= 1.10; p.cornerFactor *= 1.030; p.overtake = 1.0; p.errorChance *= 0.7; break;
-            case 'Ayrton Senna':
-                p.cornerFactor *= 1.025; p.steerTau *= 0.85; p.overtake = Math.max(p.overtake, 0.9); break;
-            case 'Michael Schumacher':
-                p.cornerFactor *= 1.020; p.brakeConfidence *= 1.06; p.errorChance *= 0.6; break;
-            case 'Alain Prost':
-                p.errorChance *= 0.35; p.steerTau *= 1.25; p.brakeConfidence *= 0.95; p.straightFactor *= 1.01; break;
-            case 'Lewis Hamilton':
-                p.cornerFactor *= 1.015; p.lookBase += 12; p.errorChance *= 0.7; break;
-            case 'Fernando Alonso':
-                p.overtake = 1.0; p.brakeConfidence *= 1.05; break;
-            case 'Sebastian Vettel':
-                p.straightFactor *= 1.015; p.steerTau *= 0.9; break;
-            case 'Niki Lauda':
-                p.errorChance *= 0.4; p.brakeConfidence *= 0.98; break;
-            case 'Jim Clark':
-                p.steerTau *= 0.85; p.cornerFactor *= 1.015; break;
-            case 'Juan Manuel Fangio':
-                p.errorChance *= 0.5; p.cornerFactor *= 1.010; break;
+        const s = AI_DRIVER_STYLES[this.car.driverName];
+
+        p.wetSkill = 1;
+        p.cleanAir = 1;
+
+        if (s) {
+            p.cornerFactor *= s.corner;
+            p.straightFactor *= s.straight;
+            p.brakeConfidence *= s.brake;
+            p.steerTau *= s.steerTau;
+            p.errorChance *= s.err;
+            p.overtake *= s.overtake;
+            p.safeGap *= s.gap;
+            p.defend *= s.defend;
+            p.wetSkill = s.wet;
+            p.cleanAir = s.cleanAir;
+
+            // Hamilton reads the track further ahead than anyone.
+            if (this.car.driverName === 'Lewis Hamilton') p.lookBase += 14;
         }
-        // Clamp so no personality can push a driver past the physical limit.
-        p.cornerFactor = Math.min(p.cornerFactor, 1.06);
-        p.brakeConfidence = Math.min(p.brakeConfidence, 1.0);
+
+        // Hard ceiling: a personality colours how a driver is quick, it never
+        // lets one escape the physics of the car.
+        p.cornerFactor = Math.min(p.cornerFactor, p.maxCorner);
+        p.overtake = Math.min(p.overtake, 1);
+        p.defend = Math.min(p.defend, 1);
+
+        // car.js reads this for the rain grip bonus.
+        this.car.wetGripBonus = p.wetSkill;
     }
 
     startRace() {
@@ -232,7 +308,7 @@ class AI {
 
         if (this.startCaution > 0) this.startCaution -= dt;
 
-        const line = track.getRacingLine ? track.getRacingLine() : null;
+        const line = track.getRacingLine ? track.getRacingLine(this.p.lineLevel) : null;
         if (!line) { this.idle(); return; }
 
         this.idle();
@@ -362,8 +438,7 @@ class AI {
         // ================================================================
         let gripScale = 1;
         if (typeof isRaining !== 'undefined' && isRaining) {
-            gripScale = 0.35;
-            if (car.driverName === 'Ayrton Senna') gripScale *= 1.4;
+            gripScale = 0.20 * (this.p.wetSkill || 1);   // matches car.js exactly
         }
         if (onGrass) gripScale *= 0.3;
         const latLimit = AI_BASE_GRIP * gripScale * 0.85;
@@ -374,17 +449,30 @@ class AI {
         const needDist = 60 + (speed * speed) / (2 * aBrake);
         const scanNodes = Math.min(Math.floor(N / 2), Math.max(4, Math.ceil(needDist / ds)));
 
+        // A better driver trusts the local radius; a weaker one only trusts the
+        // worst radius in the neighbourhood and therefore slows for a corner
+        // long before its apex.
+        const opt = this.p.radiusOptimism;
+        const radiusOf = (nd) => nd.radius + (nd.radiusRaw !== undefined ? (nd.radiusRaw - nd.radius) * opt : 0);
+
         const cornerCap = (idx) => {
             const nd = nodes[idx];
-            const vSteer = nd.vCorner;
-            const vGrip = Math.sqrt(latLimit * nd.radius);
-            return Math.min(vSteer, vGrip) * AI_CORNER_SAFETY * this.p.cornerFactor;
+            const R = radiusOf(nd);
+            // vCorner is tabulated for nd.radius; rescale it for the radius we
+            // are actually willing to commit to (v scales ~ with R here).
+            const vSteer = AI_MAX_STEER / (1 / R + AI_MAX_STEER / 500);
+            const vGrip = Math.sqrt(latLimit * R);
+            return Math.min(nd.vCorner * 1.35, vSteer, vGrip) * AI_CORNER_SAFETY * this.p.cornerFactor;
         };
 
         let vTop = AI_TOP_SPEED * this.p.straightFactor;
         if (car.isDrafting) vTop *= 1.10;
         if (onGrass) vTop = Math.min(vTop, 150);
         if (typeof isRaining !== 'undefined' && isRaining) vTop *= 0.97;
+
+        // Clean-air specialists (Vettel, Prost, Lauda) find that extra tenth
+        // when there is nobody to worry about in front.
+        if (this.p.cleanAir !== 1 && this.followSpeed === Infinity) vTop *= this.p.cleanAir;
 
         let vTarget = Math.min(vTop, cornerCap(i));
         for (let o = 1; o <= scanNodes; o++) {
@@ -400,6 +488,9 @@ class AI {
 
         // Car-following cap (set by updateTraffic).
         if (this.followSpeed < vTarget) vTarget = this.followSpeed;
+
+        // Being lapped under blue flags: ease off so the pass is quick.
+        vTarget *= this.blueFlagLift;
 
         // Opening laps: back off a touch while the field is still bunched.
         if (this.startCaution > 0) vTarget *= 1 - 0.09 * (this.startCaution / AI_START_CAUTION);
@@ -446,6 +537,7 @@ class AI {
     // -------------------------------------------------------------------
     updateTraffic(track, line, i, speed, headX, headY, latCar, dt) {
         this.followSpeed = Infinity;
+        this.blueFlagLift = 1;
 
         const car = this.car;
         const lim = line.maxOffset;
@@ -457,6 +549,7 @@ class AI {
         let desired = 0;
         let hasTarget = false;
         let inContact = false;
+        let attacker = null;        // quicker car sitting right on our tail
 
         const caution = this.startCaution > 0 ? this.startCaution / AI_START_CAUTION : 0;
         const safeGap = this.p.safeGap + 26 * caution;
@@ -519,6 +612,11 @@ class AI {
                             if (v < this.followSpeed) this.followSpeed = v;
                         }
                     }
+                } else if (fwd < -8 && fwd > -85 && Math.abs(side) < 30 && other.lap >= car.lap) {
+                    // Someone is on our tail on the same lap: candidate attacker.
+                    const theirFwd = other.velocity.x * tx + other.velocity.y * ty;
+                    const ourFwd = car.velocity.x * tx + car.velocity.y * ty;
+                    if (theirFwd > ourFwd - 8) attacker = other;
                 } else if (Math.abs(fwd) < 30 && Math.abs(side) < 36) {
                     // ---- wheel to wheel ---------------------------------
                     hasTarget = true;
@@ -559,6 +657,37 @@ class AI {
             if (this.followSpeed < 90) this.followSpeed = 90;
             desired = this.breakoutSide * lim;
             hasTarget = true;
+        }
+
+        // ---- defending: cover the line against a car right behind ---------
+        // Schumacher / Verstappen / Alonso make themselves very hard to pass;
+        // Prost and Lauda concede rather than risk the car. Never applied when
+        // we are being lapped (that is what the blue flag is for), and the
+        // movement is a single decisive cover, not weaving.
+        if (this.p.defend > 0.05 && !this.car.blueFlag && !hasTarget && attacker) {
+            const attLat = (attacker.x - here.cx) * here.nx + (attacker.y - here.cy) * here.ny;
+            const cover = latCar + (attLat - latCar) * this.p.defend;
+            desired = Math.max(-lim, Math.min(lim, cover)) - lineLat;
+            hasTarget = true;
+        }
+
+        // ---- blue flag: we are being lapped, get out of the way ----------
+        // main.js raises car.blueFlag when a car on a higher lap is closing.
+        // We move to the edge of the track on the opposite side to the car
+        // coming through, and lift slightly so the pass is quick and clean.
+        this.blueFlagLift = 1;
+        const lapper = this.car.blueFlag ? this.car.blueFlagFrom : null;
+        if (lapper) {
+            const lapperLat = (lapper.x - here.cx) * here.nx + (lapper.y - here.cy) * here.ny;
+            let side;
+            if (Math.abs(lapperLat - latCar) > 10) {
+                side = lapperLat > latCar ? -1 : 1;      // he is on that side, go the other way
+            } else {
+                side = here.alpha >= 0 ? -1 : 1;         // dead behind: concede the racing line
+            }
+            desired = side * lim - lineLat;
+            hasTarget = true;
+            this.blueFlagLift = 0.88;
         }
 
         if (!hasTarget) desired = 0;

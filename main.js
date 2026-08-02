@@ -13,6 +13,7 @@ let lightState = 0;
 let goDelay = 0;
 let raceStartTime = 0;
 let leaderFinished = false;
+let finishCounter = 0;   // order in which cars actually took the flag
 let firstFinisherTime = null;
 let leaderRaceTime = 0;
 let raceFinished = false;
@@ -362,6 +363,7 @@ function startGame(forceTrackType = null) {
     lightState = 0;
     goDelay = 2.5 + 0.1 + Math.random() * 3.9; // Wait between 0.1 and 4 seconds before GO
     leaderFinished = false;
+    finishCounter = 0;
     firstFinisherTime = null;
     raceFinished = false;
     isFalseStartResetting = false;
@@ -450,6 +452,49 @@ function updatePhysics(dt) {
         }
     });
     
+    // --- Blue flags -------------------------------------------------------
+    // Shown to a car that is about to be lapped: a quicker car on a higher lap
+    // is closing from behind. The AI reads car.blueFlag in ai.js and pulls off
+    // the racing line; the player just gets the warning.
+    cars.forEach(c => {
+        c.blueFlagTimer = Math.max(0, (c.blueFlagTimer || 0) - dt);
+    });
+
+    for (const c of cars) {
+        if (c.finished || c.isBroken) continue;
+
+        const hx = Math.cos(c.angle);
+        const hy = Math.sin(c.angle);
+        let best = null;
+        let bestFwd = -Infinity;
+
+        for (const other of cars) {
+            if (other === c || other.isBroken || other.finished) continue;
+            if (other.lap <= c.lap) continue;            // not lapping us
+
+            const dx = other.x - c.x;
+            const dy = other.y - c.y;
+            if (dx * dx + dy * dy > 215 * 215) continue;
+
+            const fwd = dx * hx + dy * hy;               // behind us => negative
+            const side = -dx * hy + dy * hx;
+            if (fwd > 45 || fwd < -205) continue;        // not closing on us
+            if (Math.abs(side) > 95) continue;           // on another part of the track
+
+            if (fwd > bestFwd) { bestFwd = fwd; best = other; }
+        }
+
+        if (best) {
+            c.blueFlagTimer = 0.8;                        // hold, so it can't flicker
+            c.blueFlagFrom = best;
+        }
+    }
+
+    cars.forEach(c => {
+        c.blueFlag = c.blueFlagTimer > 0 && !c.finished && !c.isBroken;
+        if (!c.blueFlag) c.blueFlagFrom = null;
+    });
+
     // Simple Circle Collision between cars
     for (let i = 0; i < cars.length; i++) {
         for (let j = i + 1; j < cars.length; j++) {
@@ -523,11 +568,22 @@ function updateHUD() {
         speedometer.innerText = `${Math.floor(speed * 0.5)} km/h`;
     }
     
+    // Record the finishing order as it actually happens. Deriving "who won"
+    // from a sort every frame is fragile: a single stray lap increment can
+    // promote a car above the real winner for one frame, which is exactly
+    // when the "Finished First" banner fires.
+    cars.forEach(c => {
+        if (c.finished && c.finishIndex === undefined) {
+            c.finishIndex = finishCounter++;
+        }
+    });
+
     // Position Calculation
+    const lapsOf = (c) => Math.min(c.lap, TOTAL_LAPS); // guard against stray increments
     const sortedCars = [...cars].sort((a, b) => {
         // If both finished, sort by lap first (lapped cars have fewer laps), then finish time
         if (a.finished && b.finished) {
-            if (a.lap !== b.lap) return b.lap - a.lap;
+            if (lapsOf(a) !== lapsOf(b)) return lapsOf(b) - lapsOf(a);
             return a.raceTime - b.raceTime;
         }
         // If only one finished, it's ahead
@@ -535,7 +591,7 @@ function updateHUD() {
         if (b.finished) return 1;
         
         // Otherwise, sort by race progress
-        if (a.lap !== b.lap) return b.lap - a.lap;
+        if (lapsOf(a) !== lapsOf(b)) return lapsOf(b) - lapsOf(a);
         // Same lap, who has passed more waypoints?
         if (a.waypointProgress !== b.waypointProgress) return b.waypointProgress - a.waypointProgress;
         // Same waypoint target, who is closer to it?
@@ -550,23 +606,26 @@ function updateHUD() {
         posCounter.innerText = `Pos: ${pos}/${cars.length}`;
     }
     
-    // Check win condition for the leader
-    if (!leaderFinished && sortedCars[0].finished) {
+    // Check win condition for the leader.
+    // Use the recorded first finisher, never sortedCars[0].
+    const firstFinisher = cars.find(c => c.finishIndex === 0);
+    if (!leaderFinished && firstFinisher) {
         leaderFinished = true;
         firstFinisherTime = Date.now();
-        leaderRaceTime = sortedCars[0].raceTime;
-        
+        leaderRaceTime = firstFinisher.raceTime;
+
         // Show temporary winner announcement
         winnerAnnouncement.style.display = 'block';
-        if (sortedCars[0] === playerCar) {
-            winnerText.innerText = "You Finished First!";
+        winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
+        if (firstFinisher === playerCar) {
+            winnerText.innerHTML = "You Finished First!";
             winnerText.style.color = "#4CAF50";
         } else {
-            const nameDisplay = sortedCars[0].driverName ? `${sortedCars[0].driverName} (${sortedCars[0].color})` : sortedCars[0].color.toUpperCase();
-            winnerText.innerText = `${nameDisplay} Finished First!`;
-            winnerText.style.color = sortedCars[0].color;
+            const nameDisplay = firstFinisher.driverName ? `${firstFinisher.driverName} (${firstFinisher.color})` : firstFinisher.color.toUpperCase();
+            winnerText.innerHTML = `${nameDisplay} Finished First!`;
+            winnerText.style.color = '#fff';
         }
-        
+
         setTimeout(() => {
             winnerAnnouncement.style.display = 'none';
         }, 4000);
@@ -575,7 +634,8 @@ function updateHUD() {
     if (playerCar && playerCar.isBroken && !playerCar.notifiedBroken) {
         playerCar.notifiedBroken = true;
         winnerAnnouncement.style.display = 'block';
-        winnerText.innerText = "Car Destroyed!";
+        winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
+        winnerText.innerHTML = "Car Destroyed!";
         winnerText.style.color = "#F44336";
         setTimeout(() => {
             winnerAnnouncement.style.display = 'none';
@@ -674,15 +734,22 @@ function updateHUD() {
                 return `${minutes}:${seconds.padStart(6, '0')}`;
             };
             
+            // A lapped car is flagged the first time it crosses the line after
+            // the leader, so its "Time" is the moment it took the flag having
+            // covered LESS distance. Shown next to the winner's full-distance
+            // time it reads as if the table were mis-sorted, so lapped and DNF
+            // times are dimmed and the lap count is spelled out.
+            const isDNF = c.isBroken && !c.finished;
+            const isLapped = !isDNF && c.lap < TOTAL_LAPS;
+
             let timeStr = formatTime(c.raceTime);
             let gapStr = "-";
-            
-            if (c.isBroken && !c.finished) {
+
+            if (isDNF) {
                 timeStr = c.status || "DNF";
                 gapStr = c.status || "DNF";
             } else if (index > 0) {
-                if (c.lap < TOTAL_LAPS) {
-                    // Lapped car
+                if (isLapped) {
                     const lapsBehind = TOTAL_LAPS - c.lap;
                     gapStr = `+${lapsBehind} lap${lapsBehind > 1 ? 's' : ''}`;
                 } else {
@@ -690,16 +757,21 @@ function updateHUD() {
                     gapStr = `+${(gapMs / 1000).toFixed(3)}s`;
                 }
             }
-            
+
+            const dim = (isDNF || isLapped) ? ' style="opacity: 0.55;"' : '';
+            const lapsStr = `${Math.min(c.lap, TOTAL_LAPS)}/${TOTAL_LAPS}`;
+
             const reactStr = c.reactionTime ? `${c.reactionTime.toFixed(3)}s` : '-';
-            const bestLapStr = c.bestLapTime < Infinity ? formatTime(c.bestLapTime) : '-';
-            
+            const bestLapStr = (c.bestLapTime !== null && c.bestLapTime !== undefined && c.bestLapTime < Infinity)
+                ? formatTime(c.bestLapTime) : '-';
+
             const nameDisplay = c.driverName ? `${c.driverName} (${c.color})` : `${c.color} ${c.isPlayer ? '(You)' : ''}`;
-            
+
             tr.innerHTML = `
                 <td>${index + 1}</td>
                 <td style="color: ${c.color}; font-weight: bold; text-transform: capitalize;">${nameDisplay} ${isChampionship && ptsEarned > 0 ? `[+${ptsEarned} pts]` : ''}</td>
-                <td>${timeStr}</td>
+                <td${isLapped || isDNF ? ' style="opacity: 0.55;"' : ''}>${lapsStr}</td>
+                <td${dim}>${timeStr}</td>
                 <td style="color: #4CAF50;">${bestLapStr}</td>
                 <td>${gapStr}</td>
                 <td>${reactStr}</td>
@@ -840,16 +912,34 @@ function gameLoop(timestamp) {
             if ((car.inputs.up || hasMoved) && lightState < 6 && !car.jumpStartPenalty && !isFalseStartResetting) {
                 car.jumpStartPenalty = true;
                 isFalseStartResetting = true;
-                // Show banner
+                // Show banner.
+                // Always dark background + white body text; the offender's name
+                // is the only coloured element and carries a dark outline, so
+                // white / yellow / cyan cars stay readable.
                 winnerAnnouncement.style.display = 'block';
-                const nameDisplay = car.driverName ? `${car.driverName} (${car.color})` : car.color.toUpperCase();
-                winnerText.innerText = `${nameDisplay} False Start! +5s Penalty`;
-                winnerText.style.color = car.color === 'white' || car.color === 'yellow' || car.color === 'lime' || car.color === 'cyan' ? '#000' : car.color;
-                if (winnerText.style.color === '#000') {
-                    winnerAnnouncement.style.backgroundColor = 'rgba(255,255,255,0.8)';
-                } else {
-                    winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
-                }
+                winnerAnnouncement.style.backgroundColor = 'rgba(20,0,0,0.92)';
+
+                const whoName = car.isPlayer
+                    ? 'YOU'
+                    : (car.driverName ? car.driverName.toUpperCase() : car.color.toUpperCase());
+                const whoCar = car.driverName ? ` &ndash; ${car.color} car` : '';
+
+                winnerText.style.color = '#fff';
+                winnerText.innerHTML = `
+                    <div style="font-size: 30px; font-weight: 900; letter-spacing: 3px; color: #ff5252; margin-bottom: 6px;">
+                        FALSE START
+                    </div>
+                    <div style="font-size: 22px; color: #fff; margin-bottom: 10px;">
+                        <span style="color: ${car.color}; font-weight: 900;
+                                     text-shadow: 0 0 2px #000, 1px 1px 0 #000, -1px -1px 0 #000,
+                                                  1px -1px 0 #000, -1px 1px 0 #000;">${whoName}</span>${whoCar}
+                    </div>
+                    <div style="font-size: 19px; color: #ffd54f; font-weight: bold;">
+                        +5 second penalty
+                    </div>
+                    <div style="font-size: 15px; color: #bbb; margin-top: 8px;">
+                        Cars back to the grid &mdash; restarting&hellip;
+                    </div>`;
                 
                 // Reset grid after 2 seconds
                 setTimeout(() => {
@@ -864,7 +954,23 @@ function gameLoop(timestamp) {
                         c.y = c.startY;
                         c.angle = c.startAngle;
                         c.velocity = {x: 0, y: 0};
-                        
+
+                        // The race is starting over: wipe every scrap of race
+                        // progress too, or a car that rolled over the line
+                        // during the aborted start keeps that state.
+                        c.lap = 0;
+                        c.halfwayMarkerCrossed = false;
+                        c.waypointProgress = 0;
+                        c.finished = false;
+                        c.finishIndex = undefined;
+                        c.raceTime = null;
+                        c.lapStartTime = 0;
+                        c.lastLapTime = null;
+                        c.bestLapTime = null;
+                        c.blueFlag = false;
+                        c.blueFlagTimer = 0;
+                        c.blueFlagFrom = null;
+
                         // Re-roll AI jump time so they don't jump again immediately (unless unlucky)
                         if (!c.isPlayer && !c.jumpStartPenalty) {
                             if (Math.random() < 0.05) {

@@ -179,12 +179,41 @@ class SegmentedTrack {
         return { x: seg.cx + seg.r * Math.cos(a), y: seg.cy + seg.r * Math.sin(a) };
     }
 
-    getRacingLine() {
-        if (!this._racingLine) this._racingLine = this.buildRacingLine();
-        return this._racingLine;
+    // Analytic lap time of a candidate line: sum of ds / attainable speed.
+    // Used to pick the best line rather than assuming a fixed relaxation is
+    // optimal - which layout wins changes from track to track.
+    _lapTimeOf(line) {
+        let t = 0;
+        const N = line.count;
+        for (let i = 0; i < N; i++) {
+            const a = line.nodes[i];
+            const b = line.nodes[(i + 1) % N];
+            const seg = Math.hypot(b.x - a.x, b.y - a.y);
+            t += seg / Math.min(355, a.vCorner);
+        }
+        return t;
     }
 
-    buildRacingLine() {
+    // level: 'standard' (default) or 'fast'.
+    // 'fast' is the quickest of several relaxation depths, measured rather
+    // than assumed. Only the Impossible AI is allowed to use it.
+    getRacingLine(level) {
+        if (!this._lineStd) {
+            this._lineStd = this.buildRacingLine(600);
+
+            let best = this._lineStd;
+            let bestT = this._lapTimeOf(best);
+            for (const sweeps of [1000, 1800]) {
+                const cand = this.buildRacingLine(sweeps);
+                const tc = this._lapTimeOf(cand);
+                if (tc < bestT) { best = cand; bestT = tc; }
+            }
+            this._lineFast = best;
+        }
+        return level === 'fast' ? this._lineFast : this._lineStd;
+    }
+
+    buildRacingLine(sweeps) {
         // ---- 1. dense polyline of the centre line -----------------------
         const dense = [];
         for (const seg of this.segments) {
@@ -244,15 +273,17 @@ class SegmentedTrack {
         // The iteration count is deliberately finite.  Run to convergence this
         // becomes the shortest path, which hugs the inner kerb and therefore
         // tightens the radius; stopping early leaves a length/curvature
-        // compromise.  600 sweeps measured fastest across all ten layouts with
-        // the current car physics - see the note in the header of ai.js.
+        // compromise.  600 sweeps is the safe all-round setting; getRacingLine
+        // also measures deeper relaxations and keeps the quickest as the
+        // 'fast' line for the Impossible AI.
         const maxOff = Math.max(3, this.trackWidth - 20);
         const alpha = new Float64Array(N);
 
         const px = (i) => nodes[i].cx + alpha[i] * nodes[i].nx;
         const py = (i) => nodes[i].cy + alpha[i] * nodes[i].ny;
 
-        for (let it = 0; it < 600; it++) {
+        const nSweeps = sweeps || 600;
+        for (let it = 0; it < nSweeps; it++) {
             for (let i = 0; i < N; i++) {
                 const ip = (i + 1) % N;
                 const im = (i - 1 + N) % N;
@@ -293,7 +324,11 @@ class SegmentedTrack {
             if (!isFinite(r) || r > 1e6) r = 1e6;
             raw[i] = Math.max(12, r);
         }
-        // conservative smoothing: keep the tightest radius of the neighbourhood
+        // Two radii per node:
+        //   radius     - conservative, the tightest of the neighbourhood, so an
+        //                AI reading it brakes early enough for what is coming;
+        //   radiusRaw  - the local value, which a very good driver can exploit.
+        // ai.js blends between them with its "radiusOptimism" parameter.
         const w = Math.max(1, Math.round(k * 0.6));
         for (let i = 0; i < N; i++) {
             let r = raw[i];
@@ -302,6 +337,7 @@ class SegmentedTrack {
                 if (v < r) r = v;
             }
             nodes[i].radius = r;
+            nodes[i].radiusRaw = raw[i];
         }
 
         // ---- 5. dry, steering-limited corner speed ----------------------
