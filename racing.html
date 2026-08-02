@@ -14,6 +14,7 @@
                 <div id="lap-counter">Lap: 1/5</div>
                 <div id="position-counter">Pos: 1/4</div>
                 <div id="speedometer">0 km/h</div>
+                <div id="dnf-timer" style="display: none; color: red; font-weight: bold; margin-top: 5px;"></div>
                 <button id="quitBtn" class="hud-btn">Quit</button>
             </div>
             <div id="menu">
@@ -42,6 +43,7 @@
                         <option value="purple">Purple</option>
                         <option value="orange">Orange</option>
                         <option value="white">White</option>
+                        <option value="spectator">Spectator (AI Only)</option>
                     </select>
                 </div>
                 <div class="menu-group">
@@ -69,6 +71,10 @@
                         <option value="medium" selected>Medium</option>
                         <option value="hard">Hard</option>
                     </select>
+                </div>
+                <div class="menu-group" style="display: flex; align-items: center; justify-content: flex-start; gap: 10px;">
+                    <label for="wet-race-checkbox" style="display: inline; margin-bottom: 0;">Force Wet Race:</label>
+                    <input type="checkbox" id="wet-race-checkbox" style="width: auto; transform: scale(1.5);">
                 </div>
                 <button id="start-btn">Single Race</button>
                 <button id="champ-btn" style="margin-top: 10px; background: #FFD700; color: #000;">Start Championship</button>
@@ -141,6 +147,21 @@
     <script src="car.js"></script>
     <script src="ai.js"></script>
     <script src="audio.js"></script>
+    <script>
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            const errDiv = document.createElement('div');
+            errDiv.style.position = 'fixed';
+            errDiv.style.top = '50px';
+            errDiv.style.left = '50px';
+            errDiv.style.backgroundColor = 'red';
+            errDiv.style.color = 'white';
+            errDiv.style.padding = '20px';
+            errDiv.style.zIndex = '9999';
+            errDiv.innerText = `Error: ${msg}\nLine: ${lineNo}\nURL: ${url}`;
+            document.body.appendChild(errDiv);
+            return false;
+        };
+    </script>
     <script src="main.js"></script>
 </body>
 </html>

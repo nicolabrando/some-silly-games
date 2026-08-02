@@ -146,6 +146,178 @@ class SegmentedTrack {
         }
     }
     
+    // =====================================================================
+    //  RACING LINE  (used exclusively by the AI - does not touch waypoints)
+    // ---------------------------------------------------------------------
+    //  Builds, lazily and only once per track instance (~5-25 ms), a
+    //  uniformly sampled centre line plus a "geometric" racing line obtained
+    //  by constrained Laplacian relaxation, together with the local radius of
+    //  curvature and the maximum physically attainable corner speed.
+    // =====================================================================
+
+    _arcSweep(seg) {
+        let start = seg.start;
+        let end = seg.end;
+        if (!seg.ccw) {
+            while (end <= start) end += Math.PI * 2;
+        } else {
+            while (end >= start) end -= Math.PI * 2;
+        }
+        return end - start;
+    }
+
+    _segLength(seg) {
+        if (seg.type === 'line') return Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1);
+        return Math.abs(this._arcSweep(seg)) * seg.r;
+    }
+
+    _segPoint(seg, t) {
+        if (seg.type === 'line') {
+            return { x: seg.x1 + (seg.x2 - seg.x1) * t, y: seg.y1 + (seg.y2 - seg.y1) * t };
+        }
+        const a = seg.start + this._arcSweep(seg) * t;
+        return { x: seg.cx + seg.r * Math.cos(a), y: seg.cy + seg.r * Math.sin(a) };
+    }
+
+    getRacingLine() {
+        if (!this._racingLine) this._racingLine = this.buildRacingLine();
+        return this._racingLine;
+    }
+
+    buildRacingLine() {
+        // ---- 1. dense polyline of the centre line -----------------------
+        const dense = [];
+        for (const seg of this.segments) {
+            const len = this._segLength(seg);
+            const n = Math.max(2, Math.ceil(len / 2));
+            for (let i = 0; i < n; i++) dense.push(this._segPoint(seg, i / n));
+        }
+
+        const M = dense.length;
+        const cum = new Float64Array(M + 1);
+        for (let i = 0; i < M; i++) {
+            const a = dense[i];
+            const b = dense[(i + 1) % M];
+            cum[i + 1] = cum[i] + Math.hypot(b.x - a.x, b.y - a.y);
+        }
+        const total = cum[M];
+
+        // ---- 2. uniform resampling --------------------------------------
+        const N = Math.max(48, Math.round(total / 8));
+        const ds = total / N;
+
+        const nodes = [];
+        let j = 0;
+        for (let i = 0; i < N; i++) {
+            const s = i * ds;
+            while (j < M - 1 && cum[j + 1] < s) j++;
+            const segLen = cum[j + 1] - cum[j];
+            const t = segLen > 1e-9 ? (s - cum[j]) / segLen : 0;
+            const a = dense[j];
+            const b = dense[(j + 1) % M];
+            nodes.push({
+                cx: a.x + (b.x - a.x) * t,
+                cy: a.y + (b.y - a.y) * t,
+                s: s
+            });
+        }
+
+        // centre-line tangents / normals
+        for (let i = 0; i < N; i++) {
+            const p = nodes[(i + 1) % N];
+            const m = nodes[(i - 1 + N) % N];
+            const tx = p.cx - m.cx;
+            const ty = p.cy - m.cy;
+            const L = Math.hypot(tx, ty) || 1;
+            nodes[i].tx = tx / L;
+            nodes[i].ty = ty / L;
+            nodes[i].nx = -ty / L;   // left/right normal (unit)
+            nodes[i].ny = tx / L;
+        }
+
+        // ---- 3. constrained relaxation -> racing line --------------------
+        // Constrained Laplacian relaxation: each node is pulled towards the
+        // midpoint of its neighbours and clamped inside the usable width, so
+        // the path shortens and straightens ("geometric" racing line: brake
+        // outside, clip the apex, exit wide).
+        //
+        // The iteration count is deliberately finite.  Run to convergence this
+        // becomes the shortest path, which hugs the inner kerb and therefore
+        // tightens the radius; stopping early leaves a length/curvature
+        // compromise.  600 sweeps measured fastest across all ten layouts with
+        // the current car physics - see the note in the header of ai.js.
+        const maxOff = Math.max(3, this.trackWidth - 20);
+        const alpha = new Float64Array(N);
+
+        const px = (i) => nodes[i].cx + alpha[i] * nodes[i].nx;
+        const py = (i) => nodes[i].cy + alpha[i] * nodes[i].ny;
+
+        for (let it = 0; it < 600; it++) {
+            for (let i = 0; i < N; i++) {
+                const ip = (i + 1) % N;
+                const im = (i - 1 + N) % N;
+                const mx = (px(im) + px(ip)) * 0.5 - nodes[i].cx;
+                const my = (py(im) + py(ip)) * 0.5 - nodes[i].cy;
+                let want = mx * nodes[i].nx + my * nodes[i].ny;
+                if (want > maxOff) want = maxOff;
+                if (want < -maxOff) want = -maxOff;
+                alpha[i] += (want - alpha[i]) * 0.35;
+            }
+        }
+
+        for (let i = 0; i < N; i++) {
+            nodes[i].alpha = alpha[i];
+            nodes[i].x = nodes[i].cx + alpha[i] * nodes[i].nx;
+            nodes[i].y = nodes[i].cy + alpha[i] * nodes[i].ny;
+        }
+
+        // racing-line heading
+        for (let i = 0; i < N; i++) {
+            const p = nodes[(i + 1) % N];
+            const m = nodes[(i - 1 + N) % N];
+            nodes[i].heading = Math.atan2(p.y - m.y, p.x - m.x);
+        }
+
+        // ---- 4. local radius of curvature (wide stencil, then min-filter)
+        const k = Math.max(2, Math.round(26 / ds));
+        const raw = new Float64Array(N);
+        for (let i = 0; i < N; i++) {
+            const A = nodes[(i - k + N * 4) % N];
+            const B = nodes[i];
+            const C = nodes[(i + k) % N];
+            const a = Math.hypot(B.x - C.x, B.y - C.y);
+            const b = Math.hypot(A.x - C.x, A.y - C.y);
+            const c = Math.hypot(A.x - B.x, A.y - B.y);
+            const area = Math.abs((B.x - A.x) * (C.y - A.y) - (C.x - A.x) * (B.y - A.y)) * 0.5;
+            let r = area < 1e-6 ? 1e6 : (a * b * c) / (4 * area);
+            if (!isFinite(r) || r > 1e6) r = 1e6;
+            raw[i] = Math.max(12, r);
+        }
+        // conservative smoothing: keep the tightest radius of the neighbourhood
+        const w = Math.max(1, Math.round(k * 0.6));
+        for (let i = 0; i < N; i++) {
+            let r = raw[i];
+            for (let o = -w; o <= w; o++) {
+                const v = raw[(i + o + N * 4) % N];
+                if (v < r) r = v;
+            }
+            nodes[i].radius = r;
+        }
+
+        // ---- 5. dry, steering-limited corner speed ----------------------
+        // The car's yaw rate is capped at maxSteer * (1 - v/500); holding a
+        // radius R requires a yaw rate of v/R, hence the closed form below.
+        const maxSteer = Math.PI * 0.7;
+        for (let i = 0; i < N; i++) {
+            const R = nodes[i].radius;
+            let v = maxSteer / (1 / R + maxSteer / 500);
+            if (!isFinite(v) || v < 0) v = 500;
+            nodes[i].vCorner = Math.min(500, v);
+        }
+
+        return { nodes: nodes, count: N, ds: ds, length: total, maxOffset: maxOff };
+    }
+
     checkLapCross(prevX, prevY, currX, currY) {
         // Broaden the Y check so we don't miss cars on the grass/barrier
         if (prevX < this.startX && currX >= this.startX && Math.abs(currY - this.startY) < this.grassWidth + 100) {
@@ -330,8 +502,8 @@ class CircoMassimoTrack extends SegmentedTrack {
         this.trackWidth = 50;
         this.grassWidth = 70;
         
-        const cx1 = 150;
-        const cx2 = 850;
+        const cx1 = 120; // Stretched to 120
+        const cx2 = 880; // Stretched to 880
         const cy = 350;
         const r = 60;
         
@@ -346,6 +518,27 @@ class CircoMassimoTrack extends SegmentedTrack {
         ];
         
         this.waypoints = this.generateWaypoints();
+    }
+    
+    draw(ctx) {
+        super.draw(ctx);
+        
+        // Draw the "spina" (central separation barrier)
+        ctx.beginPath();
+        ctx.moveTo(120, 350);
+        ctx.lineTo(880, 350);
+        ctx.lineWidth = 15;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#cccccc'; // Stone grey color for the barrier
+        ctx.stroke();
+        
+        // Draw sand/dirt inside the spina area
+        ctx.beginPath();
+        ctx.moveTo(120, 350);
+        ctx.lineTo(880, 350);
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = '#e0c090'; // Sand color
+        ctx.stroke();
     }
 }
 

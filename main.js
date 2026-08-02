@@ -13,6 +13,7 @@ let lightState = 0;
 let goDelay = 0;
 let raceStartTime = 0;
 let leaderFinished = false;
+let firstFinisherTime = null;
 let leaderRaceTime = 0;
 let raceFinished = false;
 let isFalseStartResetting = false;
@@ -131,7 +132,12 @@ function startGame(forceTrackType = null) {
     // Reset effects
     globalSkidMarks = [];
     globalParticles = [];
-    isRaining = Math.random() < 0.20; // 20% chance of rain
+    
+    document.getElementById('dnf-timer').style.display = 'none';
+    
+    const forceWetRace = document.getElementById('wet-race-checkbox').checked;
+    // In Championship mode, ignore the toggle and rely on 20% random chance
+    isRaining = (forceWetRace && !isChampionship) ? true : (Math.random() < 0.20);
     
     // UI for weather
     let weatherIndicator = document.getElementById('weather-indicator');
@@ -175,11 +181,16 @@ function startGame(forceTrackType = null) {
     } else {
         track = new OvalTrack();
     }
-    
+
+    // Pre-compute the AI racing line here (a few ms) so the very first racing
+    // frame doesn't stutter while building it lazily.
+    if (typeof track.getRacingLine === 'function') track.getRacingLine();
+
     cars = [];
     ais = [];
+    playerCar = null; // Reset playerCar
     
-    const numCars = isChampionship ? championshipState.participants.length : (numOpponents + 1);
+    const numCars = isChampionship ? championshipState.participants.length : (color === 'spectator' ? numOpponents + 1 : numOpponents + 1);
     
     // Find closest waypoint to start line
     let startIdx = 0;
@@ -251,15 +262,25 @@ function startGame(forceTrackType = null) {
         // Use championship participants (persists skill variations)
         currentParticipants = [...championshipState.participants];
     } else {
-        // 1. Add Player
-        currentParticipants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: 'You' });
-        // 2. Add AI Opponents
         const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white', 'green', 'cyan', 'pink', 'gray', 'lime', 'black'];
-        const aiColors = possibleColors.filter(c => c !== color);
+        let aiColors = [...possibleColors];
+        
+        // 1. Add Player or Extra AI for Spectator
+        if (color === 'spectator') {
+            // Generate extra AI later
+        } else {
+            currentParticipants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: 'You' });
+            aiColors = aiColors.filter(c => c !== color);
+        }
+        
+        // 2. Add AI Opponents
         // Shuffle drivers for single race
-        const legendaryDrivers = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso'];
+        const legendaryDrivers = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
         const randomDrivers = [...legendaryDrivers].sort(() => Math.random() - 0.5);
-        for (let i = 0; i < numOpponents; i++) {
+        
+        const totalAIsToSpawn = color === 'spectator' ? numOpponents + 1 : numOpponents;
+        
+        for (let i = 0; i < totalAIsToSpawn; i++) {
             currentParticipants.push({ 
                 isPlayer: false, 
                 color: aiColors[i % aiColors.length], 
@@ -341,13 +362,14 @@ function startGame(forceTrackType = null) {
     lightState = 0;
     goDelay = 2.5 + 0.1 + Math.random() * 3.9; // Wait between 0.1 and 4 seconds before GO
     leaderFinished = false;
+    firstFinisherTime = null;
     raceFinished = false;
     isFalseStartResetting = false;
     winnerAnnouncement.style.display = 'none';
     
-    // Initialize Web Audio API
+    // Initialize Audio
     if (typeof initAudio === 'function') {
-        initAudio();
+        initAudio(!playerCar); // Pass true if spectator mode
     }
     
     lastTime = performance.now();
@@ -358,10 +380,12 @@ function updatePhysics(dt) {
     if (dt > 0.05) dt = 0.05; // cap dt for physics stability (min 20fps logic)
     
     // Player input
-    playerCar.inputs.up = keys.ArrowUp;
-    playerCar.inputs.down = keys.ArrowDown;
-    playerCar.inputs.left = keys.ArrowLeft;
-    playerCar.inputs.right = keys.ArrowRight;
+    if (playerCar) {
+        playerCar.inputs.up = keys.ArrowUp;
+        playerCar.inputs.down = keys.ArrowDown;
+        playerCar.inputs.left = keys.ArrowLeft;
+        playerCar.inputs.right = keys.ArrowRight;
+    }
     
     // AI input
     ais.forEach(ai => ai.update(track, dt));
@@ -372,6 +396,21 @@ function updatePhysics(dt) {
     // --- Slipstreaming (Drafting) Check ---
     cars.forEach(car => {
         car.isDrafting = false; // Reset drafting state
+    });
+
+    // Handle 20s DNF timer
+    if (firstFinisherTime && (Date.now() - firstFinisherTime > 20000)) {
+        cars.forEach(c => {
+            if (!c.finished && !c.isBroken) {
+                c.isBroken = true;
+                c.health = 0;
+                c.status = 'DNF (Time Limit)';
+            }
+        });
+    }
+
+    // Process slipstreaming
+    cars.forEach(car => {
         for (const otherCar of cars) {
             if (car === otherCar || otherCar.isBroken) continue;
             
@@ -456,15 +495,33 @@ function updatePhysics(dt) {
 }
 
 function updateHUD() {
+    const dnfTimerDiv = document.getElementById('dnf-timer');
+    if (firstFinisherTime && !raceFinished) {
+        const timeLeft = Math.max(0, 20 - (Date.now() - firstFinisherTime) / 1000);
+        dnfTimerDiv.style.display = 'block';
+        dnfTimerDiv.innerText = `Time Remaining: ${timeLeft.toFixed(1)}s`;
+    } else {
+        dnfTimerDiv.style.display = 'none';
+    }
+
+    if (!playerCar) {
+        document.getElementById('lap-counter').innerText = "Spectator Mode";
+        document.getElementById('speedometer').innerText = "";
+        document.getElementById('position-counter').innerText = "";
+        // Don't return here so spectator can still update standings
+    }
+
     // Lap
-    let currentLap = playerCar.lap + 1;
-    if (currentLap > TOTAL_LAPS) currentLap = TOTAL_LAPS;
-    lapCounter.innerText = `Lap: ${currentLap}/${TOTAL_LAPS}`;
-    
-    // Speed
-    const speed = Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2);
-    // Convert to arbitrary km/h (1 unit = ~0.5 km/h for nice numbers)
-    speedometer.innerText = `${Math.floor(speed * 0.5)} km/h`;
+    if (playerCar) {
+        let currentLap = playerCar.lap + 1;
+        if (currentLap > TOTAL_LAPS) currentLap = TOTAL_LAPS;
+        lapCounter.innerText = `Lap: ${currentLap}/${TOTAL_LAPS}`;
+        
+        // Speed
+        const speed = Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2);
+        // Convert to arbitrary km/h (1 unit = ~0.5 km/h for nice numbers)
+        speedometer.innerText = `${Math.floor(speed * 0.5)} km/h`;
+    }
     
     // Position Calculation
     const sortedCars = [...cars].sort((a, b) => {
@@ -488,12 +545,15 @@ function updateHUD() {
         return distA - distB; 
     });
     
-    const pos = sortedCars.indexOf(playerCar) + 1;
-    posCounter.innerText = `Pos: ${pos}/${cars.length}`;
+    const pos = playerCar ? sortedCars.indexOf(playerCar) + 1 : "-";
+    if (playerCar) {
+        posCounter.innerText = `Pos: ${pos}/${cars.length}`;
+    }
     
     // Check win condition for the leader
     if (!leaderFinished && sortedCars[0].finished) {
         leaderFinished = true;
+        firstFinisherTime = Date.now();
         leaderRaceTime = sortedCars[0].raceTime;
         
         // Show temporary winner announcement
@@ -512,7 +572,7 @@ function updateHUD() {
         }, 4000);
     }
     
-    if (playerCar.isBroken && !playerCar.notifiedBroken) {
+    if (playerCar && playerCar.isBroken && !playerCar.notifiedBroken) {
         playerCar.notifiedBroken = true;
         winnerAnnouncement.style.display = 'block';
         winnerText.innerText = "Car Destroyed!";
@@ -522,8 +582,26 @@ function updateHUD() {
         }, 4000);
     }
     
-    // Check if ALL cars have finished or broken
-    if (cars.every(c => c.finished || c.isBroken) && !raceFinished) {
+    // Handle 20s DNF timer
+    let timeIsUp = false;
+    if (firstFinisherTime && (Date.now() - firstFinisherTime > 20000)) {
+        timeIsUp = true;
+        cars.forEach(c => {
+            if (!c.finished && !c.isBroken) {
+                c.isBroken = true; // Mark as DNF
+                c.raceTime = Infinity;
+            }
+        });
+    }
+    
+    // Check if ALL cars have finished or broken.
+    // To ensure the 20s timer is always respected and visible even in spectator mode,
+    // we only end the race early if ALL cars are finished AND it's not a spectator race, 
+    // or if the 20s timer has expired.
+    const allFinished = cars.every(c => c.finished || c.isBroken);
+    const shouldEndRace = timeIsUp || (allFinished && playerCar);
+    
+    if (shouldEndRace && !raceFinished) {
         raceFinished = true;
         gameState = 'gameover';
         hud.style.display = 'none';
@@ -542,12 +620,30 @@ function updateHUD() {
             stopAudio();
         }
         
+        let headerText = "Race Finished!";
+        if (playerCar) {
+            if (sortedCars[0] === playerCar) {
+                headerText = "You Won!";
+            } else {
+                headerText = `You finished ${pos}`;
+            }
+        } else {
+            const nameDisplay = sortedCars[0].driverName ? `${sortedCars[0].driverName} (${sortedCars[0].color})` : sortedCars[0].color.toUpperCase();
+            headerText = `${nameDisplay} Won!`;
+        }
+        document.getElementById('result-message').innerText = headerText;
+
         if (sortedCars[0].finished) {
             if (sortedCars[0] === playerCar) {
                 resultMessage.innerText = "You Won!";
                 resultMessage.style.color = "#4CAF50";
             } else {
-                resultMessage.innerText = "Race Finished";
+                if (!playerCar) {
+                     const nameDisplay = sortedCars[0].driverName ? `${sortedCars[0].driverName} (${sortedCars[0].color})` : sortedCars[0].color.toUpperCase();
+                     resultMessage.innerText = `${nameDisplay} Wins!`;
+                } else {
+                     resultMessage.innerText = "Race Finished";
+                }
                 resultMessage.style.color = "#fff";
             }
         } else {
@@ -582,8 +678,8 @@ function updateHUD() {
             let gapStr = "-";
             
             if (c.isBroken && !c.finished) {
-                timeStr = "DNF";
-                gapStr = "DNF";
+                timeStr = c.status || "DNF";
+                gapStr = c.status || "DNF";
             } else if (index > 0) {
                 if (c.lap < TOTAL_LAPS) {
                     // Lapped car
@@ -674,6 +770,24 @@ function drawLights(ctx) {
     }
 }
 
+function drawRain(ctx) {
+    if (!isRaining) return;
+    ctx.fillStyle = 'rgba(100, 120, 150, 0.1)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Fast rain streaks
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < 50; i++) {
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height;
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - 5, y + 25);
+    }
+    ctx.stroke();
+}
+
 function gameLoop(timestamp) {
     if (gameState === 'menu') {
         ctx.fillStyle = '#222';
@@ -705,10 +819,12 @@ function gameLoop(timestamp) {
         }
         
         // False start check & physics update for jumping cars
-        playerCar.inputs.up = keys.ArrowUp;
-        playerCar.inputs.down = keys.ArrowDown;
-        playerCar.inputs.left = keys.ArrowLeft;
-        playerCar.inputs.right = keys.ArrowRight;
+        if (playerCar) {
+            playerCar.inputs.up = keys.ArrowUp;
+            playerCar.inputs.down = keys.ArrowDown;
+            playerCar.inputs.left = keys.ArrowLeft;
+            playerCar.inputs.right = keys.ArrowRight;
+        }
         
         cars.forEach(car => {
             if (!car.isPlayer) {
@@ -760,6 +876,9 @@ function gameLoop(timestamp) {
                             c.aiJumpTime = null; // No double penalty intended for AI
                         }
                     });
+                    
+                    globalSkidMarks = [];
+                    globalParticles = [];
                 }, 2000);
             }
             
@@ -775,13 +894,15 @@ function gameLoop(timestamp) {
         track.draw(ctx);
         cars.forEach(car => car.draw(ctx));
         
+        drawRain(ctx); // Draw rain during countdown
+
         if (gameState !== 'gameover') {
             drawLights(ctx);
         }
         
         if (typeof updateEngineSound === 'function') {
-            const speed = Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2);
-            updateEngineSound(speed, keys.ArrowUp);
+            const speed = playerCar ? Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2) : 0;
+            updateEngineSound(speed, playerCar ? playerCar.inputs.up : false);
         }
         
         requestAnimationFrame(gameLoop);
@@ -792,7 +913,7 @@ function gameLoop(timestamp) {
         countdownTimer += dt;
         
         // Track player reaction time on first input
-        if (!playerCar.inputRecorded && (keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight)) {
+        if (playerCar && !playerCar.inputRecorded && (keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight)) {
             playerCar.reactionTime = (performance.now() - raceStartTime) / 1000;
             playerCar.inputRecorded = true;
         }
@@ -801,6 +922,9 @@ function gameLoop(timestamp) {
         track.currentRaceTime = performance.now() - raceStartTime;
         
         updatePhysics(dt);
+        
+        // If spectator, we don't need to update a camera because it's a fixed-screen game
+        
         updateHUD();
         
         // Draw Track
@@ -874,22 +998,7 @@ function gameLoop(timestamp) {
         }
         
         // --- Draw Rain overlay ---
-        if (isRaining) {
-            ctx.fillStyle = 'rgba(100, 120, 150, 0.1)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Fast rain streaks
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            for (let i = 0; i < 50; i++) {
-                const x = Math.random() * canvas.width;
-                const y = Math.random() * canvas.height;
-                ctx.moveTo(x, y);
-                ctx.lineTo(x - 5, y + 25);
-            }
-            ctx.stroke();
-        }
+        drawRain(ctx);
         
         // Hide lights after 1.5s of GO
         if (countdownTimer < goDelay + 1.5) {
@@ -897,8 +1006,8 @@ function gameLoop(timestamp) {
         }
         
         if (typeof updateEngineSound === 'function') {
-            const speed = Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2);
-            updateEngineSound(speed, playerCar.inputs.up);
+            const speed = playerCar ? Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2) : 0;
+            updateEngineSound(speed, playerCar ? playerCar.inputs.up : false);
         }
         
         requestAnimationFrame(gameLoop);
@@ -926,19 +1035,29 @@ function startChampionship() {
     };
     
     // Famous names list
-    let availableNames = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso'];
+    let availableNames = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
     // Shuffle names
     availableNames.sort(() => Math.random() - 0.5);
     
     // Initialize points and persistent AI modifiers
-    championshipState.participants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: "You" });
-    championshipState.points[color] = 0;
-    
-    for (let i = 0; i < numOpponents; i++) {
-        let aiCol = aiColors[i % aiColors.length];
-        let name = availableNames[i % availableNames.length];
-        championshipState.participants.push({ isPlayer: false, color: aiCol, skillVariation: 0.8 + (Math.random() * 0.3), driverName: name });
-        championshipState.points[aiCol] = 0;
+    if (color === 'spectator') {
+        const totalAIsToSpawn = numOpponents + 1;
+        for (let i = 0; i < totalAIsToSpawn; i++) {
+            let aiCol = possibleColors[i % possibleColors.length];
+            let name = availableNames[i % availableNames.length];
+            championshipState.participants.push({ isPlayer: false, color: aiCol, skillVariation: 0.8 + (Math.random() * 0.3), driverName: name });
+            championshipState.points[aiCol] = 0;
+        }
+    } else {
+        championshipState.participants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: "You" });
+        championshipState.points[color] = 0;
+        
+        for (let i = 0; i < numOpponents; i++) {
+            let aiCol = aiColors[i % aiColors.length];
+            let name = availableNames[i % availableNames.length];
+            championshipState.participants.push({ isPlayer: false, color: aiCol, skillVariation: 0.8 + (Math.random() * 0.3), driverName: name });
+            championshipState.points[aiCol] = 0;
+        }
     }
     
     nextChampionshipRound();

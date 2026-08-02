@@ -56,10 +56,10 @@ class Car {
         
         // Rain effect on asphalt
         if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass') {
-            currentGrip *= 0.6; // Slippery!
+            currentGrip *= 0.35; // Very slippery!
             // Senna bonus in rain
             if (this.driverName === 'Ayrton Senna') {
-                currentGrip *= 1.3; // Much better grip than others in the rain
+                currentGrip *= 1.4; // Still slippery, but much better than others
             }
         }
         

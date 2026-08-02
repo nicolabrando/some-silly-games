@@ -17,7 +17,7 @@ const melody = [
 
 let noteIndex = 0;
 
-function initAudio() {
+function initAudio(isSpectator = false) {
     if (isAudioInitialized) return;
     
     // Resume context if suspended (browser policy)
@@ -25,27 +25,29 @@ function initAudio() {
         audioContext.resume();
     }
     
-    // Engine Sound Setup
-    engineOscillator = audioContext.createOscillator();
-    engineOscillator.type = 'sawtooth';
-    
-    engineGain = audioContext.createGain();
-    engineGain.gain.value = 0.05; // Base low volume
-    
-    // Lowpass filter to muffle the raw sawtooth
-    const filter = audioContext.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 800;
-    
-    engineOscillator.connect(filter);
-    filter.connect(engineGain);
-    engineGain.connect(audioContext.destination);
-    
-    engineOscillator.frequency.value = 50; // Idle frequency
-    engineOscillator.start();
-    
-    // BGM Setup
-    startBGM();
+    if (!isSpectator) {
+        // Engine Sound Setup
+        engineOscillator = audioContext.createOscillator();
+        engineOscillator.type = 'sawtooth';
+        
+        engineGain = audioContext.createGain();
+        engineGain.gain.value = 0.05; // Base low volume
+        
+        // Lowpass filter to muffle the raw sawtooth
+        const filter = audioContext.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 800;
+        
+        engineOscillator.connect(filter);
+        filter.connect(engineGain);
+        engineGain.connect(audioContext.destination);
+        
+        engineOscillator.frequency.value = 50; // Idle frequency
+        engineOscillator.start();
+    } else {
+        // BGM Setup
+        startBGM();
+    }
     
     isAudioInitialized = true;
 }
@@ -67,7 +69,7 @@ function updateEngineSound(speed, isAccelerating) {
 
 function startBGM() {
     bgmGain = audioContext.createGain();
-    bgmGain.gain.value = 0.03; // Background music should be quiet
+    bgmGain.gain.value = 0.2; // Background music master volume
     bgmGain.connect(audioContext.destination);
     
     // Play a note every 150ms
@@ -81,7 +83,7 @@ function startBGM() {
             
             const envelope = audioContext.createGain();
             envelope.gain.setValueAtTime(0, audioContext.currentTime);
-            envelope.gain.linearRampToValueAtTime(0.03, audioContext.currentTime + 0.02);
+            envelope.gain.linearRampToValueAtTime(1.0, audioContext.currentTime + 0.02);
             envelope.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
             
             osc.connect(envelope);
