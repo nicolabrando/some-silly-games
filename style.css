@@ -171,3 +171,147 @@ button:hover {
     background: rgba(0, 0, 0, 0.8);
     border-color: white;
 }
+
+/* ------------------------------------------------------------------ */
+/*  How to play                                                        */
+/* ------------------------------------------------------------------ */
+#how-to-play {
+    margin-top: 18px;
+    text-align: left;
+    border-top: 1px solid #444;
+    padding-top: 14px;
+    /* keep the paragraphs from stretching the whole menu panel */
+    max-width: 440px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+#how-to-play > summary {
+    cursor: pointer;
+    text-align: center;
+    font-weight: bold;
+    font-size: 16px;
+    color: #9ecbff;
+    padding: 6px;
+    list-style: none;
+    user-select: none;
+}
+
+#how-to-play > summary::-webkit-details-marker { display: none; }
+
+#how-to-play > summary::before {
+    content: '▸ ';
+    display: inline-block;
+    transition: transform 0.15s ease;
+}
+
+#how-to-play[open] > summary::before {
+    content: '▾ ';
+}
+
+#how-to-play > summary:hover { color: #d6e9ff; }
+
+#how-to-play .guide {
+    margin-top: 10px;
+    max-height: 46vh;
+    overflow-y: auto;
+    padding-right: 12px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: #ddd;
+}
+
+#how-to-play .guide h3 {
+    margin: 16px 0 4px;
+    font-size: 13px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #FFD700;
+}
+
+#how-to-play .guide h3:first-child { margin-top: 0; }
+
+#how-to-play .guide p { margin: 4px 0; }
+
+#how-to-play .guide ul {
+    margin: 4px 0;
+    padding-left: 18px;
+}
+
+#how-to-play .guide li { margin-bottom: 4px; }
+
+#how-to-play .guide b { color: #fff; }
+
+/* ------------------------------------------------------------------ */
+/*  HUD buttons                                                        */
+/*  The HUD itself is pointer-events:none so it never eats clicks meant */
+/*  for the canvas; its buttons have to opt back in, or they look       */
+/*  perfectly normal and simply do nothing when pressed.                */
+/* ------------------------------------------------------------------ */
+.hud-btn {
+    pointer-events: auto;
+    width: auto;
+    margin-top: 0;
+    padding: 4px 12px;
+    font-size: 13px;
+    line-height: 1.2;
+    border-radius: 4px;
+    align-self: flex-start;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Live timing tower                                                  */
+/* ------------------------------------------------------------------ */
+#timing-tower {
+    position: absolute;
+    top: 60px;
+    left: 12px;
+    background: rgba(0, 0, 0, 0.62);
+    border: 1px solid #444;
+    border-radius: 5px;
+    padding: 5px 7px;
+    font-size: 12px;
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    min-width: 168px;
+    text-shadow: none;
+}
+
+#timing-tower .tt-row {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+#timing-tower .tt-row.me {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 3px;
+}
+
+#timing-tower .tt-pos {
+    width: 17px;
+    text-align: right;
+    opacity: 0.75;
+}
+
+#timing-tower .tt-chip {
+    width: 7px;
+    height: 11px;
+    border-radius: 1px;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    flex: 0 0 auto;
+}
+
+#timing-tower .tt-name {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#timing-tower .tt-gap {
+    opacity: 0.9;
+    text-align: right;
+    min-width: 52px;
+}

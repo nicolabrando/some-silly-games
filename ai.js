@@ -34,9 +34,9 @@ const AI_PROFILES = {
         reaction: [0.45, 0.90],
         errorChance: 0.30,
         errorMag: 0.20,
-        overtake: 0.30,         // willingness to move off-line to pass
-        safeGap: 46,            // px kept from the car ahead
-        gapGain: 1.1,           // how hard the gap is closed
+        overtake: 0.45,         // willingness to move off-line to pass
+        safeGap: 38,            // px kept from the car ahead
+        gapGain: 1.5,           // how hard the gap is closed
         defend: 0.0,            // how much it covers the line under attack
         lineLevel: 'standard',
         maxCorner: 0.85         // ceiling after driver-style multipliers
@@ -53,10 +53,10 @@ const AI_PROFILES = {
         reaction: [0.22, 0.42],
         errorChance: 0.06,
         errorMag: 0.09,
-        overtake: 0.75,
-        safeGap: 32,
-        gapGain: 1.6,
-        defend: 0.25,
+        overtake: 0.92,
+        safeGap: 25,
+        gapGain: 2.1,
+        defend: 0.45,
         lineLevel: 'standard',
         maxCorner: 1.00
     },
@@ -73,9 +73,9 @@ const AI_PROFILES = {
         errorChance: 0.008,
         errorMag: 0.04,
         overtake: 1.0,
-        safeGap: 25,
-        gapGain: 1.9,
-        defend: 0.55,
+        safeGap: 19,
+        gapGain: 2.5,
+        defend: 0.75,
         lineLevel: 'standard',
         maxCorner: 1.13
     },
@@ -83,7 +83,7 @@ const AI_PROFILES = {
         // 1.16 is the measured optimum: swept solo across every layout, lap
         // time bottoms out here and starts rising again past ~1.25 as the car
         // begins to scrub instead of turn.
-        cornerFactor: 1.16,
+        cornerFactor: 1.14,
         straightFactor: 1.0,
         brakeConfidence: 1.12,
         lineBlend: 1.0,
@@ -95,9 +95,9 @@ const AI_PROFILES = {
         errorChance: 0.0,
         errorMag: 0.0,
         overtake: 1.0,
-        safeGap: 22,
-        gapGain: 2.2,
-        defend: 0.85,
+        safeGap: 16,
+        gapGain: 2.9,
+        defend: 0.95,
         lineLevel: 'fast',      // measured-optimal line, only at this level
         maxCorner: 1.19
     }
@@ -165,14 +165,10 @@ class AI {
             ? 0.8 + Math.random() * 0.3
             : skillVariation;
         this.skillVariation = Math.max(0.8, Math.min(1.1, raw));
-        const skillMul = 0.930 + (this.skillVariation - 0.8) * 0.233;
 
-        // Copy the difficulty profile so per-driver tweaks stay local.
-        this.p = Object.assign({}, AI_PROFILES[this.difficulty]);
-        this.p.cornerFactor *= skillMul;
-        this.p.straightFactor *= skillMul;
-
-        this.applyDriverStyle();
+        this.p = AI.buildProfile(car.driverName, this.difficulty, this.skillVariation);
+        // car.js reads this for the rain grip bonus.
+        this.car.wetGripBonus = this.p.wetSkill;
 
         // --- state -------------------------------------------------------
         this.nodeIdx = -1;
@@ -197,39 +193,6 @@ class AI {
 
         // Small permanent personal bias so cars don't stack on the same line.
         this.personalBias = (Math.random() - 0.5) * 12;
-    }
-
-    applyDriverStyle() {
-        const p = this.p;
-        const s = AI_DRIVER_STYLES[this.car.driverName];
-
-        p.wetSkill = 1;
-        p.cleanAir = 1;
-
-        if (s) {
-            p.cornerFactor *= s.corner;
-            p.straightFactor *= s.straight;
-            p.brakeConfidence *= s.brake;
-            p.steerTau *= s.steerTau;
-            p.errorChance *= s.err;
-            p.overtake *= s.overtake;
-            p.safeGap *= s.gap;
-            p.defend *= s.defend;
-            p.wetSkill = s.wet;
-            p.cleanAir = s.cleanAir;
-
-            // Hamilton reads the track further ahead than anyone.
-            if (this.car.driverName === 'Lewis Hamilton') p.lookBase += 14;
-        }
-
-        // Hard ceiling: a personality colours how a driver is quick, it never
-        // lets one escape the physics of the car.
-        p.cornerFactor = Math.min(p.cornerFactor, p.maxCorner);
-        p.overtake = Math.min(p.overtake, 1);
-        p.defend = Math.min(p.defend, 1);
-
-        // car.js reads this for the rain grip bonus.
-        this.car.wetGripBonus = p.wetSkill;
     }
 
     startRace() {
@@ -328,7 +291,11 @@ class AI {
         // Signed distance from the centre line (positive = normal side).
         const latCar = (car.x - here.cx) * here.nx + (car.y - here.cy) * here.ny;
         const halfWidth = track.trackWidth;
-        const onGrass = Math.abs(latCar) > halfWidth;
+        // A kerb is cheap, grass is not: only the latter warrants panicking.
+        const kerbW = track.kerbWidth !== undefined ? track.kerbWidth : 0;
+        const offLine = Math.abs(latCar);
+        const onKerb = offLine > halfWidth && offLine <= halfWidth + kerbW;
+        const onGrass = offLine > halfWidth + kerbW;
 
         // ================================================================
         //  1. WRONG WAY  -  compare heading with the track tangent
@@ -436,11 +403,16 @@ class AI {
         // ================================================================
         //  5. SPEED PROFILE  (corner limit + braking lookahead)
         // ================================================================
-        let gripScale = 1;
+        // A damaged car has less grip and less power: the AI must know, or it
+        // keeps driving to the pace of a healthy car and simply goes off.
+        const condition = car.condition !== undefined ? car.condition : 1;
+
+        let gripScale = condition;
         if (typeof isRaining !== 'undefined' && isRaining) {
             gripScale = 0.20 * (this.p.wetSkill || 1);   // matches car.js exactly
         }
         if (onGrass) gripScale *= 0.3;
+        else if (onKerb) gripScale *= 0.80;
         const latLimit = AI_BASE_GRIP * gripScale * 0.85;
 
         const aBrake = Math.max(80, (150 + 0.55 * speed) * this.p.brakeConfidence);
@@ -465,9 +437,13 @@ class AI {
             return Math.min(nd.vCorner * 1.35, vSteer, vGrip) * AI_CORNER_SAFETY * this.p.cornerFactor;
         };
 
-        let vTop = AI_TOP_SPEED * this.p.straightFactor;
-        if (car.isDrafting) vTop *= 1.10;
+        // Under the VSC everyone has the same reduced power, so the AI must
+        // aim lower too rather than sitting at full throttle pointlessly.
+        const vscF = (typeof vscPowerFactor !== 'undefined') ? vscPowerFactor : 1;
+        let vTop = AI_TOP_SPEED * this.p.straightFactor * condition * vscF;
+        if (car.draftStrength > 0) vTop *= 1 + 0.12 * car.draftStrength;
         if (onGrass) vTop = Math.min(vTop, 150);
+        else if (onKerb) vTop *= 0.95;
         if (typeof isRaining !== 'undefined' && isRaining) vTop *= 0.97;
 
         // Clean-air specialists (Vettel, Prost, Lauda) find that extra tenth
@@ -483,8 +459,8 @@ class AI {
         }
 
         // Slow down if we are running wide towards the kerbs.
-        const edge = Math.abs(latCar) / halfWidth;
-        if (edge > 0.85) vTarget *= Math.max(0.55, 1 - (edge - 0.85) * 1.2);
+        const edge = offLine / (halfWidth + kerbW * 0.5);
+        if (edge > 0.90) vTarget *= Math.max(0.60, 1 - (edge - 0.90) * 1.2);
 
         // Car-following cap (set by updateTraffic).
         if (this.followSpeed < vTarget) vTarget = this.followSpeed;
@@ -632,7 +608,9 @@ class AI {
                         // and grind themselves to destruction.
                         if (fwd > 2) {
                             const theirFwd = other.velocity.x * tx + other.velocity.y * ty;
-                            const concede = Math.max(45, theirFwd * 0.88);
+                            // Less willing to back out than before - they will
+                            // hold the position and risk the contact.
+                            const concede = Math.max(60, theirFwd * 0.95);
                             if (concede < this.followSpeed) this.followSpeed = concede;
                         }
                     }
@@ -702,3 +680,58 @@ class AI {
         this.lateralOffset += Math.max(-maxStep, Math.min(maxStep, delta));
     }
 }
+
+// -----------------------------------------------------------------------------
+//  Profile construction, shared by the live AI and by qualifying simulation.
+// -----------------------------------------------------------------------------
+AI.buildProfile = function (driverName, difficulty, skillVariation) {
+    const base = AI_PROFILES[difficulty] ? AI_PROFILES[difficulty] : AI_PROFILES.medium;
+    const p = Object.assign({}, base);
+
+    const sv = Math.max(0.8, Math.min(1.1, isFinite(skillVariation) ? skillVariation : 0.95));
+    const skillMul = 0.930 + (sv - 0.8) * 0.233;
+    p.cornerFactor *= skillMul;
+    p.straightFactor *= skillMul;
+
+    p.wetSkill = 1;
+    p.cleanAir = 1;
+
+    const s = AI_DRIVER_STYLES[driverName];
+    if (s) {
+        p.cornerFactor *= s.corner;
+        p.straightFactor *= s.straight;
+        p.brakeConfidence *= s.brake;
+        p.steerTau *= s.steerTau;
+        p.errorChance *= s.err;
+        p.overtake *= s.overtake;
+        p.safeGap *= s.gap;
+        p.defend *= s.defend;
+        p.wetSkill = s.wet;
+        p.cleanAir = s.cleanAir;
+        if (driverName === 'Lewis Hamilton') p.lookBase += 14;   // reads the track furthest ahead
+    }
+
+    // Hard ceiling: a personality colours how a driver is quick, it never lets
+    // one escape the physics of the car.
+    p.cornerFactor = Math.min(p.cornerFactor, p.maxCorner);
+    p.overtake = Math.min(p.overtake, 1);
+    p.defend = Math.min(p.defend, 1);
+    return p;
+};
+
+// Notional single flying lap, lower is quicker. Used to set the grid instead
+// of shuffling it at random, so the front row means something.
+AI.qualifyingPace = function (driverName, difficulty, skillVariation, raining) {
+    const p = AI.buildProfile(driverName, difficulty, skillVariation);
+
+    // Roughly 60% of a lap is spent cornering, 40% flat out.
+    let pace = 0.60 / p.cornerFactor + 0.40 / p.straightFactor;
+    pace /= Math.sqrt(p.cleanAir);               // qualifying is always clean air
+    if (raining) pace /= Math.sqrt(p.wetSkill);  // grip enters the corner speed as a square root
+
+    // A single flying lap has real variance, and more of it for drivers who
+    // live closer to the edge. Without enough spread the same driver takes
+    // pole every single time and qualifying stops being interesting.
+    const spread = 0.055 + p.errorChance * 0.25;
+    return pace * (1 + (Math.random() - 0.5) * spread);
+};

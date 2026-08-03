@@ -49,6 +49,8 @@ class SegmentedTrack {
     getClosestPoint(x, y) {
         let minDist = Infinity;
         let bestProj = {x: 0, y: 0};
+        let bestType = 'line';
+        let bestSeg = null;
         
         for (const seg of this.segments) {
             let dist, projX, projY;
@@ -102,15 +104,41 @@ class SegmentedTrack {
             if (dist < minDist) {
                 minDist = dist;
                 bestProj = {x: projX, y: projY};
+                bestType = seg.type;
+                bestSeg = seg;
             }
         }
         
-        return { dist: minDist, projX: bestProj.x, projY: bestProj.y };
+        return { dist: minDist, projX: bestProj.x, projY: bestProj.y, segType: bestType, seg: bestSeg };
+    }
+
+    // Width of the kerb band lining the inside of the corners.
+    get kerbWidth() {
+        return Math.min(26, Math.max(14, this.trackWidth * 0.30));
+    }
+
+    // How much of it actually fits on a given corner. On a hairpin whose
+    // radius is barely wider than the track there is almost no inside run-off,
+    // so the kerb is whatever will fit - possibly nothing at all.
+    kerbWidthFor(seg) {
+        if (!seg || seg.type !== 'arc') return 0;
+        return Math.min(this.kerbWidth, Math.max(0, seg.r - this.trackWidth - 2));
     }
 
     getSurface(x, y) {
         const distData = this.getClosestPoint(x, y);
         if (distData.dist <= this.trackWidth) return 'track';
+
+        // Kerbs exist only on the *inside* of a corner: the nearest piece of
+        // geometry has to be an arc, and the point has to be on the side
+        // towards the arc's centre. The outside of a corner and the whole of
+        // every straight are grass.
+        const seg = distData.seg;
+        if (distData.segType === 'arc' && seg &&
+            distData.dist <= this.trackWidth + this.kerbWidthFor(seg) &&
+            Math.hypot(x - seg.cx, y - seg.cy) < seg.r) {
+            return 'kerb';
+        }
         return 'grass';
     }
     
@@ -133,9 +161,21 @@ class SegmentedTrack {
                 const ny = dy / len;
                 car.x -= nx * push;
                 car.y -= ny * push;
-                
-                car.takeDamage(0.5); // Increased barrier damage
-                
+
+                // Damage scaled by how hard we went into the wall, not by how
+                // long we scrape along it: a glancing brush is nearly free, a
+                // square hit is expensive.
+                // Same shape as car-to-car contact: leaning on the barrier
+                // through a corner is free, spearing it is not.
+                //   <60 px/s ->   0 hp
+                //   100      ->  42 hp
+                //   150      -> 210 hp
+                //   200      -> 510 hp   (terminal)
+                const intoWall = car.velocity.x * nx + car.velocity.y * ny;
+                if (intoWall > 60) {
+                    car.takeDamage(260 * Math.pow((intoWall - 60) / 100, 2));
+                }
+
                 // Tangent projection for sliding effect (non-sticky wall)
                 const tx = -ny;
                 const ty = nx;
@@ -197,6 +237,43 @@ class SegmentedTrack {
     // level: 'standard' (default) or 'fast'.
     // 'fast' is the quickest of several relaxation depths, measured rather
     // than assumed. Only the Impossible AI is allowed to use it.
+    // Total centre-line length, cached. Used by car.js for the half-distance
+    // check, which must be in real distance: the waypoint list is unevenly
+    // spaced (15 points per line segment regardless of its length), so
+    // "half the waypoints" is not "half the lap".
+    getLength() {
+        if (this._length === undefined) {
+            let L = 0;
+            for (const seg of this.segments) L += this._segLength(seg);
+            this._length = L;
+        }
+        return this._length;
+    }
+
+    // Cumulative arc length along the waypoint polyline, so a car's progress
+    // round the lap can be measured in real track distance rather than in
+    // distance travelled (which a spin or a reverse inflates for free).
+    getWaypointArcLengths() {
+        if (!this._wpS) {
+            const w = this.waypoints;
+            const S = new Float64Array(w.length);
+            let acc = 0;
+            for (let i = 0; i < w.length; i++) {
+                S[i] = acc;
+                const n = w[(i + 1) % w.length];
+                acc += Math.hypot(n.x - w[i].x, n.y - w[i].y);
+            }
+            this._wpS = S;
+            this._wpTotal = acc;
+        }
+        return this._wpS;
+    }
+
+    getWaypointTotal() {
+        this.getWaypointArcLengths();
+        return this._wpTotal;
+    }
+
     getRacingLine(level) {
         if (!this._lineStd) {
             this._lineStd = this.buildRacingLine(600);
@@ -382,7 +459,154 @@ class SegmentedTrack {
         ctx.closePath();
     }
 
+    // =====================================================================
+    //  GRANDSTANDS
+    //  Placed once from the track geometry: sampled along the centre line,
+    //  pushed outside the barrier, and rejected where they would fall off the
+    //  canvas or land on another part of the circuit.
+    // =====================================================================
+    getStands() {
+        if (this._stands) return this._stands;
+
+        const line = this.getRacingLine('standard');
+        const stands = [];
+
+        let seed = 987654321;
+        const rand = () => {
+            seed = (seed * 1103515245 + 12345) % 2147483648;
+            return seed / 2147483648;
+        };
+
+        // Every corner of the rectangle must clear the circuit and the canvas,
+        // not just its centre: a long stand tangent to a corner would otherwise
+        // have its ends buried in the track.
+        const corners = (cx, cy, ang, len, depth) => {
+            const ca = Math.cos(ang), sa = Math.sin(ang);
+            const hl = len / 2, hd = depth / 2;
+            const pts = [];
+            for (const [u, v] of [[-hl, -hd], [hl, -hd], [hl, hd], [-hl, hd]]) {
+                pts.push({ x: cx + u * ca - v * sa, y: cy + u * sa + v * ca });
+            }
+            return pts;
+        };
+
+        // Dense candidate sweep, then keep only what fits. Better to try many
+        // positions and reject most than to place a few blindly.
+        const step = Math.max(4, Math.round(line.count / 60));
+
+        for (let i = 0; i < line.count; i += step) {
+            const n = line.nodes[i];
+            const ang = Math.atan2(n.ty, n.tx);
+
+            for (const side of [1, -1]) {
+                const len = 96 + rand() * 44;      // noticeably bigger than before
+                const depth = 34 + rand() * 8;
+                const off = this.grassWidth + 24 + depth / 2;
+
+                const cx = n.cx + n.nx * off * side;
+                const cy = n.cy + n.ny * off * side;
+
+                const pts = corners(cx, cy, ang, len, depth);
+
+                // 1. fully on canvas
+                let ok = true;
+                for (const p of pts) {
+                    if (p.x < 8 || p.x > 992 || p.y < 8 || p.y > 692) { ok = false; break; }
+                }
+                if (!ok) continue;
+
+                // 2. every corner clear of every part of the circuit
+                for (const p of pts) {
+                    if (this.getClosestPoint(p.x, p.y).dist < this.grassWidth + 14) { ok = false; break; }
+                }
+                if (!ok) continue;
+                // and the middle of the long sides, for a stand straddling a gap
+                for (const t of [-0.5, 0, 0.5]) {
+                    const mx = cx + Math.cos(ang) * len * t;
+                    const my = cy + Math.sin(ang) * len * t;
+                    if (this.getClosestPoint(mx, my).dist < this.grassWidth + 14) { ok = false; break; }
+                }
+                if (!ok) continue;
+
+                // 3. clear of every stand already placed (bounding circles + margin)
+                const r = Math.hypot(len / 2, depth / 2);
+                for (const s of stands) {
+                    const rs = Math.hypot(s.len / 2, s.depth / 2);
+                    if (Math.hypot(cx - s.x, cy - s.y) < r + rs + 12) { ok = false; break; }
+                }
+                if (!ok) continue;
+
+                stands.push({
+                    x: cx, y: cy, angle: ang, len: len, depth: depth,
+                    fill: 0.55 + rand() * 0.45,     // how full this stand is
+                    seed: Math.floor(rand() * 100000)
+                });
+            }
+        }
+
+        this._stands = stands;
+        return stands;
+    }
+
+    drawStands(ctx) {
+        const stands = this.getStands();
+        const shimmer = Math.floor(Date.now() / 260);
+        const shirts = ['#e53935', '#fdd835', '#1e88e5', '#43a047', '#fb8c00',
+                        '#8e24aa', '#ffffff', '#00acc1', '#d81b60', '#6d4c41'];
+
+        for (const s of stands) {
+            ctx.save();
+            ctx.translate(s.x, s.y);
+            ctx.rotate(s.angle);
+
+            const hl = s.len / 2;
+            const hd = s.depth / 2;
+
+            // structure: back wall, then tiered seating stepping down to the track
+            ctx.fillStyle = '#4a4a52';
+            ctx.fillRect(-hl - 3, -hd - 3, s.len + 6, s.depth + 6);
+            ctx.fillStyle = '#5f5f68';
+            ctx.fillRect(-hl, -hd, s.len, s.depth);
+
+            const rows = 4;
+            const rowH = s.depth / rows;
+            let rnd = s.seed;
+            const rr = () => { rnd = (rnd * 1103515245 + 12345) % 2147483648; return rnd / 2147483648; };
+
+            for (let r = 0; r < rows; r++) {
+                const y = -hd + r * rowH;
+                // tier deck, lighter towards the track
+                ctx.fillStyle = r % 2 === 0 ? '#6b6b75' : '#77777f';
+                ctx.fillRect(-hl, y, s.len, rowH - 1);
+
+                // spectators
+                const seats = Math.floor(s.len / 7);
+                for (let k = 0; k < seats; k++) {
+                    if (rr() > s.fill) continue;
+                    const idx = Math.floor(rr() * shirts.length);
+                    // a few of them keep moving about
+                    const bob = (rr() < 0.12) ? ((shimmer + k) % 2) : 0;
+                    ctx.fillStyle = shirts[idx];
+                    ctx.fillRect(-hl + 3 + k * 7, y + 1.5 + bob, 4, 4);
+                }
+            }
+
+            // safety fence facing the circuit
+            ctx.strokeStyle = 'rgba(210,210,215,0.55)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(-hl, hd + 1.5);
+            ctx.lineTo(hl, hd + 1.5);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+    }
+
     draw(ctx) {
+        // Stands first: they sit outside the barriers, behind everything else.
+        this.drawStands(ctx);
+
         ctx.lineCap = 'butt'; // Crucial for segmented drawing without huge overlap
         ctx.lineJoin = 'round';
         
@@ -418,7 +642,33 @@ class SegmentedTrack {
         ctx.strokeStyle = '#2e7d32';
         ctx.stroke();
 
-        // 4. Track Asphalt (Dark Grey)
+        // 4. Kerbs on the inside of every corner (red / white).
+        //    Drawn as a thin band hugging the inner edge of the asphalt, so
+        //    nothing appears on the outside of the corner or on the straights.
+        for (const seg of this.segments) {
+            if (seg.type !== 'arc') continue;
+
+            const kw = this.kerbWidthFor(seg);
+            if (kw < 5) continue;               // hairpin with no inside run-off
+            const rk = seg.r - this.trackWidth - kw / 2;
+            if (rk <= 2) continue;
+
+            const sweep = this._arcSweep(seg);
+            const arcLen = Math.abs(sweep) * rk;
+            const bands = Math.max(4, Math.round(arcLen / 22));
+
+            for (let b = 0; b < bands; b++) {
+                const a0 = seg.start + sweep * (b / bands);
+                const a1 = seg.start + sweep * ((b + 1) / bands);
+                ctx.beginPath();
+                ctx.arc(seg.cx, seg.cy, rk, a0, a1, sweep < 0);
+                ctx.lineWidth = kw;
+                ctx.strokeStyle = (b % 2 === 0) ? '#d32f2f' : '#f2f2f2';
+                ctx.stroke();
+            }
+        }
+
+        // 5. Track Asphalt (Dark Grey)
         this.drawPath(ctx);
         ctx.lineWidth = this.trackWidth * 2;
         ctx.strokeStyle = '#555';
@@ -538,8 +788,11 @@ class CircoMassimoTrack extends SegmentedTrack {
         this.trackWidth = 50;
         this.grassWidth = 70;
         
-        const cx1 = 120; // Stretched to 120
-        const cx2 = 880; // Stretched to 880
+        // Pulled in from 120/880: at the old width the barriers reached x=50
+        // and x=950 and the two ends ran off the visible area once the kerbs
+        // and grandstands were added around them.
+        const cx1 = 195;
+        const cx2 = 805;
         const cy = 350;
         const r = 60;
         
@@ -561,8 +814,8 @@ class CircoMassimoTrack extends SegmentedTrack {
         
         // Draw the "spina" (central separation barrier)
         ctx.beginPath();
-        ctx.moveTo(120, 350);
-        ctx.lineTo(880, 350);
+        ctx.moveTo(195, 350);
+        ctx.lineTo(805, 350);
         ctx.lineWidth = 15;
         ctx.lineCap = 'round';
         ctx.strokeStyle = '#cccccc'; // Stone grey color for the barrier
@@ -570,8 +823,8 @@ class CircoMassimoTrack extends SegmentedTrack {
         
         // Draw sand/dirt inside the spina area
         ctx.beginPath();
-        ctx.moveTo(120, 350);
-        ctx.lineTo(880, 350);
+        ctx.moveTo(195, 350);
+        ctx.lineTo(805, 350);
         ctx.lineWidth = 10;
         ctx.strokeStyle = '#e0c090'; // Sand color
         ctx.stroke();

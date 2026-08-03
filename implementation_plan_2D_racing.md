@@ -18,7 +18,7 @@ La funzione `gameLoop(timestamp)` è il cuore pulsante.
 ### 1.2 Gestione dello Stato e Memoria
 - I dati temporanei (vettori di posizione, particelle, tracce gomma) risiedono in scope globale in array mutabili (`cars`, `globalParticles`, `globalSkidMarks`).
 - Vengono svuotati e riallocati esclusivamente dentro la funzione `startGame()`.
-- **Rischio memory leak**: `globalSkidMarks` cresce indefinitamente ad ogni sgommata. Questo è accettabile in gare brevi (5 giri), ma se si dovessero estendere le gare a durate maggiori o in ottica open-world, sarà necessario un ring-buffer (es. limitare a 5000 punti).
+- **`globalSkidMarks`** è un ring buffer da 4000 punti (`car.js` scarta il più vecchio prima di aggiungere). Prima cresceva senza limite: accettabile con 4 vetture su 5 giri, non con 12 su 10.
 
 ---
 
@@ -36,6 +36,13 @@ La simulazione in `car.js` non utilizza body fisici esterni (come Matter.js), ma
   `new_velocity = old_velocity + (engineForce - drag) * dt`
 
 ### 2.2 Il Calcolo del Grip (Aderenza)
+Il modello ha due comportamenti distinti al limite, entrambi emergenti e non scriptati:
+
+- **Sottosterzo da saturazione** — `this.gripUse` misura quanta dell'aderenza laterale disponibile la curva sta già chiedendo (`|lateralSpeed| * 3.5 / currentGrip`, calcolato a fine frame e usato al frame successivo). L'efficacia dello sterzo viene moltiplicata per `1 - 0.35 * gripUse`: se entri troppo forte, girare di più non serve, l'avantreno lava e vai largo. Prima l'unico termine era `1 - v/500`, cioè sottosterzo *in funzione della velocità* e non del carico reale.
+- **Sovrasterzo di potenza** — la coppia motore è costante ma la velocità a cui il retrotreno riesce a trasformarla in avanzamento no: a bassa velocità la richiesta è molto più alta. Se acceleri sterzando sotto i ~200 px/s, `powerOversteer` (0..1) sale, aggiunge una rotazione **non richiesta** (`± 1.15 rad/s` a fondo scala) e riduce del 45% la rigidezza di riallineamento, così il posteriore continua a uscire invece di essere ripreso subito. Il fattore `slipperiness` (fino a 2.4×) lo rende molto più facile sul bagnato e sull'erba.
+
+Entrambi generano sgommate reali (soglia `lateralSpeed > 60`), quindi il feedback visivo è automatico.
+
 La tenuta di strada definisce quanto veloce l'auto può curvare prima di sbandare e quanto veloce può accelerare senza slittare.
 - Viene calcolato lo *slip angle* basandosi sul prodotto scalare tra il vettore velocità e la direzione di prua dell'auto.
 - `currentGrip` è il coefficiente di base (`0.6`).
@@ -44,7 +51,27 @@ La tenuta di strada definisce quanto veloce l'auto può curvare prima di sbandar
 - **Derapata**: Se la forza centripeta richiesta dalla sterzata supera l'aderenza laterale massima, l'auto perde trazione e slitta tangenzialmente alla curva, perdendo molta velocità (`this.velocity.x *= 0.9`).
 
 ### 2.3 Gestione Danni
-- Le auto subiscono danni urtandosi (vedi 4.1). Se `c.damage >= 100`, `isBroken` diventa `true` ed esplode. Il flag la rimuove dai calcoli attivi nel gameloop e rende fissa la sua velocità a `0`.
+Il danno è **proporzionale all'impatto reale**, non al tempo di contatto.
+
+- **Fra vetture** (`main.js`): solo un urto in avvicinamento fa danno, e vale `max(0, closingSpeed - 45) * 0.22`, con un **cooldown di 250 ms per coppia** (indicizzato su `car.uid`) perché un singolo contatto non venga fatturato sessanta volte al secondo. Sopra i 12 HP di danno partono le scintille.
+- **Contro le barriere** (`track.js`): `max(0, v·n - 30) * 0.10`, dove `v·n` è la componente di velocità *dentro* il muro. Strisciare lungo la barriera è quasi gratis, entrarci di muso no.
+- La regola precedente addebitava 2 HP a *ogni frame* di contatto — 120 HP/s, identici che sfiorassi qualcuno a 30 px/s o lo speronassi a 300. Misurato prima: con 12 vetture la salute minima a fine gara scendeva a 0–60% e le vetture si distruggevano a vicenda. Dopo: **86–100%, zero distrutte**.
+
+### 2.4 Condizione della vettura
+`car.condition` scala grip e potenza: vale 1 sopra il 60% di salute, poi cala linearmente fino a 0.70 alla distruzione. Prima la barra della vita non significava nulla: al 5% andavi come al 100% e poi esplodevi di colpo. L'IA legge `car.condition` (in `gripScale` e `vTop`), altrimenti una vettura danneggiata continuerebbe a guidare al passo di una integra e finirebbe fuori.
+
+### 2.4bis Superfici: asfalto, cordolo, erba
+`getClosestPoint()` restituisce anche il **segmento** più vicino, e `getSurface()` lo usa per due test: la fascia oltre `trackWidth` è **cordolo** solo se (a) il pezzo di geometria più vicino è un `arc` e (b) il punto sta dalla parte del *centro* dell'arco, cioè all'**interno** della curva. Fuori curva e sui rettilinei resta erba. Nessuna annotazione manuale dei tracciati.
+
+`kerbWidthFor(seg)` adatta la larghezza allo spazio disponibile (`seg.r - trackWidth - 2`): su un tornante il cui raggio è appena maggiore della semi-larghezza il cordolo si assottiglia, e dove non c'è proprio spazio non viene disegnato. Con la geometria attuale: 9 tracciati su 10 hanno cordoli; Triangle no, perché i suoi archi hanno raggio esattamente pari a `trackWidth` e quindi zero via di fuga interna.
+
+- **Cordolo**: grip ×0.80, attrito ×1.30, più una vibrazione laterale casuale proporzionale alla velocità. È fatto per essere usato: prendere un cordolo per raddrizzare una curva conviene.
+- **Erba**: grip ×0.30, attrito ×2.50. Non conviene mai.
+
+`kerbWidth` vale `clamp(trackWidth × 0.30, 14, 26)`. `ai.js` distingue i due casi (`onKerb` / `onGrass`) e reagisce di conseguenza, altrimenti tratterebbe un cordolo come un disastro e frenerebbe a sproposito.
+
+### 2.5 Scia (slipstream)
+`car.draftStrength` è continuo in 0..1, prodotto di tre attenuazioni (distanza, cono, allineamento delle prue), invece del booleano di prima che dava +15% di colpo entrando nel cono e zero uscendone. Effetto: `+18%` di spinta e `-22%` di resistenza, entrambi scalati dalla forza della scia.
 
 ---
 
@@ -63,6 +90,18 @@ La collisione con l'erba/muri non è basata su box di collisione, ma su **calcol
 2. Trova la distanza `d` dal punto più vicino della linea centrale del segmento.
 3. Se `d > trackWidth/2`, l'auto è sull'erba (il grip crolla, velocità massima cappata).
 4. Se `d > grassWidth`, l'auto ha colpito un "muro invisibile", la sua velocità verso l'esterno viene invertita e subisce un drop drastico.
+
+### 3.2bis Progressione sul giro e conteggio giri
+`Car.updateTrackProgress()` mantiene `car.trackProgress`: un odometro **monotòno** della progressione reale lungo il circuito, in pixel di pista. Ogni frame cerca il nodo più vicino della racing line (ricerca locale in una finestra, con riacquisizione globale se il migliore dista più di 220px), ne prende l'ascissa curvilinea, srotola il salto sul traguardo e accumula **solo in avanti**. Un giro viene conteggiato quando la progressione dall'ultimo passaggio supera il **45%** del giro.
+
+> Ci sono voluti tre tentativi sbagliati per arrivarci, ognuno con la sua ragione:
+> 1. `if (this.x > 650)` — soglia hardcoded, funzionava sui dieci tracciati per fortuna geometrica (**Circle la superava di soli 69px**) e sarebbe morta al primo tracciato nuovo.
+> 2. Odometro della **distanza percorsa** — gonfiato da ogni sbandata, testacoda e retromarcia: con la fisica del sovrasterzo un'auto che pattinava poteva armare il marker senza essere andata da nessuna parte e **incassare un giro mai completato**.
+> 3. Ascissa curvilinea a `car.nextWaypoint` — ma `checkWaypoints` avanza con un raggio di 200px, che su un tornante salta dall'altra parte della curva e in rettilineo supera il traguardo prima dell'auto. Due vetture affiancate risultavano distanti un giro intero, ed è **questo** che generava le bandiere blu dal nulla.
+
+> La misura va presa dalla **posizione reale** della vettura, non da un indice che le corre avanti.
+
+> **N.B.** prendere la bandiera è una domanda separata dal contare un giro. Quando il leader ha finito, la gara di chiunque altro termina al **primo** passaggio sul traguardo, che quel passaggio abbia completato un giro o no. Legare le due cose costringeva chi era appena transitato a rifare quasi un giro intero prima di essere classificato.
 
 ### 3.3 Waypoints (progressione di gara)
 Il tracciato genera una lista ordinata di nodi spaziali (`this.waypoints`) calcolata preventivamente discretizzando i segmenti geometrici.
@@ -124,7 +163,7 @@ I quattro profili in `AI_PROFILES` scalano coerentemente pace, prudenza e pulizi
 
 | | easy | medium | hard | impossible |
 |---|---|---|---|---|
-| `cornerFactor` (frazione del limite fisico in curva) | 0.72 | 0.95 | 1.08 | 1.16 |
+| `cornerFactor` (frazione del limite fisico in curva) | 0.72 | 0.95 | 1.08 | 1.14 |
 | `straightFactor` (frazione della velocità massima) | 0.68 | 0.96 | 1.00 | 1.00 |
 | `brakeConfidence` | 0.55 | 0.86 | 1.02 | 1.12 |
 | `lineBlend` | 0.35 | 0.85 | 1.00 | 1.00 |
@@ -142,6 +181,13 @@ I quattro profili in `AI_PROFILES` scalano coerentemente pace, prudenza e pulizi
 **Traiettoria `fast`**: `getRacingLine('fast')` costruisce tre rilassamenti (600/1000/1800 sweep), ne misura analiticamente il tempo sul giro e tiene il più veloce. Su alcuni layout (Oval −2%) vince un rilassamento più profondo, su altri no — per questo viene misurato invece che assunto. È l'unico vantaggio strutturale riservato a Impossible.
 
 `skillVariation` (0.8–1.1, persistito nel campionato) viene rimappato in un moltiplicatore di passo di ±3.5%.
+
+### 4.6ter Qualifiche
+`AI.qualifyingPace(driverName, difficulty, skillVariation, raining)` restituisce un giro secco nozionale: `0.60/cornerFactor + 0.40/straightFactor`, diviso per `sqrt(cleanAir)` (in qualifica si è sempre in aria libera) e per `sqrt(wetSkill)` se piove, più una dispersione di ±(5.5% + errorChance×25%) — un giro secco ha varianza vera, e di più per chi vive sul filo.
+
+La griglia è l'ordine di qualifica; il giocatore viene inserito a metà schieramento (non ha girato, quindi non guadagna né perde nulla). Prima la griglia era un semplice shuffle, quindi tutto il passo e la personalità dell'IA non avevano alcun peso su dove si partiva. Misurato su 200 sessioni: Vettel P3.17 di media (miglior qualificatore, come da profilo), Fangio P7.66 — con abbastanza rimescolamento da non essere prevedibile.
+
+`AI.buildProfile()` è la sola fonte di verità per i profili, usata sia dall'IA in gara sia dalle qualifiche.
 
 ### 4.6bis Stili di guida
 `AI_DRIVER_STYLES` applica moltiplicatori *sopra* il profilo di difficoltà. Ogni pilota ha nove parametri, non uno:
@@ -174,7 +220,11 @@ Il modello di danno di `main.js` applica 2 HP **per frame** di contatto: 2,5 s d
 3. **Cautela alla partenza** (`AI_START_CAUTION = 4.5 s`): `safeGap` maggiorato di 26px e target di velocità ridotto fino al 9%, in dissolvenza. È ciò che elimina i maxi-tamponamenti alla prima curva con griglie da 12 vetture in *hard*.
 
 ### 4.8 Bandiere blu
-`main.js` (in `updatePhysics`) alza `car.blueFlag` quando una vettura con `lap` **maggiore** sta arrivando da dietro: entro 215px, con proiezione longitudinale fra -205 e +45 e scostamento laterale sotto 95px (per non far scattare la bandiera a chi si trova su un altro tratto di pista). Il flag ha un timer di 0.8 s, così non sfarfalla fra un frame e l'altro.
+`main.js` (in `updatePhysics`) alza `car.blueFlag` quando una vettura **più di 0.55 giri avanti** in `trackProgress` (§3.2bis) sta arrivando da dietro. Serve anche che le due vetture stiano andando **nella stessa direzione** (assetti entro 1.0 rad): su Circo Massimo i due rettilinei quasi si toccano, quindi chi arriva in senso opposto è a pochi pixel e mezzo giro di distanza — cioè esattamente la firma di un doppiaggio, ma non lo è.
+
+> Misurato su 10 gare con campo omogeneo (nessun doppiaggio reale): **253 bandiere spurie prima, 14 dopo** — e le 14 rimaste sono situazioni di doppiaggio genuinamente imminente. Il difetto è stato trovato leggendo il log di un campionato vero: era pieno di `BLUE` al primo giro, quando nessuno può ancora essere doppiato.
+
+Condizioni geometriche: entro 215px, con proiezione longitudinale fra -205 e +45 e scostamento laterale sotto 95px (per non far scattare la bandiera a chi si trova su un altro tratto di pista). Il flag ha un timer di 0.8 s, così non sfarfalla fra un frame e l'altro.
 
 - **Grafica**: `Car.draw()` disegna una bandierina blu su asta sopra la vettura doppiata, con un'ondulazione basata su `Date.now()`. La vede anche il giocatore quando sta per essere doppiato.
 - **Comportamento IA**: `updateTraffic` porta l'offset laterale al bordo della carreggiata **dalla parte opposta** a quella da cui arriva il doppiatore (se è esattamente in scia, cede la traiettoria ideale) e applica `blueFlagLift = 0.88` al target di velocità, così il sorpasso è rapido e pulito. Misurato in simulazione: mentre la bandiera è esposta l'offset laterale medio è al 95-98% del massimo disponibile, cioè le vetture si spostano davvero.
@@ -200,6 +250,22 @@ A *impossible* le vetture girano sul filo: compare qualche decimo cumulativo fuo
 
 ---
 
+## 4bis. Virtual Safety Car e rimozione dei rottami (`main.js`)
+
+Una vettura distrutta non resta in mezzo alla traiettoria:
+
+1. `updateRecovery()` intercetta ogni auto appena passata a `isBroken` (esclusi i DNF da limite di tempo, che non sono incidenti) e apre una **recovery**.
+2. Parte la **VSC**: `vscPowerFactor = 0.45`, letto da `car.js` per la forza motrice e da `ai.js` per il target di velocità, così anche l'IA rallenta invece di restare inutilmente a tavoletta. Banner giallo a schermo.
+3. La **gru** attraversa tre fasi — `approach` (1.6 s), `lift` (0.9 s), `haul` (1.8 s, con smoothstep) — e deposita il rottame a `grassWidth + 55` px dalla linea centrale, cioè **oltre le barriere**, con clamp ai bordi del canvas.
+4. A rimozione completata la VSC rientra e la potenza torna piena.
+
+Il rottame è escluso dalle collisioni fra vetture da quando è distrutto, e `Car.update()` esce subito per le auto in recupero o già rimosse: non è più un'auto, è scenografia.
+
+## 4ter. Modalità e log
+
+- **Free Practice** (`raceMode === 'practice'`): circuito e meteo scelti, nessun avversario, `TOTAL_LAPS` a 9999, niente qualifiche né bandiera. Ogni giro finisce in `car.lapTimes`; il pulsante **Stop Session** chiude e mostra la tabella dei tempi con il migliore evidenziato.
+- **`racelog.js`** registra ogni sessione come lista di eventi tipizzati (`SESSION`, `LAP`, `BLUE`, `CONTACT`, `WRECK`, `VSC`, `RECOVERY`, `PENALTY`, `DNF`, `FINISH`) più la classifica finale. Consultabile dal menu, scaricabile come `.txt`, e replicato su `console.log` per la lettura dal vivo. `RaceLog.dump()` dalla console stampa tutto.
+
 ## 5. Audio Dinamico (Procedurale Web Audio)
 
 Per massimizzare le performance e rimuovere dipendenze esterne (nessun MP3 da caricare), il gioco implementa un sintetizzatore interno basato su `AudioContext`.
@@ -214,8 +280,9 @@ In pieno stile motorsport, l'architettura applica le seguenti regole competitive
 - **Partenza Anticipata (Jump Start)**:
   Le fisiche sono attive già nei 5 secondi di countdown (`gameState === 'countdown'`).
   Se lo spostamento vettoriale della `Car` supera lo `0.1` mentre `lightState < 6`, si alza il flag `jumpStartPenalty`. L'auto riottiene la penalità e viene teleportata alle coordinate originali di partenza. In questo istante **devono sempre essere svuotati gli array grafici** `globalSkidMarks` e `globalParticles`, altrimenti queste tracce "esploderanno" a schermo appena scatta il verde.
-- **Spettatore & Risoluzione Gara (20s Timer)**:
-  La gara non finisce al traguardo del leader, ma registra in quel momento la variabile `firstFinisherTime`. Da lì, un timer visivo di 20 secondi inizia in overlay (`updateHUD`).
+- **Spettatore & Risoluzione Gara (timer relativo)**:
+  La gara non finisce al traguardo del leader, ma registra in quel momento la variabile `firstFinisherTime`. Da lì parte un timer visivo in overlay (`updateHUD`) di durata `dnfWindowMs = clamp(2 × miglior giro del leader, 8s, 45s)`.
+  Erano 20 secondi fissi: su Pettine (giri da 24s a easy) significava mezzo giro di margine, sull'Oval (giri da 10s) due giri interi — stessa regola, severità completamente diversa. Misurato ora: 37s su Pettine/easy, 8s su Circle/impossible.
   Le auto in pista (player o IA) che terminano questo lasso di tempo e non hanno ancora tagliato il traguardo (che calcola l'incrocio tra la vettura e il primissimo segmento geometrico della pista, confrontato con l'accumulo totale dei lap), ricevono forzatamente un lap time `Infinity` e la loro struct interna assegna `isBroken = true` per considerarle "Did Not Finish".
 - **Chi ha vinto (`finishIndex`)**:
   L'ordine di arrivo viene **registrato mentre accade**: a ogni frame, ogni vettura appena passata a `finished` riceve `finishIndex = finishCounter++`. Il banner "Finished First" usa `finishIndex === 0`, mai `sortedCars[0]`.

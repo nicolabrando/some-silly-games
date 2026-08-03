@@ -14,9 +14,13 @@
                 <div id="lap-counter">Lap: 1/5</div>
                 <div id="position-counter">Pos: 1/4</div>
                 <div id="speedometer">0 km/h</div>
-                <div id="dnf-timer" style="display: none; color: red; font-weight: bold; margin-top: 5px;"></div>
+                <div id="lap-timer" style="font-variant-numeric: tabular-nums;"></div>
+                <div id="dnf-timer" style="visibility: hidden; color: #ff5252; font-weight: bold;"></div>
+                <div id="weather-indicator"></div>
+                <button id="stopSessionBtn" class="hud-btn" style="display: none; background: #d84315;">Stop Session</button>
                 <button id="quitBtn" class="hud-btn">Quit</button>
             </div>
+            <div id="timing-tower" style="display: none;"></div>
             <div id="menu">
                 <h1>2D Racing</h1>
                 <div class="menu-group">
@@ -78,7 +82,106 @@
                     <input type="checkbox" id="wet-race-checkbox" style="width: auto; transform: scale(1.5);">
                 </div>
                 <button id="start-btn">Single Race</button>
+                <button id="practice-btn" style="margin-top: 10px; background: #26a69a; color: #002; ">Free Practice</button>
                 <button id="champ-btn" style="margin-top: 10px; background: #FFD700; color: #000;">Start Championship</button>
+                <button id="log-btn" style="margin-top: 10px; background: #37474f; color: #ddd; font-size: 15px;">Race Log</button>
+
+                <details id="how-to-play">
+                    <summary>How to play</summary>
+                    <div class="guide">
+
+                        <h3>Controls</h3>
+                        <ul>
+                            <li><b>↑</b> throttle &nbsp;·&nbsp; <b>↓</b> brake (and reverse once stopped)</li>
+                            <li><b>←&nbsp;→</b> steer &nbsp;·&nbsp; on a phone, use the on-screen pad</li>
+                        </ul>
+
+                        <h3>Driving the car</h3>
+                        <p>The car does not turn on rails. Two things stop it:</p>
+                        <ul>
+                            <li><b>Understeer.</b> Carry too much speed into a corner and the front washes out:
+                                you turn the wheel and the car keeps going straight towards the grass.
+                                The cure is to slow down <i>before</i> the corner, not in it.</li>
+                            <li><b>Power oversteer.</b> Squeeze the throttle hard at low speed while turning
+                                &mdash; a hairpin exit &mdash; and the rear steps out and the car spins further
+                                than you asked. Ease off, or catch it early.</li>
+                        </ul>
+                        <p>Both are much easier to provoke in the wet. Black marks on the tarmac mean
+                            you are sliding, and sliding is slow.</p>
+
+                        <h3>Surfaces</h3>
+                        <ul>
+                            <li><b>Tarmac</b> &mdash; full grip.</li>
+                            <li><b>Kerbs</b> &mdash; the red and white strips lining every corner. They cost
+                                20% of your grip and rattle the car, but they are meant to be used: running
+                                a wheel over one to straighten a corner is quick. Grass is not.</li>
+                            <li><b>Grass</b> &mdash; a third of the grip and heavy drag, and it lines the
+                                straights. Running wide there costs you the lap.</li>
+                            <li><b>Barriers</b> &mdash; hitting one square costs real damage; brushing along it barely does.</li>
+                            <li><b>Rain</b> &mdash; grip collapses. Corner speeds drop by 10&ndash;15%, and some
+                                drivers handle it far better than others.</li>
+                        </ul>
+
+                        <h3>Damage</h3>
+                        <p>The bar above each car is its condition. <b>Racing contact is free</b>: leaning
+                            on someone, banging wheels at the start, nudging the car ahead into a corner
+                            all cost nothing. Past about a third of top speed of closing, damage climbs
+                            with the square of the impact, so a real shunt can still end your race.
+                            Below <b>60%</b> the car loses grip and power, at <b>0%</b> it is out.
+                            The drivers race hard and will not simply move over.</p>
+
+                        <h3>Timing tower</h3>
+                        <p>Down the left: the order, and the gap in seconds to the car <i>directly ahead</i>.
+                            Anyone more than a lap behind shows the lap deficit instead &mdash; a time gap
+                            to a car you have already lapped means nothing.</p>
+
+                        <h3>Racing</h3>
+                        <ul>
+                            <li><b>Lights.</b> Move before they go out and you take a <b>5&nbsp;second penalty</b>
+                                and the grid is reset. The delay before the green is random &mdash; do not anticipate.</li>
+                            <li><b>Slipstream.</b> Tuck in behind a car and you get a tow: more power, less drag.
+                                It builds the closer you get, so use it down the straight and pull out late.</li>
+                            <li><b>Blue flags.</b> A small blue flag over a car means it is about to be lapped
+                                and must let the leader through. If it appears over <i>you</i>, you are a lap down.</li>
+                            <li><b>The grid</b> comes from a simulated qualifying lap, so the quick drivers
+                                start at the front. You are placed mid&#8209;grid.</li>
+                            <li><b>VSC.</b> If a car is destroyed, a yellow <b>VSC</b> banner appears and
+                                every engine is cut to 28% while a crane drives out, lifts the wreck and
+                                carries it behind the barriers.
+                                Full power returns the moment the track is clear.</li>
+                            <li><b>The finish.</b> Once the leader takes the flag, everyone else is classified
+                                on their next crossing of the line. If you are still out there
+                                <b>two of the leader's best laps</b> later, you are marked DNF.</li>
+                        </ul>
+
+                        <h3>The HUD</h3>
+                        <p>Lap · position · speed, then the live lap timer: <b>green</b> while you are up on
+                            your best lap, <b>red</b> once you have lost it. <b>L</b> is your last lap,
+                            <b>B</b> your best, and ★ marks a new personal best.</p>
+
+                        <h3>Opponents</h3>
+                        <p>The ten drivers are not reskins of each other. Senna is untouchable in the rain,
+                            Verstappen brakes later than anyone and will not yield, Prost never makes a mistake,
+                            Vettel is devastating in clean air but fussier in traffic, Alonso is the one you
+                            cannot pass. Difficulty scales their pace and their patience; on
+                            <b>Impossible</b> they run the true limit of the car and make no mistakes at all.</p>
+
+                        <h3>Free Practice</h3>
+                        <p>Your chosen circuit and weather, no opponents, as many laps as you like.
+                            Every lap is timed; hit <b>Stop Session</b> in the HUD and you get the full list
+                            with the best one marked.</p>
+
+                        <h3>Race Log</h3>
+                        <p>Every session is recorded &mdash; lap times, flags, contact, retirements, safety
+                            car periods, the final classification. Open it from the menu, or download it as
+                            a text file.</p>
+
+                        <h3>Championship</h3>
+                        <p>A season across every circuit, F1 points (25&ndash;18&ndash;15&hellip;), with the
+                            same drivers and their form carried through. Weather is decided race by race.</p>
+
+                    </div>
+                </details>
             </div>
             <div id="game-over" style="display: none; padding: 20px; min-width: 400px;">
                 <h1 id="result-message">You Won!</h1>
@@ -129,6 +232,28 @@
                 </table>
                 <button id="champ-restart-btn">Main Menu</button>
             </div>
+            <div id="vsc-banner" style="display: none; position: absolute; top: 8%; left: 50%;
+                 transform: translateX(-50%); background: #ffd600; color: #201800; padding: 8px 26px;
+                 border-radius: 6px; border: 3px solid #7a6500; font-size: 22px; font-weight: 900;
+                 letter-spacing: 3px; text-align: center; box-shadow: 0 0 18px rgba(255,214,0,0.55);">
+                VSC
+                <div style="font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 2px;">
+                    VIRTUAL SAFETY CAR &mdash; RECOVERY IN PROGRESS
+                </div>
+            </div>
+            <div id="log-screen" style="display: none; position: absolute; top: 50%; left: 50%;
+                 transform: translate(-50%, -50%); background: rgba(0,0,0,0.94); border: 2px solid #555;
+                 border-radius: 10px; padding: 22px; width: 80%; max-width: 820px; max-height: 84vh;
+                 pointer-events: auto; text-align: left;">
+                <h2 style="margin: 0 0 10px; text-align: center;">Race Log</h2>
+                <pre id="log-body" style="max-height: 58vh; overflow: auto; font-size: 11.5px;
+                     line-height: 1.45; background: #111; padding: 12px; border-radius: 6px;
+                     margin: 0; white-space: pre; color: #cfd8dc;"></pre>
+                <div style="text-align: center; margin-top: 14px;">
+                    <button id="log-download-btn" style="width: auto; padding: 10px 22px;">Download .txt</button>
+                    <button id="log-close-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #555;">Close</button>
+                </div>
+            </div>
             <div id="winner-announcement" style="display: none; position: absolute; top: 20%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; border: 2px solid #555; text-align: center; font-size: 24px;">
                 <h2 id="winner-text" style="margin: 0;"></h2>
             </div>
@@ -145,6 +270,7 @@
             </div>
         </div>
     </div>
+    <script src="racelog.js"></script>
     <script src="track.js"></script>
     <script src="car.js"></script>
     <script src="ai.js"></script>
