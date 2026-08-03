@@ -35,6 +35,18 @@ let isRaining = false;
 // Championship State
 let isChampionship = false;
 let championshipState = null;
+
+// --- Qualifying ---------------------------------------------------------
+// The player drives a real session; the opponents' laps are simulated
+// headlessly with the same physics (see simulateQualifyingLap) one driver
+// per frame, so the cost is hidden behind the player's own out lap.
+let qualiQueue = [];        // AI participants still waiting for a lap
+let qualiTimes = [];        // { p, lap } once simulated
+let qualiTrack = null;      // the track object the session is running on
+let qualiTrackType = null;
+let pendingGrid = null;     // participant order handed to the next startGame
+let pendingWeather = null;  // weather chosen at qualifying, reused for the race
+let racePoleColor = null;   // who started P1 in the race now running
 // UI Elements
 const menu = document.getElementById('menu');
 const hud = document.getElementById('hud');
@@ -63,6 +75,11 @@ const logBody = document.getElementById('log-body');
 const stopSessionBtn = document.getElementById('stopSessionBtn');
 const vscBanner = document.getElementById('vsc-banner');
 const timingTower = document.getElementById('timing-tower');
+const qualiScreen = document.getElementById('quali-screen');
+const qualiBody = document.getElementById('quali-body');
+const qualiTitle = document.getElementById('quali-title');
+const qualiRaceBtn = document.getElementById('quali-race-btn');
+const qualiMenuBtn = document.getElementById('quali-menu-btn');
 
 const keys = {
     ArrowUp: false,
@@ -88,12 +105,17 @@ window.addEventListener('keyup', (e) => {
 startBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'race';
-    startGame();
+    pendingGrid = null;
+    pendingWeather = null;
+    if (qualifyingEnabled()) startQualifying(null);
+    else startGame();
 });
 
 champBtn.addEventListener('click', () => {
     isChampionship = true;
     raceMode = 'championship';
+    pendingGrid = null;
+    pendingWeather = null;
     startChampionship();
 });
 
@@ -119,10 +141,26 @@ document.getElementById('log-download-btn').addEventListener('click', () => {
 
 stopSessionBtn.addEventListener('click', () => {
     if (raceMode === 'practice') endPracticeSession();
+    else if (raceMode === 'qualifying') endQualifying();
+});
+
+qualiRaceBtn.addEventListener('click', () => {
+    qualiScreen.style.display = 'none';
+    startGame(qualiTrackType);
+});
+
+qualiMenuBtn.addEventListener('click', () => {
+    qualiScreen.style.display = 'none';
+    pendingGrid = null;
+    pendingWeather = null;
+    isChampionship = false;
+    menu.style.display = 'block';
 });
 
 restartBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
+    pendingGrid = null;
+    pendingWeather = null;
     menu.style.display = 'block';
 });
 
@@ -140,10 +178,18 @@ quitBtn.addEventListener('click', () => {
     gameState = 'menu';
     hud.style.display = 'none';
     timingTower.style.display = 'none';
+    stopSessionBtn.style.display = 'none';
+    stopSessionBtn.innerText = 'Stop Session';
     if (isMobile) mobileControls.style.display = 'none';
     menu.style.display = 'block';
     if (typeof stopAudio === 'function') stopAudio();
     isChampionship = false;
+    // Abandoning a session mid-run must not leave a stale grid or weather
+    // waiting to be applied to whatever is started next.
+    qualiQueue = [];
+    qualiTimes = [];
+    pendingGrid = null;
+    pendingWeather = null;
 });
 
 // Mobile Controls detection and mapping
@@ -168,7 +214,369 @@ if (isMobile) {
     bindTouch(btnRight, 'ArrowRight');
 }
 
+// ===========================================================================
+// QUALIFYING
+// ===========================================================================
+
+let pendingField = [];   // the field the current qualifying session belongs to
+
+// A qualifying session is one warm-up lap from a standing start plus two
+// flying laps. Both the player and the simulated opponents run this exact
+// format, so the times are directly comparable.
+const QUALI_LAPS = 3;
+
+// Qualifying is the default way the grid is decided. Two things switch it off:
+// spectator mode (there is no player to drive a session) and reverse grid,
+// where the grid comes from the standings so there is nothing to qualify for.
+function qualifyingEnabled() {
+    if (document.getElementById('color-select').value === 'spectator') return false;
+    if (isChampionship && reverseGridEnabled()) return false;
+    return true;
+}
+
+function reverseGridEnabled() {
+    const box = document.getElementById('reverse-grid-checkbox');
+    return !!(box && box.checked);
+}
+
+function makeTrack(trackType) {
+    switch (trackType) {
+        case 'f1':           return new F1Track();
+        case 'peanut':       return new PeanutTrack();
+        case 'circomassimo': return new CircoMassimoTrack();
+        case 'circle':       return new CircleTrack();
+        case 'serpent':      return new SerpentTrack();
+        case 'quadrato':     return new QuadratoTrack();
+        case 'triangle':     return new TriangleTrack();
+        case 'pettine':      return new PettineTrack();
+        case 'thunder':      return new ThunderTrack();
+        default:             return new OvalTrack();
+    }
+}
+
+// The field for a single race: the player (unless spectating) plus AI on
+// shuffled legendary names. Championship keeps its own persistent list.
+function buildField() {
+    if (isChampionship) return [...championshipState.participants];
+
+    const color = document.getElementById('color-select').value;
+    const numOpponents = parseInt(document.getElementById('opponents-select').value, 10);
+    const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white', 'green', 'cyan', 'pink', 'gray', 'lime', 'black'];
+    let aiColors = [...possibleColors];
+    const field = [];
+
+    if (color !== 'spectator') {
+        field.push({ isPlayer: true, color: color, skillVariation: 1, driverName: 'You' });
+        aiColors = aiColors.filter(c => c !== color);
+    }
+
+    const legendaryDrivers = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
+    const randomDrivers = [...legendaryDrivers].sort(() => Math.random() - 0.5);
+    const totalAIsToSpawn = color === 'spectator' ? numOpponents + 1 : numOpponents;
+
+    for (let i = 0; i < totalAIsToSpawn; i++) {
+        field.push({
+            isPlayer: false,
+            color: aiColors[i % aiColors.length],
+            skillVariation: null,
+            driverName: randomDrivers[i % randomDrivers.length]
+        });
+    }
+    return field;
+}
+
+// ---------------------------------------------------------------------------
+// One AI qualifying lap, simulated headlessly with the real physics.
+//
+// The driver runs ALONE: cars is swapped for a single-element array, so the
+// AI's traffic, defending and overtaking logic is skipped and what comes back
+// is genuine clean-air pace. An out lap is run first and discarded (Car only
+// records a time from its second crossing of the line), so the number
+// returned is an honest flying lap in milliseconds - directly comparable with
+// whatever the player sets in their own session.
+//
+// Every global the physics touches is saved and restored, so this can be
+// called mid-session without disturbing the race the player is driving.
+// ---------------------------------------------------------------------------
+function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, raining) {
+    const sCars = cars, sSkid = globalSkidMarks, sPart = globalParticles;
+    const sRain = isRaining, sLaps = TOTAL_LAPS, sVsc = vscPowerFactor;
+    const sLeader = qTrack.leaderFinished, sTime = qTrack.currentRaceTime;
+
+    const line = qTrack.getRacingLine();
+    let si = 0, md = Infinity;
+    line.nodes.forEach((n, i) => {
+        const d = Math.hypot(n.cx - qTrack.startX, n.cy - qTrack.startY);
+        if (d < md) { md = d; si = i; }
+    });
+    const n0 = line.nodes[si];
+
+    const car = new Car(n0.cx, n0.cy, 'red', false);
+    car.driverName = driverName;
+    car.angle = n0.heading;
+    car.maxHealth = 1e9;          // a qualifying lap is not a damage test
+    car.health = car.maxHealth;
+    car.nextWaypoint = 0;
+    // Standing start, exactly like the player's session: lap 1 is the warm-up
+    // lap and is thrown away, laps 2 and 3 are the flying laps.
+    car.velocity = { x: 0, y: 0 };
+
+    cars = [car];
+    globalSkidMarks = [];
+    globalParticles = [];
+    isRaining = !!raining;
+    TOTAL_LAPS = 9999;
+    vscPowerFactor = 1;
+    qTrack.leaderFinished = false;
+
+    const ai = new AI(car, difficulty, skillVariation);
+    ai.startRace();
+
+    // Car only records a lap time from its second crossing onward, so running
+    // to lap 3 yields exactly two timed flying laps and bestLapTime is the
+    // better of them - the same thing the player's session measures.
+    const dt = 1 / 60;
+    let t = 0;
+    while (t < 240 && car.lap < QUALI_LAPS) {
+        t += dt;
+        qTrack.currentRaceTime = t * 1000;
+        ai.update(qTrack, dt);
+        car.update(dt, qTrack);
+    }
+
+    cars = sCars; globalSkidMarks = sSkid; globalParticles = sPart;
+    isRaining = sRain; TOTAL_LAPS = sLaps; vscPowerFactor = sVsc;
+    qTrack.leaderFinished = sLeader; qTrack.currentRaceTime = sTime;
+
+    return car.bestLapTime;   // null if the lap was never completed
+}
+
+// Run through the pending AI drivers, one per frame, while the player drives.
+function qualiTick() {
+    if (!qualiQueue.length) return;
+    const p = qualiQueue.shift();
+    const difficulty = isChampionship
+        ? championshipState.difficulty
+        : document.getElementById('difficulty-select').value;
+    const lap = simulateQualifyingLap(qualiTrack, p.driverName, difficulty, p.skillVariation, isRaining);
+    qualiTimes.push({ p: p, lap: lap });
+    if (lap !== null) {
+        RaceLog.event('QUALI', `${p.driverName || p.color} ${(lap / 1000).toFixed(3)}`);
+    }
+}
+
+// Provisional order shown live in the tower and used for the final grid.
+function qualiOrder() {
+    const rows = qualiTimes
+        .filter(q => q.lap !== null)
+        .map(q => ({ p: q.p, lap: q.lap }));
+
+    if (playerCar) {
+        rows.push({
+            p: pendingField.find(x => x.isPlayer),
+            lap: playerCar.bestLapTime,   // null until the first flying lap
+            isPlayer: true
+        });
+    }
+    // No time yet = no grid slot yet: those sort to the back, in field order.
+    rows.sort((a, b) => {
+        if (a.lap === null && b.lap === null) return 0;
+        if (a.lap === null) return 1;
+        if (b.lap === null) return -1;
+        return a.lap - b.lap;
+    });
+    return rows;
+}
+
+function renderQualiTower() {
+    const rows = qualiOrder();
+    const pole = rows.length && rows[0].lap !== null ? rows[0].lap : null;
+    const html = rows.map((r, i) => {
+        let gap;
+        if (r.lap === null) gap = '--';
+        else if (i === 0) gap = (r.lap / 1000).toFixed(1);
+        else gap = '+' + ((r.lap - pole) / 1000).toFixed(1);
+        const code = r.p ? (r.p.isPlayer ? 'YOU' : (DRIVER_CODES[r.p.driverName] ||
+                     (r.p.driverName || r.p.color).slice(0, 3).toUpperCase())) : '---';
+        return `<div class="tt-row${r.p && r.p.isPlayer ? ' me' : ''}">` +
+               `<span class="tt-pos">${i + 1}</span>` +
+               `<span class="tt-chip" style="background:${r.p ? r.p.color : '#888'};"></span>` +
+               `<span class="tt-name"${r.lap === null ? ' style="opacity:.45;"' : ''}>${code}</span>` +
+               `<span class="tt-gap">${gap}</span></div>`;
+    }).join('');
+    const waiting = qualiQueue.length
+        ? `<div class="tt-note">${qualiQueue.length} still out&hellip;</div>` : '';
+    timingTower.innerHTML = html + waiting;
+}
+
+function startQualifying(forceTrackType) {
+    menu.style.display = 'none';
+    gameOverScreen.style.display = 'none';
+    qualiScreen.style.display = 'none';
+    hud.style.display = 'flex';
+    if (isMobile) mobileControls.style.display = 'flex';
+
+    raceMode = 'qualifying';
+    globalSkidMarks = [];
+    globalParticles = [];
+    document.getElementById('dnf-timer').style.visibility = 'hidden';
+
+    qualiTrackType = forceTrackType || document.getElementById('track-select').value;
+    track = makeTrack(qualiTrackType);
+    track.getRacingLine();
+    track.leaderFinished = false;
+    track.currentRaceTime = 0;
+    qualiTrack = track;
+
+    // The weekend's weather is decided here and reused for the race, so
+    // qualifying and the race are never run in different conditions.
+    const forceWetRace = document.getElementById('wet-race-checkbox').checked;
+    isRaining = isChampionship ? nextChampionshipWeather()
+                               : (forceWetRace ? true : (Math.random() < 0.20));
+    pendingWeather = isRaining;
+
+    let weatherIndicator = document.getElementById('weather-indicator');
+    if (!weatherIndicator) {
+        weatherIndicator = document.createElement('div');
+        weatherIndicator.id = 'weather-indicator';
+        hud.insertBefore(weatherIndicator, quitBtn);
+    }
+    weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
+
+    TOTAL_LAPS = 9999;              // the session ends on lap count, not the flag
+    vscActive = false;
+    vscPowerFactor = 1;
+    recoveries = [];
+    vscBanner.style.display = 'none';
+    stopSessionBtn.style.display = 'inline-block';
+    stopSessionBtn.innerText = 'End Qualifying';
+    timingTower.style.display = 'block';
+    timingTower.innerHTML = '';
+
+    pendingField = buildField();
+    qualiTimes = [];
+    qualiQueue = pendingField.filter(p => !p.isPlayer);
+
+    // The player starts on the line, on the racing line, already rolling:
+    // this is an out lap from the pits, not a standing start.
+    cars = [];
+    ais = [];
+    playerCar = null;
+
+    const playerP = pendingField.find(p => p.isPlayer);
+    if (playerP) {
+        const line = track.getRacingLine();
+        let si = 0, md = Infinity;
+        line.nodes.forEach((n, i) => {
+            const d = Math.hypot(n.cx - track.startX, n.cy - track.startY);
+            if (d < md) { md = d; si = i; }
+        });
+        const n0 = line.nodes[si];
+        const car = new Car(n0.cx, n0.cy, playerP.color, true);
+        car.driverName = 'You';
+        car.angle = n0.heading;
+        car.startX = n0.cx; car.startY = n0.cy; car.startAngle = n0.heading;
+        car.maxHealth = 1e9; car.health = car.maxHealth;
+        car.nextWaypoint = 0;
+        cars.push(car);
+        playerCar = car;
+    }
+
+    RaceLog.start({
+        mode: isChampionship ? 'Qualifying (championship round)' : 'Qualifying',
+        track: qualiTrackType,
+        laps: null,
+        difficulty: isChampionship ? championshipState.difficulty
+                                   : document.getElementById('difficulty-select').value,
+        weather: isRaining ? 'wet' : 'dry',
+        grid: pendingField.map(p => p.driverName || p.color)
+    });
+
+    gameState = 'playing';          // no start lights: you roll out of the pits
+    raceStartTime = performance.now();
+    countdownTimer = 0;
+    lightState = 6;
+    leaderFinished = false;
+    finishCounter = 0;
+    dnfWindowMs = 20000;
+    firstFinisherTime = null;
+    raceFinished = false;
+    isFalseStartResetting = false;
+    winnerAnnouncement.style.display = 'none';
+
+    if (typeof initAudio === 'function') initAudio(!playerCar);
+    lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+}
+
+function endQualifying() {
+    if (gameState === 'gameover') return;
+
+    // Anyone still in the queue finishes their lap now: the grid can't be set
+    // with drivers who never ran.
+    while (qualiQueue.length) qualiTick();
+
+    gameState = 'gameover';
+    raceFinished = true;
+    hud.style.display = 'none';
+    timingTower.style.display = 'none';
+    stopSessionBtn.style.display = 'none';
+    stopSessionBtn.innerText = 'Stop Session';
+    if (isMobile) mobileControls.style.display = 'none';
+    if (typeof stopAudio === 'function') stopAudio();
+
+    const rows = qualiOrder();
+    pendingGrid = rows.map(r => r.p).filter(Boolean);
+
+    // A driver who never set a time still has to start somewhere: they keep
+    // the back of the grid, which is exactly what qualiOrder already did.
+    for (const p of pendingField) {
+        if (!pendingGrid.includes(p)) pendingGrid.push(p);
+    }
+
+    const pole = rows.length && rows[0].lap !== null ? rows[0].lap : null;
+    RaceLog.event('QUALI', 'session ended — pole: ' +
+        (rows.length && rows[0].p ? (rows[0].p.driverName || rows[0].p.color) : 'nobody') +
+        (pole ? ` ${(pole / 1000).toFixed(3)}` : ''));
+
+    qualiTitle.innerText = isRaining ? 'Qualifying — Wet 🌧️' : 'Qualifying — Dry ☀️';
+    qualiBody.innerHTML = rows.map((r, i) => {
+        const name = r.p ? (r.p.isPlayer ? 'YOU' : r.p.driverName) : '?';
+        const time = r.lap === null ? '<span style="opacity:.45;">no time</span>'
+                                    : (r.lap / 1000).toFixed(3);
+        const gap = r.lap === null ? '&ndash;'
+                  : (i === 0 ? 'POLE' : '+' + ((r.lap - pole) / 1000).toFixed(3));
+        const cls = (r.p && r.p.isPlayer ? ' q-me' : '') + (i === 0 ? ' q-pole' : '');
+        return `<tr class="${cls.trim()}">` +
+               `<td class="q-pos">${i + 1}</td>` +
+               `<td class="q-driver">` +
+               `<span class="tt-chip" style="background:${r.p ? r.p.color : '#888'};` +
+               `display:inline-block;vertical-align:middle;margin-right:8px;"></span>` +
+               `<span style="color:${r.p ? r.p.color : '#888'};">${name}</span></td>` +
+               `<td>${time}</td>` +
+               `<td class="q-gap">${gap}</td></tr>`;
+    }).join('');
+
+    RaceLog.end(rows.map(r => ({
+        name: r.p ? (r.p.driverName || r.p.color) : '?',
+        laps: 1,
+        time: r.lap === null ? '--.---' : (r.lap / 1000).toFixed(3),
+        best: r.lap === null ? '' : (r.lap / 1000).toFixed(3),
+        note: r.lap === null ? 'no time' : (pole && r.lap === pole ? 'POLE' : '')
+    })));
+
+    qualiRaceBtn.innerText = isChampionship
+        ? `Start Round ${championshipState.currentTrackIndex + 1}`
+        : 'Start Race';
+    qualiScreen.style.display = 'block';
+}
+
 function startGame(forceTrackType = null) {
+    // A qualifying session hands over to the race here. Without this the race
+    // still ran as a session: the tower kept showing qualifying times and the
+    // "session over" check fired the moment the player completed lap 3.
+    if (raceMode === 'qualifying') raceMode = isChampionship ? 'championship' : 'race';
+
     menu.style.display = 'none';
     hud.style.display = 'flex';
     if (isMobile) mobileControls.style.display = 'flex';
@@ -180,9 +588,18 @@ function startGame(forceTrackType = null) {
     document.getElementById('dnf-timer').style.visibility = 'hidden';
     
     const forceWetRace = document.getElementById('wet-race-checkbox').checked;
-    // In Championship mode, ignore the toggle and rely on 20% random chance
-    isRaining = (forceWetRace && !isChampionship) ? true : (Math.random() < 0.20);
-    
+    // If a qualifying session has just run, the weekend's weather was decided
+    // there and the race has to inherit it - you cannot qualify in the wet and
+    // then race in the dry. Otherwise: championship uses the pre-rolled season
+    // weather, a single race uses the toggle or a 20% chance.
+    if (pendingWeather !== null) {
+        isRaining = pendingWeather;
+    } else if (isChampionship) {
+        isRaining = nextChampionshipWeather();
+    } else {
+        isRaining = forceWetRace ? true : (Math.random() < 0.20);
+    }
+
     // UI for weather.
     // A normal flex child of the HUD, not an absolutely positioned overlay:
     // pinned at right:150px it sat exactly where the DNF timer lands once the
@@ -210,29 +627,8 @@ function startGame(forceTrackType = null) {
     const trackType = forceTrackType || document.getElementById('track-select').value;
     const color = document.getElementById('color-select').value;
     const difficulty = document.getElementById('difficulty-select').value;
-    const numOpponents = parseInt(document.getElementById('opponents-select').value, 10);
-    
-    if (trackType === 'f1') {
-        track = new F1Track();
-    } else if (trackType === 'peanut') {
-        track = new PeanutTrack();
-    } else if (trackType === 'circomassimo') {
-        track = new CircoMassimoTrack();
-    } else if (trackType === 'circle') {
-        track = new CircleTrack();
-    } else if (trackType === 'serpent') {
-        track = new SerpentTrack();
-    } else if (trackType === 'quadrato') {
-        track = new QuadratoTrack();
-    } else if (trackType === 'triangle') {
-        track = new TriangleTrack();
-    } else if (trackType === 'pettine') {
-        track = new PettineTrack();
-    } else if (trackType === 'thunder') {
-        track = new ThunderTrack();
-    } else {
-        track = new OvalTrack();
-    }
+
+    track = makeTrack(trackType);
 
     // Pre-compute the AI racing line here (a few ms) so the very first racing
     // frame doesn't stutter while building it lazily.
@@ -241,9 +637,6 @@ function startGame(forceTrackType = null) {
     cars = [];
     ais = [];
     playerCar = null; // Reset playerCar
-    
-    const numCars = isPractice ? 1
-        : (isChampionship ? championshipState.participants.length : numOpponents + 1);
     
     // Find closest waypoint to start line
     let startIdx = 0;
@@ -299,59 +692,42 @@ function startGame(forceTrackType = null) {
         return { x: prevWP.x, y: prevWP.y, angle: 0 };
     };
     
-    // Create an array of spawn positions (x, y, angle)
-    const gridPositions = [];
-    for(let i=0; i<numCars; i++) {
-        // Staggered by 30px backward each position.
-        // Alternate side: +20px and -20px from center.
-        const distBackward = 35 + i * 30; // 35px base offset to ensure pole position is behind the start line
-        const lateralOffset = (i % 2 === 0 ? 20 : -20);
-        gridPositions.push(getGridPos(distBackward, lateralOffset));
-    }
-    
     let currentParticipants = [];
-    
+    let gridSource = 'simulated qualifying';
+
     if (isPractice) {
         currentParticipants.push({ isPlayer: true, color: color === 'spectator' ? 'red' : color, skillVariation: 1, driverName: 'You' });
-    } else if (isChampionship) {
-        // Use championship participants (persists skill variations)
-        currentParticipants = [...championshipState.participants];
-    } else {
-        const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white', 'green', 'cyan', 'pink', 'gray', 'lime', 'black'];
-        let aiColors = [...possibleColors];
-        
-        // 1. Add Player or Extra AI for Spectator
-        if (color === 'spectator') {
-            // Generate extra AI later
+    } else if (pendingGrid) {
+        // 1. The player just drove a qualifying session: that order IS the grid.
+        currentParticipants = [...pendingGrid];
+        gridSource = 'qualifying session';
+    } else if (isChampionship && reverseGridEnabled()) {
+        if (championshipState.currentTrackIndex === 0) {
+            // 2a. Round 1: no standings to invert yet, so the grid is drawn at
+            //     random. Nobody has earned anything, so nobody is seeded.
+            currentParticipants = [...championshipState.participants];
+            for (let i = currentParticipants.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [currentParticipants[i], currentParticipants[j]] =
+                    [currentParticipants[j], currentParticipants[i]];
+            }
+            gridSource = 'random draw (reverse-grid round 1)';
         } else {
-            currentParticipants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: 'You' });
-            aiColors = aiColors.filter(c => c !== color);
+            // 2b. Most points starts last. Self-balancing: the better the
+            //     championship is going, the further back the next race starts.
+            currentParticipants = [...championshipState.participants]
+                .sort((a, b) => (championshipState.points[a.color] || 0) -
+                                (championshipState.points[b.color] || 0));
+            gridSource = 'reverse championship order';
         }
-        
-        // 2. Add AI Opponents
-        // Shuffle drivers for single race
-        const legendaryDrivers = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
-        const randomDrivers = [...legendaryDrivers].sort(() => Math.random() - 0.5);
-        
-        const totalAIsToSpawn = color === 'spectator' ? numOpponents + 1 : numOpponents;
-        
-        for (let i = 0; i < totalAIsToSpawn; i++) {
-            currentParticipants.push({ 
-                isPlayer: false, 
-                color: aiColors[i % aiColors.length], 
-                skillVariation: null,
-                driverName: randomDrivers[i % randomDrivers.length]
-            });
-        }
-    }
-    
-    // 3. Qualifying.
-    // The grid used to be a straight shuffle, which meant all the pace and
-    // personality baked into the AI had no bearing on where anyone started.
-    // Each AI now sets a notional flying lap (pace + the variance a single lap
-    // really has) and the grid is the qualifying order. The player is slotted
-    // mid-grid: they didn't drive a lap, so they neither get nor lose one.
-    if (!isPractice) {
+    } else {
+        currentParticipants = buildField();
+
+        // 3. Simulated qualifying.
+        // Each AI sets a notional flying lap (pace + the variance a single lap
+        // really has) and the grid is the qualifying order. The player is
+        // slotted mid-grid: they didn't drive a lap, so they neither gain nor
+        // lose one.
         const aiDifficulty = isChampionship ? championshipState.difficulty : difficulty;
         const qualified = currentParticipants
             .filter(p => !p.isPlayer)
@@ -368,7 +744,23 @@ function startGame(forceTrackType = null) {
         }
         currentParticipants = qualified;
     }
-    
+
+    // Consumed: the next race builds its own grid unless it too is qualified for.
+    pendingGrid = null;
+    pendingWeather = null;
+
+    racePoleColor = currentParticipants.length ? currentParticipants[0].color : null;
+
+    RaceLog.event('SESSION', `grid set from ${gridSource}: ` +
+        currentParticipants.map((p, i) => `${i + 1}.${p.driverName || p.color}`).join(' '));
+
+    // Spawn positions, one per starter: staggered 30px back each row and
+    // alternating 20px either side of the centre line.
+    const gridPositions = [];
+    for (let i = 0; i < currentParticipants.length; i++) {
+        gridPositions.push(getGridPos(35 + i * 30, i % 2 === 0 ? 20 : -20));
+    }
+
     // 4. Instantiate cars at their assigned grid positions
     for (let i = 0; i < currentParticipants.length; i++) {
         const gridPos = gridPositions[i];
@@ -746,6 +1138,22 @@ function updatePhysics(dt) {
     }
 }
 
+// Three-letter driver codes, as on a real timing screen.
+const DRIVER_CODES = {
+    'Ayrton Senna': 'SEN', 'Michael Schumacher': 'MSC', 'Lewis Hamilton': 'HAM',
+    'Juan Manuel Fangio': 'FAN', 'Alain Prost': 'PRO', 'Jim Clark': 'CLA',
+    'Max Verstappen': 'VER', 'Niki Lauda': 'LAU', 'Fernando Alonso': 'ALO',
+    'Sebastian Vettel': 'VET'
+};
+function driverCode(car) {
+    if (!car) return '---';
+    if (car.isPlayer) return 'YOU';
+    const n = car.driverName;
+    if (n && DRIVER_CODES[n]) return DRIVER_CODES[n];
+    if (n) return n.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase();
+    return (car.color || '---').slice(0, 3).toUpperCase();
+}
+
 // =========================================================================
 //  WRECK RECOVERY  +  VIRTUAL SAFETY CAR
 //  A destroyed car must not be left sitting in the racing line as an
@@ -1112,6 +1520,10 @@ function updateHUD() {
     if (playerCar) {
         if (raceMode === 'practice') {
             lapCounter.innerText = `Practice — lap ${playerCar.lap + 1}`;
+        } else if (raceMode === 'qualifying') {
+            lapCounter.innerText = playerCar.lap === 0
+                ? 'Qualifying — warm-up lap'
+                : `Qualifying — flying lap ${playerCar.lap}/${QUALI_LAPS - 1}`;
         } else {
             let currentLap = playerCar.lap + 1;
             if (currentLap > TOTAL_LAPS) currentLap = TOTAL_LAPS;
@@ -1194,7 +1606,9 @@ function updateHUD() {
     // round the circuit, so the gap is that distance divided by the pace of
     // the car behind. A car more than a lap down is shown as laps, not time -
     // a time gap to someone you have already lapped is meaningless.
-    if (raceMode !== 'practice' && timingTower.style.display !== 'none') {
+    if (raceMode === 'qualifying') {
+        renderQualiTower();
+    } else if (raceMode !== 'practice' && timingTower.style.display !== 'none') {
         const lapLen = track.getRacingLine ? track.getRacingLine('standard').length : 1;
         const rows = [];
 
@@ -1218,11 +1632,11 @@ function updateHUD() {
                     gap = `+${lapsDown} LAP${lapsDown > 1 ? 'S' : ''}`;
                 } else {
                     const pace = Math.max(60, c._paceAvg || 60);
-                    gap = `+${(behind / pace).toFixed(3)}`;
+                    gap = `+${(behind / pace).toFixed(1)}`;
                 }
             }
 
-            const name = c.isPlayer ? 'YOU' : (c.driverName || c.color).toUpperCase().slice(0, 11);
+            const name = driverCode(c);
             rows.push(
                 `<div class="tt-row${c.isPlayer ? ' me' : ''}">` +
                 `<span class="tt-pos">${i + 1}</span>` +
@@ -1236,7 +1650,14 @@ function updateHUD() {
 
     const pos = playerCar ? sortedCars.indexOf(playerCar) + 1 : "-";
     if (playerCar) {
-        posCounter.innerText = raceMode === 'practice' ? '' : `Pos: ${pos}/${cars.length}`;
+        if (raceMode === 'practice') {
+            posCounter.innerText = '';
+        } else if (raceMode === 'qualifying') {
+            const qpos = qualiOrder().findIndex(r => r.p && r.p.isPlayer) + 1;
+            posCounter.innerText = qpos > 0 ? `Provisional: P${qpos}` : '';
+        } else {
+            posCounter.innerText = `Pos: ${pos}/${cars.length}`;
+        }
     }
     
     // Check win condition for the leader.
@@ -1363,7 +1784,36 @@ function updateHUD() {
 
         // F1 Points System (top 10)
         const f1Points = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
-        
+
+        // Fastest lap of the race
+        let fastestCar = null;
+        for (const c of cars) {
+            if (c.bestLapTime && (!fastestCar || c.bestLapTime < fastestCar.bestLapTime)) fastestCar = c;
+        }
+        if (fastestCar) {
+            RaceLog.event('FASTLAP', `${fastestCar.driverName || fastestCar.color} — ` +
+                `${RaceLog.fmt(fastestCar.bestLapTime)}`);
+        }
+
+        // Season record: one row per race, kept for the end-of-championship recap
+        if (isChampionship) {
+            championshipState.results = championshipState.results || [];
+            championshipState.results.push({
+                track: championshipState.tracks[championshipState.currentTrackIndex] || '?',
+                wet: isRaining,
+                fastest: fastestCar ? fastestCar.color : null,
+                pole: racePoleColor,
+                order: sortedCars.map((c, i) => ({
+                    color: c.color,
+                    code: driverCode(c),
+                    name: c.driverName || c.color,
+                    pos: i + 1,
+                    pts: c.finished ? (f1Points[i] || 0) : 0,
+                    dnf: c.isBroken && !c.finished
+                }))
+            });
+        }
+
         // Populate stats table
         statsBody.innerHTML = '';
         sortedCars.forEach((c, index) => {
@@ -1412,8 +1862,9 @@ function updateHUD() {
             const lapsStr = `${Math.min(c.lap, TOTAL_LAPS)}/${TOTAL_LAPS}`;
 
             const reactStr = c.reactionTime ? `${c.reactionTime.toFixed(3)}s` : '-';
+            const isFastest = fastestCar === c;
             const bestLapStr = (c.bestLapTime !== null && c.bestLapTime !== undefined && c.bestLapTime < Infinity)
-                ? formatTime(c.bestLapTime) : '-';
+                ? (formatTime(c.bestLapTime) + (isFastest ? ' &#9733;' : '')) : '-';
 
             const nameDisplay = c.driverName ? `${c.driverName} (${c.color})` : `${c.color} ${c.isPlayer ? '(You)' : ''}`;
 
@@ -1422,7 +1873,7 @@ function updateHUD() {
                 <td style="color: ${c.color}; font-weight: bold; text-transform: capitalize;">${nameDisplay} ${isChampionship && ptsEarned > 0 ? `[+${ptsEarned} pts]` : ''}</td>
                 <td${isLapped || isDNF ? ' style="opacity: 0.55;"' : ''}>${lapsStr}</td>
                 <td${dim}>${timeStr}</td>
-                <td style="color: #4CAF50;">${bestLapStr}</td>
+                <td style="color: ${isFastest ? '#ce93d8' : '#4CAF50'}; font-weight: ${isFastest ? 'bold' : 'normal'};">${bestLapStr}</td>
                 <td>${gapStr}</td>
                 <td>${reactStr}</td>
             `;
@@ -1653,8 +2104,19 @@ function gameLoop(timestamp) {
                 }, 1200);
             }
             
-            // Allow physics update if they jumped
-            if (car.inputs.up || Math.abs(car.velocity.x) > 0 || Math.abs(car.velocity.y) > 0) {
+            // The moment a false start is called, everything stops dead.
+            // Previously the cars kept running for the whole length of the
+            // banner, so the offender (and anyone else already rolling, the
+            // player included, who is still holding the throttle) slid a long
+            // way down the circuit before the grid was reset.
+            if (isFalseStartResetting) {
+                car.velocity.x = 0;
+                car.velocity.y = 0;
+                car.inputs.up = false;
+                car.inputs.down = false;
+                car.inputs.left = false;
+                car.inputs.right = false;
+            } else if (car.inputs.up || Math.abs(car.velocity.x) > 0 || Math.abs(car.velocity.y) > 0) {
                 car.update(dt, track);
             }
         });
@@ -1692,7 +2154,22 @@ function gameLoop(timestamp) {
         
         track.leaderFinished = leaderFinished;
         track.currentRaceTime = performance.now() - raceStartTime;
-        
+
+        // One opponent's qualifying lap per frame. Simulating all ten at once
+        // would freeze for a few hundred milliseconds; spread across frames it
+        // disappears behind the player's own out lap, and the times appear in
+        // the tower one by one the way a real session fills up.
+        // dt < 0.05 = the previous frame was healthy. If the machine is
+        // already struggling the queue simply waits; endQualifying() flushes
+        // whatever is left before the grid is set, so nobody is ever missed.
+        if (raceMode === 'qualifying' && dt < 0.05) qualiTick();
+
+        // Warm-up lap plus two flying laps and the session is over.
+        if (raceMode === 'qualifying' && playerCar && playerCar.lap >= QUALI_LAPS) {
+            endQualifying();
+            return;
+        }
+
         updatePhysics(dt);
         
         // If spectator, we don't need to update a camera because it's a fixed-screen game
@@ -1801,14 +2278,25 @@ function startChampionship() {
     const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white', 'green', 'cyan', 'pink', 'gray', 'lime', 'black'];
     const aiColors = possibleColors.filter(c => c !== color);
     
+    const tracks = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent', 'quadrato', 'triangle', 'pettine', 'thunder'];
+
+    // The season's weather is rolled once, up front, at the same 20% per race
+    // as before - but a season with no wet race at all is rerolled. At 20% a
+    // ten-race season came out completely dry about one time in nine, which is
+    // how you can play a whole championship and never see the rain.
+    const weather = tracks.map(() => Math.random() < 0.20);
+    if (!weather.some(Boolean)) weather[Math.floor(Math.random() * weather.length)] = true;
+
     championshipState = {
-        tracks: ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent', 'quadrato', 'triangle', 'pettine', 'thunder'],
+        tracks: tracks,
+        weather: weather,
         currentTrackIndex: 0,
         points: {},
         participants: [],
+        results: [],
         difficulty: difficulty
     };
-    
+
     // Famous names list
     let availableNames = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
     // Shuffle names
@@ -1838,13 +2326,21 @@ function startChampionship() {
     nextChampionshipRound();
 }
 
+// Weather for the round about to be run, from the pre-rolled season.
+function nextChampionshipWeather() {
+    if (!championshipState || !championshipState.weather) return Math.random() < 0.20;
+    const w = championshipState.weather[championshipState.currentTrackIndex];
+    return w === undefined ? (Math.random() < 0.20) : w;
+}
+
 function nextChampionshipRound() {
     if (championshipState.currentTrackIndex >= championshipState.tracks.length) {
         showChampionshipFinal();
         return;
     }
     const trackType = championshipState.tracks[championshipState.currentTrackIndex];
-    startGame(trackType);
+    if (qualifyingEnabled()) startQualifying(trackType);
+    else startGame(trackType);
 }
 
 function showChampionshipFinal() {
@@ -1871,4 +2367,57 @@ function showChampionshipFinal() {
         `;
         champStatsBody.appendChild(tr);
     });
+
+    renderSeasonRecap();
+}
+
+// Full season grid: every driver, every race, with the fastest lap starred.
+function renderSeasonRecap() {
+    const host = document.getElementById('season-recap');
+    if (!host) return;
+
+    const races = championshipState.results || [];
+    if (!races.length) { host.innerHTML = ''; return; }
+
+    const order = Object.keys(championshipState.points)
+        .sort((a, b) => championshipState.points[b] - championshipState.points[a]);
+
+    const short = (t) => (t || '?').slice(0, 3).toUpperCase();
+
+    let html = '<h2 style="margin:18px 0 8px;">Season Results</h2>' +
+        '<div style="overflow-x:auto;"><table class="season-table"><thead><tr>' +
+        '<th style="text-align:left;">Driver</th>';
+    races.forEach(r => {
+        html += `<th title="${r.track}${r.wet ? ' (wet)' : ''}">${short(r.track)}` +
+                (r.wet ? '<span style="color:#64b5f6;">&#9730;</span>' : '') + '</th>';
+    });
+    html += '<th>Pts</th></tr></thead><tbody>';
+
+    for (const color of order) {
+        const p = championshipState.participants.find(x => x.color === color);
+        const label = p ? (p.isPlayer ? 'YOU' : (DRIVER_CODES[p.driverName] ||
+                          (p.driverName || color).slice(0, 3).toUpperCase())) : color.slice(0, 3).toUpperCase();
+        html += `<tr><td style="text-align:left;white-space:nowrap;">` +
+                `<span class="tt-chip" style="background:${color};display:inline-block;vertical-align:middle;margin-right:6px;"></span>` +
+                `<b style="color:${color};">${label}</b></td>`;
+
+        for (const r of races) {
+            const e = r.order.find(o => o.color === color);
+            if (!e) { html += '<td class="sr-none">&ndash;</td>'; continue; }
+            const cls = e.dnf ? 'sr-dnf' : (e.pos === 1 ? 'sr-win' : (e.pos <= 3 ? 'sr-pod' : ''));
+            const txt = e.dnf ? 'DNF' : e.pos;
+            // Small superscripts beside the result: P for pole, F for fastest lap.
+            let marks = '';
+            if (r.pole === color) marks += '<sup class="sr-pole" title="pole position">P</sup>';
+            if (r.fastest === color) marks += '<sup class="sr-fl" title="fastest lap">F</sup>';
+            html += `<td class="${cls}">${txt}${marks}</td>`;
+        }
+        html += `<td><b>${championshipState.points[color]}</b></td></tr>`;
+    }
+    html += '</tbody></table></div>' +
+        '<div style="font-size:11px;opacity:0.65;margin-top:6px;">' +
+        '<sup class="sr-pole">P</sup> pole &nbsp;·&nbsp; <sup class="sr-fl">F</sup> fastest lap' +
+        ' &nbsp;·&nbsp; &#9730; wet race &nbsp;·&nbsp; gold = win, green = podium</div>';
+
+    host.innerHTML = html;
 }

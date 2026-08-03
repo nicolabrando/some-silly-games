@@ -81,6 +81,14 @@
                     <label for="wet-race-checkbox" style="display: inline; margin-bottom: 0;">Force Wet Race:</label>
                     <input type="checkbox" id="wet-race-checkbox" style="width: auto; transform: scale(1.5);">
                 </div>
+                <div class="menu-group" style="display: flex; align-items: center; justify-content: flex-start; gap: 10px;">
+                    <label for="reverse-grid-checkbox" style="display: inline; margin-bottom: 0;">Reverse Grid in Championship:</label>
+                    <input type="checkbox" id="reverse-grid-checkbox" style="width: auto; transform: scale(1.5);">
+                </div>
+                <div style="font-size: 11px; opacity: 0.6; margin: -12px 0 18px; text-align: left;">
+                    You qualify before every race. Tick Reverse Grid and the championship
+                    is decided by the standings instead &mdash; round 1 drawn at random.
+                </div>
                 <button id="start-btn">Single Race</button>
                 <button id="practice-btn" style="margin-top: 10px; background: #26a69a; color: #002; ">Free Practice</button>
                 <button id="champ-btn" style="margin-top: 10px; background: #FFD700; color: #000;">Start Championship</button>
@@ -131,9 +139,15 @@
                             The drivers race hard and will not simply move over.</p>
 
                         <h3>Timing tower</h3>
-                        <p>Down the left: the order, and the gap in seconds to the car <i>directly ahead</i>.
-                            Anyone more than a lap behind shows the lap deficit instead &mdash; a time gap
-                            to a car you have already lapped means nothing.</p>
+                        <p>Down the left: the order by three-letter driver code (<b>YOU</b> is you), and
+                            the gap in seconds to the car <i>directly ahead</i>. Anyone more than a lap
+                            behind shows the lap deficit instead &mdash; a time gap to a car you have
+                            already lapped means nothing.</p>
+
+                        <h3>Championship</h3>
+                        <p>A season across every circuit with F1 points. At the end you get the full
+                            season grid: every driver, every race, wins and podiums highlighted, DNFs
+                            marked, and a &#9733; against whoever set the fastest lap of each race.</p>
 
                         <h3>Racing</h3>
                         <ul>
@@ -143,8 +157,22 @@
                                 It builds the closer you get, so use it down the straight and pull out late.</li>
                             <li><b>Blue flags.</b> A small blue flag over a car means it is about to be lapped
                                 and must let the leader through. If it appears over <i>you</i>, you are a lap down.</li>
-                            <li><b>The grid</b> comes from a simulated qualifying lap, so the quick drivers
-                                start at the front. You are placed mid&#8209;grid.</li>
+                            <li><b>Qualifying.</b> You qualify before every race. The session is three laps:
+                                a warm&#8209;up lap from a standing start, then two flying laps &mdash; your
+                                best of the two counts. Every opponent runs the same three laps of their own,
+                                simulated with the same physics in clean air, and their times drop into the
+                                tower on the left as they come in. The classification is the starting grid.
+                                Whatever weather qualifying is run in, the race is run in too. You can press
+                                <b>End Qualifying</b> to stop early and take whatever you have set.</li>
+                            <li><b>Reverse Grid in Championship.</b> Tick it and the championship is decided
+                                by the standings instead of by qualifying: the leader starts last, the
+                                backmarker starts on pole. The better your season is going, the harder the
+                                next race gets. Round&nbsp;1 has no standings to invert, so that grid is
+                                drawn at random.</li>
+                            <li><b>Racecraft.</b> A driver stuck behind someone builds into an attack: they
+                                brake later, commit harder and close right up. Once they are alongside they
+                                are free to outpace you &mdash; so a move that has been started can actually
+                                be finished.</li>
                             <li><b>VSC.</b> If a car is destroyed, a yellow <b>VSC</b> banner appears and
                                 every engine is cut to 28% while a crane drives out, lifts the wreck and
                                 carries it behind the barriers.
@@ -176,12 +204,29 @@
                             car periods, the final classification. Open it from the menu, or download it as
                             a text file.</p>
 
-                        <h3>Championship</h3>
-                        <p>A season across every circuit, F1 points (25&ndash;18&ndash;15&hellip;), with the
-                            same drivers and their form carried through. Weather is decided race by race.</p>
+                        
 
                     </div>
                 </details>
+            </div>
+            <div id="quali-screen" style="display: none;">
+                <h1 id="quali-title" style="margin: 0 0 4px; font-size: 26px;">Qualifying</h1>
+                <div style="font-size: 12px; opacity: 0.6; margin-bottom: 16px;">
+                    Provisional classification &mdash; this is the starting grid
+                </div>
+                <table id="quali-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 42px;">Pos</th>
+                            <th style="text-align: left;">Driver</th>
+                            <th style="width: 92px;">Best Lap</th>
+                            <th style="width: 82px;">Gap</th>
+                        </tr>
+                    </thead>
+                    <tbody id="quali-body"></tbody>
+                </table>
+                <button id="quali-race-btn" style="background: #4CAF50; color: #002;">Start Race</button>
+                <button id="quali-menu-btn" style="margin-top: 10px; background: #37474f; color: #ddd;">Menu</button>
             </div>
             <div id="game-over" style="display: none; padding: 20px; min-width: 400px;">
                 <h1 id="result-message">You Won!</h1>
@@ -217,7 +262,7 @@
                 <button id="restart-btn">Menu</button>
                 <button id="next-round-btn" style="display: none; margin-top: 10px; background: #FFD700; color: #000;">Next Round</button>
             </div>
-            <div id="championship-final" style="display: none; padding: 20px; min-width: 400px;">
+            <div id="championship-final" style="display: none; padding: 20px; min-width: 400px; max-width: 90vw;">
                 <h1>Championship Results</h1>
                 <table id="champ-stats-table" style="width: 100%; margin-bottom: 20px; border-collapse: collapse;">
                     <thead>
@@ -230,6 +275,7 @@
                     <tbody id="champ-stats-body">
                     </tbody>
                 </table>
+                <div id="season-recap"></div>
                 <button id="champ-restart-btn">Main Menu</button>
             </div>
             <div id="vsc-banner" style="display: none; position: absolute; top: 8%; left: 50%;

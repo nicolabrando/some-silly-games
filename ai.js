@@ -39,7 +39,11 @@ const AI_PROFILES = {
         gapGain: 1.5,           // how hard the gap is closed
         defend: 0.0,            // how much it covers the line under attack
         lineLevel: 'standard',
-        maxCorner: 0.85         // ceiling after driver-style multipliers
+        maxCorner: 0.85,        // ceiling after driver-style multipliers
+        // How much of attack mode this level gets. The quick profiles already
+        // run at the edge, so letting them push harder still just crashes
+        // them - measured better than one retirement per race at impossible.
+        attackGain: 1.00
     },
     medium: {
         cornerFactor: 0.95,
@@ -58,7 +62,8 @@ const AI_PROFILES = {
         gapGain: 2.1,
         defend: 0.45,
         lineLevel: 'standard',
-        maxCorner: 1.00
+        maxCorner: 1.00,
+        attackGain: 1.00
     },
     hard: {
         cornerFactor: 1.08,
@@ -77,7 +82,8 @@ const AI_PROFILES = {
         gapGain: 2.5,
         defend: 0.75,
         lineLevel: 'standard',
-        maxCorner: 1.13
+        maxCorner: 1.13,
+        attackGain: 0.55
     },
     impossible: {
         // 1.16 is the measured optimum: swept solo across every layout, lap
@@ -99,7 +105,8 @@ const AI_PROFILES = {
         gapGain: 2.9,
         defend: 0.95,
         lineLevel: 'fast',      // measured-optimal line, only at this level
-        maxCorner: 1.19
+        maxCorner: 1.19,
+        attackGain: 0.30
     }
 };
 
@@ -147,6 +154,29 @@ const AI_BASE_GRIP = 1200;
 const AI_CORNER_SAFETY = 0.90; // never ask for more than 90% of the theoretical limit
 const AI_START_CAUTION = 4.5;  // seconds of extra caution after the lights
 
+// --- racecraft ----------------------------------------------------------
+// Without these the field forms a train: everyone settles at the safe gap,
+// matches the speed of the car in front and the race finishes in grid order.
+// Two things fix that - being allowed to actually outpace a car you are
+// alongside, and building up to a committed attempt when you are held up.
+const AI_CLEAR_SIDE = 26;      // px of lateral separation = on a different line
+const AI_OVERLAP_SIDE = 14;    // px below which we are squarely in their gearbox
+const AI_ALONGSIDE_GAIN = 0.40;// speed advantage allowed when nearly clear
+const AI_ATTACK_BUILD = 1.8;   // seconds held up before attack mode is full
+const AI_ATTACK_CORNER = 0.14; // extra cornering commitment at full attack
+// Hard ceiling on the attack boost. cornerFactor bottoms out around 1.16 and
+// past ~1.25 the car scrubs instead of turning, so an unbounded boost simply
+// crashed the quick profiles: hard went to 0.75 retirements a race. Capping
+// here means attack mode gives medium a real lift and the top levels almost
+// none - which is right, they are already at the limit.
+const AI_ATTACK_CORNER_CAP = 1.20;
+const AI_ATTACK_BRAKE = 0.12;  // extra braking commitment at full attack
+const AI_ATTACK_GAP = 0.45;    // fraction the safe gap shrinks by at full attack
+// Cars collide at 22px of separation, so a "safe" gap below that is an
+// instruction to crash. Impossible runs a 16px gap; shrinking it another 45%
+// asked for 8.8px and produced better than one retirement per race.
+const AI_MIN_GAP = 21;
+
 function aiNormAngle(a) {
     while (a > Math.PI) a -= Math.PI * 2;
     while (a < -Math.PI) a += Math.PI * 2;
@@ -184,6 +214,8 @@ class AI {
         this.errorAngle = 0;
         this.followSpeed = Infinity;
         this.blueFlagLift = 1;
+        this.followTimer = 0;       // how long we have been stuck behind someone
+        this.attack = 0;            // 0..1 attack mode, built up by followTimer
         this.jamTimer = 0;
         this.startCaution = 0;
         this.breakoutTimer = 0;
@@ -415,7 +447,11 @@ class AI {
         else if (onKerb) gripScale *= 0.80;
         const latLimit = AI_BASE_GRIP * gripScale * 0.85;
 
-        const aBrake = Math.max(80, (150 + 0.55 * speed) * this.p.brakeConfidence);
+        // Attack mode: a driver trying to force a way past leaves the braking
+        // later and commits harder than they would in clean air.
+        const atk = this.attack * this.p.overtake * (this.p.attackGain !== undefined ? this.p.attackGain : 1);
+        const aBrake = Math.max(80, (150 + 0.55 * speed) *
+                                    this.p.brakeConfidence * (1 + AI_ATTACK_BRAKE * atk));
 
         // How far ahead do we need to look to stop in time?
         const needDist = 60 + (speed * speed) / (2 * aBrake);
@@ -434,7 +470,9 @@ class AI {
             // are actually willing to commit to (v scales ~ with R here).
             const vSteer = AI_MAX_STEER / (1 / R + AI_MAX_STEER / 500);
             const vGrip = Math.sqrt(latLimit * R);
-            return Math.min(nd.vCorner * 1.35, vSteer, vGrip) * AI_CORNER_SAFETY * this.p.cornerFactor;
+            const cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
+                                Math.max(this.p.cornerFactor, AI_ATTACK_CORNER_CAP));
+            return Math.min(nd.vCorner * 1.35, vSteer, vGrip) * AI_CORNER_SAFETY * cf;
         };
 
         // Under the VSC everyone has the same reduced power, so the AI must
@@ -526,15 +564,19 @@ class AI {
         let hasTarget = false;
         let inContact = false;
         let attacker = null;        // quicker car sitting right on our tail
+        let bestFwd = Infinity;     // distance to the nearest car in our path
 
         const caution = this.startCaution > 0 ? this.startCaution / AI_START_CAUTION : 0;
-        const safeGap = this.p.safeGap + 26 * caution;
+        // Held up for a while => close right up and have a go, but never ask
+        // to sit closer than the cars are wide.
+        const atkGap = this.attack * this.p.overtake *
+                       (this.p.attackGain !== undefined ? this.p.attackGain : 1);
+        const safeGap = Math.max(AI_MIN_GAP, (this.p.safeGap + 26 * caution) *
+                        (1 - AI_ATTACK_GAP * atkGap));
 
         if (typeof cars !== 'undefined' && cars.length > 1) {
             const tx = here.tx, ty = here.ty;
             const nx = here.nx, ny = here.ny;
-
-            let bestFwd = Infinity;
 
             for (const other of cars) {
                 if (other === car || other.isBroken) continue;
@@ -577,12 +619,30 @@ class AI {
                             let v = theirFwd + gap * this.p.gapGain;
                             if (v < 0) v = 0;
 
-                            // Laterally offset => we are (or can get) alongside
-                            // rather than behind. Asking for less than their
-                            // speed here is what let two AIs throttle each
-                            // other down to a crawl and grind side by side.
-                            if (Math.abs(side) > 18) {
-                                const alongside = Math.max(theirFwd, 55);
+                            // How much of the car ahead is genuinely in our
+                            // path. The cap exists to stop us rear-ending them,
+                            // so it should fade out as we move off their line.
+                            //
+                            // This used to clamp us to THEIR speed the moment
+                            // we were alongside, which meant an overtake could
+                            // be started but never completed: the attacker drew
+                            // level, matched pace, and dropped back into the
+                            // queue. The field finished in grid order.
+                            const clear = Math.abs(side);
+                            if (clear >= AI_CLEAR_SIDE) {
+                                // On a different line: free to outpace them.
+                                // Bounded rather than uncapped - lifting the
+                                // cap entirely let a car arrive alongside at
+                                // any speed at all, and the moment it drifted
+                                // back towards the line it was a big hit.
+                                // Measured 1.0 retirements a race at impossible.
+                                const free = Math.max(theirFwd, 55) * (1 + AI_ALONGSIDE_GAIN);
+                                if (v < free) v = free;
+                            } else if (clear > AI_OVERLAP_SIDE) {
+                                const room = (clear - AI_OVERLAP_SIDE) /
+                                             (AI_CLEAR_SIDE - AI_OVERLAP_SIDE);
+                                const alongside = Math.max(theirFwd, 55) *
+                                                  (1 + AI_ALONGSIDE_GAIN * room);
                                 if (v < alongside) v = alongside;
                             }
                             if (v < this.followSpeed) this.followSpeed = v;
@@ -617,6 +677,17 @@ class AI {
                 }
             }
         }
+
+        // ---- attack mode -----------------------------------------------
+        // Sitting in someone's dirty air with nowhere to go builds frustration
+        // into commitment: brake later, carry more through the corner, sit
+        // closer. It decays quickly once the road is clear again, so this is a
+        // burst used to force a move, not a permanent pace increase - the
+        // difficulty ladder is unaffected in clean air.
+        const heldUp = hasTarget && bestFwd > 0 && bestFwd < 95 && !this.car.blueFlag;
+        if (heldUp) this.followTimer += dt;
+        else this.followTimer = Math.max(0, this.followTimer - dt * 2.5);
+        this.attack = Math.max(0, Math.min(1, this.followTimer / AI_ATTACK_BUILD));
 
         // ---- deadlock breaker ------------------------------------------
         // Two cars can mutually cap each other's speed and crawl side by side,
