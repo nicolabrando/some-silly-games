@@ -47,6 +47,15 @@ let qualiTrackType = null;
 let pendingGrid = null;     // participant order handed to the next startGame
 let pendingWeather = null;  // weather chosen at qualifying, reused for the race
 let racePoleColor = null;   // who started P1 in the race now running
+
+// --- Pause --------------------------------------------------------------
+// The game loop simply stops requesting frames. Everything that measures
+// elapsed time does so against wall-clock anchors (raceStartTime,
+// firstFinisherTime), so those are shifted forward by the paused duration on
+// resume - otherwise a ten second pause would eat ten seconds of the DNF
+// window and put a gap in every lap time.
+let isPaused = false;
+let pauseStartedAt = 0;
 // UI Elements
 const menu = document.getElementById('menu');
 const hud = document.getElementById('hud');
@@ -75,6 +84,10 @@ const logBody = document.getElementById('log-body');
 const stopSessionBtn = document.getElementById('stopSessionBtn');
 const vscBanner = document.getElementById('vsc-banner');
 const timingTower = document.getElementById('timing-tower');
+const pauseBtn = document.getElementById('pauseBtn');
+const pauseOverlay = document.getElementById('pause-overlay');
+const resumeBtn = document.getElementById('resume-btn');
+const pauseQuitBtn = document.getElementById('pause-quit-btn');
 const qualiScreen = document.getElementById('quali-screen');
 const qualiBody = document.getElementById('quali-body');
 const qualiTitle = document.getElementById('quali-title');
@@ -139,6 +152,50 @@ document.getElementById('log-download-btn').addEventListener('click', () => {
     RaceLog.download();
 });
 
+// Pause works in anything that is actually running: countdown, race,
+// qualifying, practice. It is a no-op on the menus and result screens.
+function setPaused(want) {
+    if (gameState !== 'playing' && gameState !== 'countdown') return;
+    if (want === isPaused) return;
+    isPaused = want;
+
+    if (isPaused) {
+        pauseStartedAt = performance.now();
+        pauseOverlay.style.display = 'flex';
+        pauseBtn.innerText = '▶ Resume';
+        if (typeof stopAudio === 'function') stopAudio();
+        // release the controls so the car isn't left on full throttle
+        keys.ArrowUp = keys.ArrowDown = keys.ArrowLeft = keys.ArrowRight = false;
+        return;
+    }
+
+    // Give back exactly the time that was spent paused.
+    const paused = performance.now() - pauseStartedAt;
+    raceStartTime += paused;
+    if (firstFinisherTime) firstFinisherTime += paused;
+    pauseOverlay.style.display = 'none';
+    pauseBtn.innerText = '⏸ Pause';
+    if (typeof initAudio === 'function') initAudio(!playerCar);
+    lastTime = performance.now();
+    requestAnimationFrame(gameLoop);      // the loop stopped; start it again
+}
+
+pauseBtn.addEventListener('click', () => setPaused(!isPaused));
+resumeBtn.addEventListener('click', () => setPaused(false));
+pauseQuitBtn.addEventListener('click', () => {
+    setPaused(false);
+    quitBtn.click();
+});
+
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+        if (gameState === 'playing' || gameState === 'countdown') {
+            e.preventDefault();
+            setPaused(!isPaused);
+        }
+    }
+});
+
 stopSessionBtn.addEventListener('click', () => {
     if (raceMode === 'practice') endPracticeSession();
     else if (raceMode === 'qualifying') endQualifying();
@@ -176,6 +233,8 @@ champRestartBtn.addEventListener('click', () => {
 
 quitBtn.addEventListener('click', () => {
     gameState = 'menu';
+    isPaused = false;
+    pauseOverlay.style.display = 'none';
     hud.style.display = 'none';
     timingTower.style.display = 'none';
     stopSessionBtn.style.display = 'none';
@@ -476,7 +535,11 @@ function startQualifying(forceTrackType) {
         car.driverName = 'You';
         car.angle = n0.heading;
         car.startX = n0.cx; car.startY = n0.cy; car.startAngle = n0.heading;
-        car.maxHealth = 1e9; car.health = car.maxHealth;
+        // Qualifying is not a free hit: the barriers cost the same as in the
+        // race, and a heavy enough shunt ends your session. The car is rebuilt
+        // for the race though - you carry the grid slot over, not the damage.
+        car.maxHealth = 255 + 10 * Math.max(0, Math.min(QUALI_LAPS, 40) - 5);
+        car.health = car.maxHealth;
         car.nextWaypoint = 0;
         cars.push(car);
         playerCar = car;
@@ -502,6 +565,10 @@ function startQualifying(forceTrackType) {
     firstFinisherTime = null;
     raceFinished = false;
     isFalseStartResetting = false;
+    isPaused = false;
+    pauseOverlay.style.display = 'none';
+    pauseBtn.style.display = 'inline-block';
+    pauseBtn.innerText = '⏸ Pause';
     winnerAnnouncement.style.display = 'none';
 
     if (typeof initAudio === 'function') initAudio(!playerCar);
@@ -845,6 +912,10 @@ function startGame(forceTrackType = null) {
     firstFinisherTime = null;
     raceFinished = false;
     isFalseStartResetting = false;
+    isPaused = false;
+    pauseOverlay.style.display = 'none';
+    pauseBtn.style.display = 'inline-block';
+    pauseBtn.innerText = '⏸ Pause';
     winnerAnnouncement.style.display = 'none';
     
     // Initialize Audio
@@ -1967,7 +2038,11 @@ function gameLoop(timestamp) {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         return;
     }
-    
+
+    // Paused: stop requesting frames and leave the last rendered frame on the
+    // canvas. setPaused(false) restarts the loop.
+    if (isPaused) return;
+
     const dt = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
     
@@ -2164,8 +2239,13 @@ function gameLoop(timestamp) {
         // whatever is left before the grid is set, so nobody is ever missed.
         if (raceMode === 'qualifying' && dt < 0.05) qualiTick();
 
-        // Warm-up lap plus two flying laps and the session is over.
-        if (raceMode === 'qualifying' && playerCar && playerCar.lap >= QUALI_LAPS) {
+        // Warm-up lap plus two flying laps and the session is over - or the
+        // car is wrecked, in which case you keep whatever time you had set.
+        if (raceMode === 'qualifying' && playerCar &&
+            (playerCar.lap >= QUALI_LAPS || playerCar.isBroken)) {
+            if (playerCar.isBroken) {
+                RaceLog.event('WRECK', 'player destroyed the car in qualifying — session over');
+            }
             endQualifying();
             return;
         }
@@ -2252,8 +2332,11 @@ function gameLoop(timestamp) {
         // --- Draw Rain overlay ---
         drawRain(ctx);
         
-        // Hide lights after 1.5s of GO
-        if (countdownTimer < goDelay + 1.5) {
+        // Hide lights after 1.5s of GO. Qualifying has no start procedure at
+        // all - you roll out of the pits - so it must not draw the gantry:
+        // countdownTimer starts at 0 there and the test passed, leaving a box
+        // of five dead lights sitting over the track for the whole session.
+        if (raceMode !== 'qualifying' && countdownTimer < goDelay + 1.5) {
             drawLights(ctx);
         }
         

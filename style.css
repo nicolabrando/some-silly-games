@@ -331,6 +331,32 @@ button:hover {
     white-space: nowrap;
 }
 
+/* ---- pause -------------------------------------------------------- */
+/* Sits over the whole canvas. #ui-layer is pointer-events:none, so the
+   overlay has to opt back in or its buttons are dead. */
+#pause-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.62);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    z-index: 40;
+}
+
+#pause-panel {
+    background: rgba(0, 0, 0, 0.9);
+    border: 2px solid #555;
+    border-radius: 10px;
+    padding: 32px 44px;
+    text-align: center;
+    min-width: 240px;
+}
+
 /* ---- qualifying classification ----------------------------------- */
 #quali-screen {
     min-width: 460px;
