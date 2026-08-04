@@ -172,8 +172,12 @@ class SegmentedTrack {
                 //   150      -> 210 hp
                 //   200      -> 510 hp   (terminal)
                 const intoWall = car.velocity.x * nx + car.velocity.y * ny;
-                if (intoWall > 60) {
-                    car.takeDamage(260 * Math.pow((intoWall - 60) / 100, 2));
+                // The player gets a wider free band as well as the damage
+                // scale in takeDamage - see PLAYER_FREE_IMPACT in car.js.
+                const free = 60 + (car.isPlayer && typeof PLAYER_FREE_IMPACT !== 'undefined'
+                    ? PLAYER_FREE_IMPACT : 0);
+                if (intoWall > free) {
+                    car.takeDamage(260 * Math.pow((intoWall - free) / 100, 2));
                 }
 
                 // Tangent projection for sliding effect (non-sticky wall)

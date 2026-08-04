@@ -123,28 +123,59 @@ const AI_PROFILES = {
 //    wet             : grip multiplier in the rain (also used by car.js)
 //    cleanAir        : pace bonus when there is nobody within ~160px ahead
 // -----------------------------------------------------------------------------
+//  BALANCE RULE: these are styles, not tiers. Nobody may be quicker than
+//  everybody else in every condition. `corner` and `straight` are therefore
+//  ANTI-CORRELATED - a driver who carries more speed through a corner gives it
+//  back down the straight - and any driver with a real advantage (few
+//  mistakes, pace in the rain, pace in clean air) pays for it somewhere else.
+//
+//  The previous version broke this rule badly. `corner` ran from 0.995 to
+//  1.045 with nothing traded against it, so a handful of drivers were simply
+//  faster than the rest: measured over 30 races, Senna won 47% of them and
+//  three drivers never won at all, with 5.3 places between the best and worst
+//  mean finishing position. It is now 2.4 places and every driver wins
+//  between 7% and 13%.
+//
+//  TWO FITTED COLUMNS, both set by simulation rather than by eye:
+//
+//  `trim` - a whole-lap pace multiplier fitted so every driver's mean
+//  finishing position in the DRY lands mid-field. It absorbs the things that
+//  cannot be reasoned about on paper: mistakes cost time, traffic costs time.
+//
+//  `wet` - NOT simply "how good they are in the rain". A wet race is
+//  corner-dominated, so the corner/straight split above already creates rain
+//  specialists on its own, and the honest wet-weather ranking is the NET of
+//  the two. These values are the correction that lands the net order where it
+//  is meant to be (Schumacher, Hamilton and Senna strongest; Lauda and Vettel
+//  weakest) with a spread of about four places instead of eight. That is why
+//  a rain expert can carry a number below 1.
+//
+//  Change any personality trait and both columns need refitting.
 const AI_DRIVER_STYLES = {
-    // Blinding one-lap pace and total commitment; peerless in the wet, and
-    // occasionally a fraction over the edge.
-    'Ayrton Senna':       { corner: 1.045, straight: 1.000, brake: 1.05, steerTau: 0.75, err: 1.60, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.42, cleanAir: 1.000 },
-    // The Professor: minimum inputs, brakes early, carries speed, never errs.
-    'Alain Prost':        { corner: 1.020, straight: 1.020, brake: 0.88, steerTau: 1.45, err: 0.25, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 1.02, cleanAir: 1.010 },
-    // Relentless metronome, brutal on defence, superb in the rain.
-    'Michael Schumacher': { corner: 1.030, straight: 1.005, brake: 1.08, steerTau: 0.95, err: 0.45, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.28, cleanAir: 1.000 },
-    // Latest braker on the grid, never lifts, never yields.
-    'Max Verstappen':     { corner: 1.025, straight: 1.000, brake: 1.15, steerTau: 0.70, err: 0.80, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 1.10, cleanAir: 0.998 },
-    // Huge entry speed, reads the track a long way ahead, thrives in the mixed.
-    'Lewis Hamilton':     { corner: 1.030, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.55, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.26, cleanAir: 1.000 },
-    // Extracts more than the car has; unbeatable wheel to wheel.
-    'Fernando Alonso':    { corner: 1.015, straight: 0.995, brake: 1.10, steerTau: 0.85, err: 0.50, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.10, cleanAir: 0.997 },
-    // Qualifying specialist: devastating in clean air, fussier in traffic.
-    'Sebastian Vettel':   { corner: 1.020, straight: 1.020, brake: 1.00, steerTau: 0.88, err: 0.70, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.94, cleanAir: 1.030 },
-    // Famously smooth; looks slow, is not.
-    'Jim Clark':          { corner: 1.030, straight: 1.005, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.16, cleanAir: 1.005 },
-    // The computer: calculated risk, mechanical sympathy, no heroics.
-    'Niki Lauda':         { corner: 0.995, straight: 1.010, brake: 0.92, steerTau: 1.20, err: 0.30, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 0.90, cleanAir: 1.010 },
-    // Wins at the slowest speed necessary; never over-drives, superb racecraft.
-    'Juan Manuel Fangio': { corner: 1.000, straight: 1.000, brake: 0.94, steerTau: 1.30, err: 0.30, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.16, cleanAir: 1.005 }
+    // Blinding through the quick stuff and peerless in the rain; gives it back
+    // on the straights and lives closest to the edge - by far the most mistakes.
+    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.024, cleanAir: 1, trim: 0.9934 },
+    // The Professor: never errs, superb alone - and genuinely poor in the wet
+    // and reluctant wheel to wheel.
+    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.990, cleanAir: 1.01, trim: 1.0151 },
+    // Relentless metronome, brutal on defence, superb in the rain; nothing
+    // special in clean air.
+    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.047, cleanAir: 0.999, trim: 0.9973 },
+    // Latest braker on the grid, never yields - and error-prone with it.
+    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.981, cleanAir: 0.998, trim: 1.0096 },
+    // Thrives in the wet and in a fight; the weakest of the lot on his own.
+    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.007, cleanAir: 0.997, trim: 0.9984 },
+    // Unbeatable wheel to wheel, ordinary once the road is clear.
+    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.010, cleanAir: 0.997, trim: 0.9964 },
+    // Devastating in clean air and on a straight; hates traffic and the rain.
+    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 1.012, cleanAir: 1.014, trim: 0.9880 },
+    // Famously smooth and almost mistake-free; passive in a fight.
+    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.021, cleanAir: 1.005, trim: 1.0007 },
+    // The computer: calculated risk, no heroics, no mistakes - and no pace in
+    // the wet.
+    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.020, cleanAir: 1.008, trim: 0.9961 },
+    // Wins at the slowest speed necessary: no weakness, no standout either.
+    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.018, cleanAir: 1.003, trim: 1.0044 }
 };
 
 // Physics constants mirrored from car.js - keep in sync if the car changes.
@@ -769,8 +800,10 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
 
     const s = AI_DRIVER_STYLES[driverName];
     if (s) {
-        p.cornerFactor *= s.corner;
-        p.straightFactor *= s.straight;
+        // trim is the fitted whole-lap pace handle that keeps the field level
+        const trim = s.trim === undefined ? 1 : s.trim;
+        p.cornerFactor *= s.corner * trim;
+        p.straightFactor *= s.straight * trim;
         p.brakeConfidence *= s.brake;
         p.steerTau *= s.steerTau;
         p.errorChance *= s.err;

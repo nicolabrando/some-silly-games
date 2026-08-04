@@ -1,5 +1,12 @@
 let __carUid = 0;
 
+// --- Player damage handicap ---------------------------------------------
+// Applied to the player's car only. Two handles: a straight scale on every
+// hit, and extra impact speed that costs nothing at all, so light scrapes
+// while learning a corner are genuinely free rather than merely cheap.
+const PLAYER_DAMAGE_SCALE = 0.45;
+const PLAYER_FREE_IMPACT = 28;      // px/s of closing speed added to the free band
+
 class Car {
     constructor(x, y, color, isPlayer = false) {
         this.uid = ++__carUid;
@@ -425,6 +432,13 @@ class Car {
     
     takeDamage(amount) {
         if (this.isBroken || this.finished) return;
+        // The AI drives to a computed speed profile with perfect lookahead and
+        // knows exactly how much steering it is about to need. A human has
+        // four arrow keys and a reaction time, so the same corner costs them
+        // contact the AI never has. Scaling the player's damage compensates
+        // for that gap rather than making the car tougher: barriers and
+        // contact still hurt, they just stop ending a race in one mistake.
+        if (this.isPlayer) amount *= PLAYER_DAMAGE_SCALE;
         this.health -= amount;
         if (this.health <= 0) {
             this.health = 0;

@@ -47,6 +47,46 @@ let qualiTrackType = null;
 let pendingGrid = null;     // participant order handed to the next startGame
 let pendingWeather = null;  // weather chosen at qualifying, reused for the race
 let racePoleColor = null;   // who started P1 in the race now running
+// Who crossed the line first on each lap. The last piece of a Grand Chelem:
+// pole + win + fastest lap + led every single lap.
+let lapLeaders = [];
+
+// --- Timing tower display order -----------------------------------------
+// Sorting by distance covered is correct but still strobes when two cars are
+// genuinely wheel to wheel: they trade the position every few frames and the
+// names jump. The tower therefore keeps its own order and only lets a car
+// take a place once it is clearly ahead - a car's length of daylight - so a
+// swap on screen means a real change on track.
+let towerOrder = [];
+const TOWER_MARGIN = 22;    // px of track progress needed to take a position
+
+// Single monotone score: finishers are locked in their finishing order and
+// always ahead of anyone still running.
+function towerScore(c) {
+    if (c.finished) return 1e9 - (c.finishIndex === undefined ? 0 : c.finishIndex);
+    if (c.isBroken) return -1e9 + (c.trackProgress || 0);
+    return c.trackProgress || 0;
+}
+
+// One settling pass towards the true order, with hysteresis on each swap.
+function stableTowerOrder(sorted) {
+    // rebuild if the field changed (new race, different car count)
+    if (towerOrder.length !== sorted.length ||
+        towerOrder.some(c => sorted.indexOf(c) === -1)) {
+        towerOrder = sorted.slice();
+        return towerOrder;
+    }
+    for (let pass = 0; pass < 2; pass++) {
+        for (let i = 0; i < towerOrder.length - 1; i++) {
+            const a = towerOrder[i], b = towerOrder[i + 1];
+            if (towerScore(b) > towerScore(a) + TOWER_MARGIN) {
+                towerOrder[i] = b;
+                towerOrder[i + 1] = a;
+            }
+        }
+    }
+    return towerOrder;
+}
 
 // --- Pause --------------------------------------------------------------
 // The game loop simply stops requesting frames. Everything that measures
@@ -360,7 +400,10 @@ function buildField() {
 
     const legendaryDrivers = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
     const randomDrivers = [...legendaryDrivers].sort(() => Math.random() - 0.5);
-    const totalAIsToSpawn = color === 'spectator' ? numOpponents + 1 : numOpponents;
+    // Never spawn more cars than there are drivers: at 10 opponents spectator
+    // mode would have asked for 11 and put the same name on two cars.
+    const totalAIsToSpawn = Math.min(color === 'spectator' ? numOpponents + 1 : numOpponents,
+                                     legendaryDrivers.length);
 
     for (let i = 0; i < totalAIsToSpawn; i++) {
         field.push({
@@ -1018,6 +1061,7 @@ function startGame(forceTrackType = null) {
     pendingWeather = null;
 
     racePoleColor = currentParticipants.length ? currentParticipants[0].color : null;
+    lapLeaders = [];
 
     RaceLog.event('SESSION', `grid set from ${gridSource}: ` +
         currentParticipants.map((p, i) => `${i + 1}.${p.driverName || p.color}`).join(' '));
@@ -1036,6 +1080,7 @@ function startGame(forceTrackType = null) {
         
         const car = new Car(gridPos.x, gridPos.y, p.color, p.isPlayer);
         car.driverName = p.driverName;
+        car.gridIndex = i;              // stable tie-break before anyone moves
         car.startX = gridPos.x;
         car.startY = gridPos.y;
         car.startAngle = gridPos.angle; // New property to store the grid angle
@@ -1379,12 +1424,19 @@ function updatePhysics(dt) {
                         //   150 px/s -> 230 hp  ( 90%)    nearly terminal
                         //   170 px/s -> 353 hp  (>100%)   race over
                         const closing = -velAlongNormal;      // px/s, always > 0 here
-                        const FREE = 65;
-                        const dmg = closing <= FREE ? 0
-                            : 320 * Math.pow((closing - FREE) / 100, 2);
+                        // Each car is billed against its own free band, so the
+                        // player's wider one does not also let the AI off.
+                        const freeOf = (c) => 65 + (c.isPlayer &&
+                            typeof PLAYER_FREE_IMPACT !== 'undefined' ? PLAYER_FREE_IMPACT : 0);
+                        const dmgOf = (c) => {
+                            const f = freeOf(c);
+                            return closing <= f ? 0 : 320 * Math.pow((closing - f) / 100, 2);
+                        };
+                        const d1 = dmgOf(c1), d2 = dmgOf(c2);
+                        const dmg = Math.max(d1, d2);
                         if (dmg > 0) {
-                            c1.takeDamage(dmg);
-                            c2.takeDamage(dmg);
+                            if (d1 > 0) c1.takeDamage(d1);
+                            if (d2 > 0) c2.takeDamage(d2);
                             if (dmg > 15) {
                                 RaceLog.event('CONTACT', `${c1.driverName || c1.color} / ` +
                                     `${c2.driverName || c2.color} — ${dmg.toFixed(0)} damage each ` +
@@ -1867,17 +1919,28 @@ function updateHUD() {
         if (a.finished) return -1;
         if (b.finished) return 1;
         
-        // Otherwise, sort by race progress
-        if (lapsOf(a) !== lapsOf(b)) return lapsOf(b) - lapsOf(a);
-        // Same lap, who has passed more waypoints?
-        if (a.waypointProgress !== b.waypointProgress) return b.waypointProgress - a.waypointProgress;
-        // Same waypoint target, who is closer to it?
-        const wp = track.waypoints[a.nextWaypoint];
-        const distA = (a.x - wp.x)**2 + (a.y - wp.y)**2;
-        const distB = (b.x - wp.x)**2 + (b.y - wp.y)**2;
-        return distA - distB; 
+        // Otherwise sort by distance actually covered. trackProgress is the
+        // monotone odometer, continuous and already cumulative across laps.
+        //
+        // It used to be lap -> waypointProgress -> distance to the next
+        // waypoint, and both of those tie-breaks are step functions:
+        // waypointProgress ticks when a car comes within 200px of a waypoint,
+        // so two cars running side by side crossed that line a frame apart and
+        // swapped, and the distance term flips again as they pass it. The
+        // order was correct on average and jittering several times a second.
+        const pa = a.trackProgress || 0, pb = b.trackProgress || 0;
+        if (pa !== pb) return pb - pa;
+        return (a.gridIndex || 0) - (b.gridIndex || 0);   // stable at lights-out
     });
-    
+
+    // ---- lap leaders -------------------------------------------------
+    // Each time the leader completes another lap, record who it was. A driver
+    // whose colour fills this array led every lap of the race.
+    if (raceMode === 'race' || raceMode === 'championship') {
+        const ldr = sortedCars[0];
+        if (ldr && ldr.lap > lapLeaders.length) lapLeaders.push(ldr.color);
+    }
+
     // ---- live timing tower ------------------------------------------
     // Gap to the car in front, in seconds. trackProgress is real distance
     // round the circuit, so the gap is that distance divided by the pace of
@@ -1888,9 +1951,12 @@ function updateHUD() {
     } else if (raceMode !== 'practice' && timingTower.style.display !== 'none') {
         const lapLen = track.getRacingLine ? track.getRacingLine('standard').length : 1;
         const rows = [];
+        // Displayed order is the settled one, not the raw sort - see
+        // stableTowerOrder. Classification and points still use sortedCars.
+        const shown = stableTowerOrder(sortedCars);
 
-        for (let i = 0; i < sortedCars.length; i++) {
-            const c = sortedCars[i];
+        for (let i = 0; i < shown.length; i++) {
+            const c = shown[i];
 
             // smoothed pace, so the gap doesn't jitter under braking
             const sp = Math.hypot(c.velocity.x, c.velocity.y);
@@ -1902,7 +1968,7 @@ function updateHUD() {
             } else if (i === 0) {
                 gap = c.finished ? 'FIN' : 'LEADER';
             } else {
-                const ahead = sortedCars[i - 1];
+                const ahead = shown[i - 1];
                 const behind = Math.max(0, (ahead.trackProgress || 0) - (c.trackProgress || 0));
                 const lapsDown = Math.floor(behind / lapLen);
                 if (lapsDown >= 1) {
@@ -1935,8 +2001,17 @@ function updateHUD() {
         } else {
             posCounter.innerText = `Pos: ${pos}/${cars.length}`;
         }
+    } else if (raceMode === 'race' || raceMode === 'championship') {
+        // Spectating: there is no car of yours to report, so the HUD follows
+        // the race instead - which lap the leader is on, and who it is.
+        const ldr = sortedCars[0];
+        if (ldr) {
+            const lap = Math.min(ldr.lap + (ldr.finished ? 0 : 1), TOTAL_LAPS);
+            lapCounter.innerText = `Lap: ${lap}/${TOTAL_LAPS}`;
+            posCounter.innerText = `Leader: ${driverCode(ldr)}`;
+        }
     }
-    
+
     // Check win condition for the leader.
     // Use the recorded first finisher, never sortedCars[0].
     const firstFinisher = cars.find(c => c.finishIndex === 0);
@@ -2009,9 +2084,10 @@ function updateHUD() {
     // we only end the race early if ALL cars are finished AND it's not a spectator race, 
     // or if the 20s timer has expired.
     const allFinished = cars.every(c => c.finished || c.isBroken);
-    // With no player on track (spectator, or a Grand Prix you skipped) there is
-    // no car to wait for, so the field being classified is enough to end it.
-    const shouldEndRace = timeIsUp || (allFinished && (playerCar || skipMode));
+    // Once every car is classified the race is over, full stop. Spectator mode
+    // used to sit and watch the DNF clock run down after the last car had
+    // already crossed the line.
+    const shouldEndRace = timeIsUp || allFinished;
 
     if (shouldEndRace && !raceFinished) {
         raceFinished = true;
@@ -2092,6 +2168,20 @@ function updateHUD() {
                 `${RaceLog.fmt(fastestCar.bestLapTime)}`);
         }
 
+        // ---- Grand Chelem ------------------------------------------------
+        // Pole, win, fastest lap and every single lap led. All four, one race.
+        const winnerCar = sortedCars[0];
+        const ledEvery = lapLeaders.length >= TOTAL_LAPS && winnerCar &&
+                         lapLeaders.every(col => col === winnerCar.color);
+        const grandChelem = !!(winnerCar && winnerCar.finished &&
+            racePoleColor === winnerCar.color &&
+            fastestCar === winnerCar &&
+            ledEvery);
+        if (grandChelem) {
+            RaceLog.event('CHELEM', `${winnerCar.driverName || winnerCar.color} — GRAND CHELEM ` +
+                `(pole, win, fastest lap, led all ${TOTAL_LAPS} laps)`);
+        }
+
         // Season record: one row per race, kept for the end-of-championship recap
         if (isChampionship) {
             championshipState.results = championshipState.results || [];
@@ -2100,6 +2190,7 @@ function updateHUD() {
                 wet: isRaining,
                 fastest: fastestCar ? fastestCar.color : null,
                 pole: racePoleColor,
+                chelem: grandChelem ? winnerCar.color : null,
                 order: sortedCars.map((c, i) => ({
                     color: c.color,
                     code: driverCode(c),
@@ -2469,6 +2560,7 @@ function gameLoop(timestamp) {
                     
                     globalSkidMarks = [];
                     globalParticles = [];
+                    lapLeaders = [];   // the aborted start never happened
                 }, 1200);
             }
             
@@ -2688,7 +2780,8 @@ function startChampionship() {
     
     // Initialize points and persistent AI modifiers
     if (color === 'spectator') {
-        const totalAIsToSpawn = numOpponents + 1;
+        // capped at the number of distinct drivers - see buildField()
+        const totalAIsToSpawn = Math.min(numOpponents + 1, availableNames.length);
         for (let i = 0; i < totalAIsToSpawn; i++) {
             let aiCol = possibleColors[i % possibleColors.length];
             let name = availableNames[i % availableNames.length];
@@ -2733,24 +2826,45 @@ function showChampionshipFinal() {
     champFinalScreen.style.display = 'block';
     
     const sortedColors = Object.keys(championshipState.points).sort((a, b) => championshipState.points[b] - championshipState.points[a]);
-    
+
+    // Grand Chelems per driver across the season.
+    const chelems = {};
+    for (const r of (championshipState.results || [])) {
+        if (r.chelem) chelems[r.chelem] = (chelems[r.chelem] || 0) + 1;
+    }
+    const anyChelem = Object.keys(chelems).length > 0;
+
     champStatsBody.innerHTML = '';
     sortedColors.forEach((color, idx) => {
         const tr = document.createElement('tr');
         if (idx === 0) tr.style.color = 'gold';
         else if (idx === 1) tr.style.color = 'silver';
         else if (idx === 2) tr.style.color = '#cd7f32'; // bronze
-        
+
         const participant = championshipState.participants.find(p => p.color === color);
         const nameDisplay = participant && participant.driverName ? `${participant.driverName} (${color})` : color;
-        
+
+        const n = chelems[color] || 0;
+        const star = n
+            ? `<span class="gc-star" title="Grand Chelem: pole, win, fastest lap and led every lap` +
+              `${n > 1 ? ` — ${n} times` : ''}">${'★'.repeat(Math.min(n, 3))}` +
+              `${n > 3 ? `&times;${n}` : ''}</span>`
+            : '';
+
         tr.innerHTML = `
             <td>${idx + 1}</td>
-            <td style="color: ${color}; font-weight: bold;">${nameDisplay}</td>
+            <td style="color: ${color}; font-weight: bold;">${nameDisplay}${star}</td>
             <td>${championshipState.points[color]} pts</td>
         `;
         champStatsBody.appendChild(tr);
     });
+
+    const legend = document.getElementById('champ-legend');
+    if (legend) {
+        legend.innerHTML = anyChelem
+            ? '<span class="gc-star">★</span> Grand Chelem &mdash; pole, win, fastest lap and every lap led'
+            : '';
+    }
 
     renderSeasonRecap();
 }
@@ -2791,10 +2905,15 @@ function renderSeasonRecap() {
             if (e.dns) { html += '<td class="sr-dns">DNS</td>'; continue; }
             const cls = e.dnf ? 'sr-dnf' : (e.pos === 1 ? 'sr-win' : (e.pos <= 3 ? 'sr-pod' : ''));
             const txt = e.dnf ? 'DNF' : e.pos;
-            // Small superscripts beside the result: P for pole, F for fastest lap.
+            // Small superscripts beside the result: P for pole, F for fastest
+            // lap, and a star when the two came with the win and every lap led.
             let marks = '';
-            if (r.pole === color) marks += '<sup class="sr-pole" title="pole position">P</sup>';
-            if (r.fastest === color) marks += '<sup class="sr-fl" title="fastest lap">F</sup>';
+            if (r.chelem === color) {
+                marks = '<sup class="gc-star" title="Grand Chelem">★</sup>';
+            } else {
+                if (r.pole === color) marks += '<sup class="sr-pole" title="pole position">P</sup>';
+                if (r.fastest === color) marks += '<sup class="sr-fl" title="fastest lap">F</sup>';
+            }
             html += `<td class="${cls}">${txt}${marks}</td>`;
         }
         html += `<td><b>${championshipState.points[color]}</b></td></tr>`;
@@ -2802,6 +2921,7 @@ function renderSeasonRecap() {
     html += '</tbody></table></div>' +
         '<div style="font-size:11px;opacity:0.65;margin-top:6px;">' +
         '<sup class="sr-pole">P</sup> pole &nbsp;·&nbsp; <sup class="sr-fl">F</sup> fastest lap' +
+        ' &nbsp;·&nbsp; <sup class="gc-star">★</sup> Grand Chelem' +
         ' &nbsp;·&nbsp; &#9730; wet race &nbsp;·&nbsp; DNS = Grand Prix skipped' +
         ' &nbsp;·&nbsp; gold = win, green = podium</div>';
 
