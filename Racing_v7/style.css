@@ -40,7 +40,7 @@ canvas {
 
 /* Every centred panel must be listed here: #ui-layer is pointer-events:none,
    so a panel left out of this rule renders unstyled AND its buttons are dead. */
-#menu, #game-over, #championship-final, #quali-screen {
+#menu, #game-over, #championship-final, #quali-screen, #gp-preview {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -329,6 +329,76 @@ button:hover {
     font-style: italic;
     opacity: 0.6;
     white-space: nowrap;
+}
+
+/* ---- skipped Grand Prix (race simulating in the background) -------- */
+#skip-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    z-index: 45;
+}
+
+#skip-panel {
+    background: rgba(0, 0, 0, 0.9);
+    border: 2px solid #555;
+    border-radius: 10px;
+    padding: 30px 46px;
+    text-align: center;
+    min-width: 300px;
+}
+
+/* ---- Grand Prix preview ------------------------------------------- */
+#gp-preview {
+    min-width: 420px;
+}
+
+#gp-map {
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 6px;
+    margin-bottom: 14px;
+    background: #388E3C;
+}
+
+#gp-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 18px;
+}
+
+#gp-stats .gp-cell {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 8px 6px;
+}
+
+#gp-stats .gp-k {
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    opacity: 0.55;
+    margin-bottom: 3px;
+}
+
+#gp-stats .gp-v {
+    font-size: 15px;
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+
+/* DNS cell in the season recap (skipped Grand Prix) */
+.season-table .sr-dns {
+    color: #888;
+    font-size: 10px;
+    letter-spacing: 0.5px;
 }
 
 /* ---- pause -------------------------------------------------------- */

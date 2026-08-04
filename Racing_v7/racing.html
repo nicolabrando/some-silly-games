@@ -186,6 +186,13 @@
                                 backmarker starts on pole. The better your season is going, the harder the
                                 next race gets. Round&nbsp;1 has no standings to invert, so that grid is
                                 drawn at random.</li>
+                            <li><b>Grand Prix preview.</b> Every championship round opens on a circuit
+                                card: a map, length, corner count by hand, an estimated lap time and top
+                                speed (measured by actually lapping the circuit), and the weekend's
+                                weather. <b>Skip this Grand Prix</b> sits <i>you</i> out: the rest of the
+                                field still races the full distance for real championship points, simulated
+                                at speed, and you are classified <b>DNS</b> with nothing scored. You still
+                                get the full result sheet afterwards.</li>
                             <li><b>Racecraft.</b> A driver stuck behind someone builds into an attack: they
                                 brake later, commit harder and close right up. Once they are alongside they
                                 are free to outpace you &mdash; so a move that has been started can actually
@@ -225,6 +232,25 @@
 
                     </div>
                 </details>
+            </div>
+            <div id="skip-overlay" style="display: none;">
+                <div id="skip-panel">
+                    <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; margin-bottom: 10px;">
+                        GRAND PRIX SKIPPED
+                    </div>
+                    <div id="skip-progress" style="font-size: 14px; opacity: 0.7;">Simulating the race&hellip;</div>
+                    <div style="font-size: 12px; opacity: 0.45; margin-top: 14px;">
+                        The others are racing for points. You are classified DNS.
+                    </div>
+                </div>
+            </div>
+            <div id="gp-preview" style="display: none;">
+                <h1 id="gp-title" style="margin: 0 0 2px; font-size: 24px;">Round 1</h1>
+                <div id="gp-weather" style="font-size: 14px; opacity: 0.85; margin-bottom: 14px;">Dry</div>
+                <canvas id="gp-map" width="340" height="238"></canvas>
+                <div id="gp-stats"></div>
+                <button id="gp-start-btn" style="background: #4CAF50; color: #002;">Start Qualifying</button>
+                <button id="gp-skip-btn" style="margin-top: 10px; background: #37474f; color: #ddd;">Skip this Grand Prix</button>
             </div>
             <div id="quali-screen" style="display: none;">
                 <h1 id="quali-title" style="margin: 0 0 4px; font-size: 26px;">Qualifying</h1>

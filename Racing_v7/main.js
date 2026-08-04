@@ -56,6 +56,19 @@ let racePoleColor = null;   // who started P1 in the race now running
 // window and put a gap in every lap time.
 let isPaused = false;
 let pauseStartedAt = 0;
+
+// --- Skipped Grand Prix -------------------------------------------------
+// You sit the round out; the AI still races it for points. The real race
+// loop runs with the drawing skipped, driven by skipClock instead of the wall
+// clock, so a 60 second race resolves in about a second.
+let skipMode = false;
+let skipClock = 0;
+let skipNow = 0;
+let skipPlayer = null;      // the player's entry, held out of the field
+
+// The DNF window is measured against the wall clock during a normal race and
+// against the simulation clock while a Grand Prix is being skipped.
+function raceNow() { return skipMode ? skipNow : Date.now(); }
 // UI Elements
 const menu = document.getElementById('menu');
 const hud = document.getElementById('hud');
@@ -201,6 +214,15 @@ stopSessionBtn.addEventListener('click', () => {
     else if (raceMode === 'qualifying') endQualifying();
 });
 
+document.getElementById('gp-start-btn').addEventListener('click', () => {
+    document.getElementById('gp-preview').style.display = 'none';
+    const trackType = championshipState.tracks[championshipState.currentTrackIndex];
+    if (qualifyingEnabled()) startQualifying(trackType);
+    else startGame(trackType);
+});
+
+document.getElementById('gp-skip-btn').addEventListener('click', skipGrandPrix);
+
 qualiRaceBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
     startGame(qualiTrackType);
@@ -218,11 +240,15 @@ restartBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
     pendingGrid = null;
     pendingWeather = null;
+    skipMode = false;
+    skipPlayer = null;
     menu.style.display = 'block';
 });
 
 nextRoundBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
+    skipMode = false;
+    skipPlayer = null;
     nextChampionshipRound();
 });
 
@@ -249,6 +275,9 @@ quitBtn.addEventListener('click', () => {
     qualiTimes = [];
     pendingGrid = null;
     pendingWeather = null;
+    skipMode = false;
+    skipPlayer = null;
+    document.getElementById('skip-overlay').style.display = 'none';
 });
 
 // Mobile Controls detection and mapping
@@ -479,6 +508,10 @@ function startQualifying(forceTrackType) {
     globalSkidMarks = [];
     globalParticles = [];
     document.getElementById('dnf-timer').style.visibility = 'hidden';
+    speedometer.innerText = '0 km/h';
+    document.getElementById('lap-timer').innerText = '';
+    posCounter.innerText = '';
+    lapCounter.innerText = 'Qualifying — warm-up lap';
 
     qualiTrackType = forceTrackType || document.getElementById('track-select').value;
     track = makeTrack(qualiTrackType);
@@ -576,6 +609,161 @@ function startQualifying(forceTrackType) {
     requestAnimationFrame(gameLoop);
 }
 
+// ===========================================================================
+// GRAND PRIX PREVIEW (championship)
+// ===========================================================================
+
+// Corners from the racing line: signed heading change per node, grouped into
+// runs of consistent sign. In canvas coordinates y points down, so a positive
+// heading change is a RIGHT-hand corner.
+function countCorners(line) {
+    const N = line.count, nodes = line.nodes, ds = line.ds;
+    const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+    let left = 0, right = 0;
+    let runSign = 0, runTurn = 0, gap = 0;
+    const close = () => {
+        // 0.35 rad ~ 20 degrees: kinks smaller than that are not corners
+        if (Math.abs(runTurn) > 0.35) { if (runSign > 0) right++; else left++; }
+        runSign = 0; runTurn = 0; gap = 0;
+    };
+    for (let i = 0; i < N; i++) {
+        const dh = wrap(nodes[(i + 1) % N].heading - nodes[i].heading);
+        const R = Math.abs(dh) > 1e-6 ? ds / Math.abs(dh) : Infinity;
+        const sign = Math.sign(dh);
+        if (R < 500 && sign !== 0) {           // curved enough to matter
+            if (runSign === 0) runSign = sign;
+            if (sign === runSign) { runTurn += dh; gap = 0; }
+            else { close(); runSign = sign; runTurn = dh; }
+        } else if (runSign !== 0 && ++gap > 4) {
+            close();
+        }
+    }
+    close();
+    return { left, right };
+}
+
+// One clean-air flying lap with a hard-difficulty AI, recording top speed.
+// Same sandbox trick as simulateQualifyingLap: every global the physics
+// touches is saved and restored.
+function measureTrackStats(qTrack, raining) {
+    const sCars = cars, sSkid = globalSkidMarks, sPart = globalParticles;
+    const sRain = isRaining, sLaps = TOTAL_LAPS, sVsc = vscPowerFactor;
+    const sLeader = qTrack.leaderFinished, sTime = qTrack.currentRaceTime;
+
+    const line = qTrack.getRacingLine();
+    let si = 0, md = Infinity;
+    line.nodes.forEach((n, i) => {
+        const d = Math.hypot(n.cx - qTrack.startX, n.cy - qTrack.startY);
+        if (d < md) { md = d; si = i; }
+    });
+    const n0 = line.nodes[si];
+    const car = new Car(n0.cx, n0.cy, 'red', false);
+    car.driverName = 'probe';
+    car.angle = n0.heading;
+    car.maxHealth = 1e9; car.health = car.maxHealth;
+    car.nextWaypoint = 0;
+    const v0 = Math.min(n0.vCorner || 200, 200);
+    car.velocity = { x: Math.cos(n0.heading) * v0, y: Math.sin(n0.heading) * v0 };
+
+    cars = [car]; globalSkidMarks = []; globalParticles = [];
+    isRaining = !!raining; TOTAL_LAPS = 9999; vscPowerFactor = 1;
+    qTrack.leaderFinished = false;
+
+    const ai = new AI(car, 'hard', 1);
+    ai.startRace();
+    const dt = 1 / 60;
+    let t = 0, vmax = 0;
+    while (t < 180 && car.lap < 2) {
+        t += dt;
+        qTrack.currentRaceTime = t * 1000;
+        ai.update(qTrack, dt);
+        car.update(dt, qTrack);
+        const sp = Math.hypot(car.velocity.x, car.velocity.y);
+        if (sp > vmax) vmax = sp;
+    }
+    const lap = car.bestLapTime;
+
+    cars = sCars; globalSkidMarks = sSkid; globalParticles = sPart;
+    isRaining = sRain; TOTAL_LAPS = sLaps; vscPowerFactor = sVsc;
+    qTrack.leaderFinished = sLeader; qTrack.currentRaceTime = sTime;
+    return { lap: lap, vmax: vmax };
+}
+
+const TRACK_LABELS = {
+    oval: 'Oval', peanut: 'Peanut', f1: 'F1 Circuit', circomassimo: 'Circus Maximus',
+    circle: 'Circle', serpent: 'Serpent', quadrato: 'Square', triangle: 'Triangle',
+    pettine: 'Comb', thunder: 'Thunder'
+};
+
+function showGpPreview(trackType) {
+    menu.style.display = 'none';
+    gameOverScreen.style.display = 'none';
+    qualiScreen.style.display = 'none';
+    hud.style.display = 'none';
+    gameState = 'menu';               // nothing is running while this is up
+
+    const round = championshipState.currentTrackIndex + 1;
+    const total = championshipState.tracks.length;
+    const wet = nextChampionshipWeather();
+
+    const pTrack = makeTrack(trackType);
+    const line = pTrack.getRacingLine();
+    const corners = countCorners(line);
+    const stats = measureTrackStats(pTrack, wet);
+
+    document.getElementById('gp-title').innerText =
+        `Round ${round}/${total} — ${TRACK_LABELS[trackType] || trackType}`;
+    document.getElementById('gp-weather').innerHTML = wet
+        ? '<span style="color:#64b5f6;">Wet 🌧️</span>' : 'Dry ☀️';
+
+    // Mini-map: the real track, drawn scaled onto a small canvas.
+    const map = document.getElementById('gp-map');
+    const mctx = map.getContext('2d');
+    const sc = Math.min(map.width / 1000, map.height / 700);
+    mctx.setTransform(1, 0, 0, 1, 0, 0);
+    mctx.clearRect(0, 0, map.width, map.height);
+    mctx.setTransform(sc, 0, 0, sc,
+        (map.width - 1000 * sc) / 2, (map.height - 700 * sc) / 2);
+    mctx.fillStyle = '#388E3C';
+    mctx.fillRect(0, 0, 1000, 700);
+    pTrack.draw(mctx);
+
+    // 1 px = 1 m, the same fiction the speedometer already uses (0.5 factor).
+    const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
+    const cells = [
+        ['Length', (line.length / 1000).toFixed(2) + ' km'],
+        ['Laps', String(laps)],
+        ['Corners', String(corners.left + corners.right)],
+        ['Left / Right', corners.left + ' L / ' + corners.right + ' R'],
+        ['Est. lap time', stats.lap ? (stats.lap / 1000).toFixed(1) + 's' : '—'],
+        ['Top speed', Math.round(stats.vmax * 0.5) + ' km/h']
+    ];
+    document.getElementById('gp-stats').innerHTML = cells.map(c =>
+        `<div class="gp-cell"><div class="gp-k">${c[0]}</div><div class="gp-v">${c[1]}</div></div>`).join('');
+
+    document.getElementById('gp-start-btn').innerText =
+        qualifyingEnabled() ? 'Start Qualifying' : 'Start Race';
+    document.getElementById('gp-preview').style.display = 'block';
+}
+
+// You sit this one out. The race still happens: the AI field runs the full
+// distance for real championship points, simulated at speed with the drawing
+// skipped, and you are classified DNS.
+function skipGrandPrix() {
+    const trackType = championshipState.tracks[championshipState.currentTrackIndex];
+
+    document.getElementById('gp-preview').style.display = 'none';
+    document.getElementById('skip-overlay').style.display = 'flex';
+    document.getElementById('skip-progress').innerText = 'Simulating the race…';
+
+    skipMode = true;
+    skipClock = 0;
+    skipNow = 0;
+    skipPlayer = championshipState.participants.find(p => p.isPlayer) || null;
+
+    startGame(trackType);        // builds the field WITHOUT the player
+}
+
 function endQualifying() {
     if (gameState === 'gameover') return;
 
@@ -645,8 +833,9 @@ function startGame(forceTrackType = null) {
     if (raceMode === 'qualifying') raceMode = isChampionship ? 'championship' : 'race';
 
     menu.style.display = 'none';
-    hud.style.display = 'flex';
-    if (isMobile) mobileControls.style.display = 'flex';
+    // Nothing to watch while a skipped Grand Prix is being simulated.
+    hud.style.display = skipMode ? 'none' : 'flex';
+    if (isMobile) mobileControls.style.display = skipMode ? 'none' : 'flex';
     
     // Reset effects
     globalSkidMarks = [];
@@ -679,6 +868,14 @@ function startGame(forceTrackType = null) {
     }
     weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
     
+    // updateHUD only runs while playing, so anything left in these readouts
+    // survives into the countdown: after qualifying the speedometer sat on
+    // the last speed of the flying lap for the whole grid sequence.
+    speedometer.innerText = '0 km/h';
+    document.getElementById('lap-timer').innerText = '';
+    posCounter.innerText = '';
+    lapCounter.innerText = '';
+
     const isPractice = raceMode === 'practice';
     stopSessionBtn.style.display = isPractice ? 'inline-block' : 'none';
     timingTower.style.display = isPractice ? 'none' : 'block';
@@ -811,6 +1008,10 @@ function startGame(forceTrackType = null) {
         }
         currentParticipants = qualified;
     }
+
+    // Skipped Grand Prix: you are not on the grid at all. The AI race that
+    // follows is a real one for everyone else.
+    if (skipMode) currentParticipants = currentParticipants.filter(p => !p.isPlayer);
 
     // Consumed: the next race builds its own grid unless it too is qualified for.
     pendingGrid = null;
@@ -965,7 +1166,7 @@ function updatePhysics(dt) {
     });
 
     // Handle 20s DNF timer
-    if (firstFinisherTime && (Date.now() - firstFinisherTime > dnfWindowMs)) {
+    if (firstFinisherTime && (raceNow() - firstFinisherTime > dnfWindowMs)) {
         cars.forEach(c => {
             if (!c.finished && !c.isBroken) {
                 c.isBroken = true;
@@ -1342,6 +1543,11 @@ function startRecovery(car) {
 }
 
 function updateRecovery(dt) {
+    // Recovery (and with it the VSC) belongs to races. In qualifying and
+    // practice the field is one car and a wreck ends the session, so there is
+    // no track to neutralise and no crane to send out.
+    if (raceMode !== 'race' && raceMode !== 'championship') return;
+
     // 1. spot new wrecks (damage only; a time-limit DNF is not a wreck)
     for (const c of cars) {
         if (c.isBroken && !c.recovering && !c.recovered && c.status !== 'DNF (Time Limit)') {
@@ -1571,7 +1777,7 @@ function endPracticeSession() {
 function updateHUD() {
     const dnfTimerDiv = document.getElementById('dnf-timer');
     if (firstFinisherTime && !raceFinished) {
-        const timeLeft = Math.max(0, dnfWindowMs / 1000 - (Date.now() - firstFinisherTime) / 1000);
+        const timeLeft = Math.max(0, dnfWindowMs / 1000 - (raceNow() - firstFinisherTime) / 1000);
         dnfTimerDiv.style.visibility = 'visible';
         dnfTimerDiv.innerText = `Time left: ${timeLeft.toFixed(1)}s`;
     } else {
@@ -1736,7 +1942,7 @@ function updateHUD() {
     const firstFinisher = cars.find(c => c.finishIndex === 0);
     if (!leaderFinished && firstFinisher) {
         leaderFinished = true;
-        firstFinisherTime = Date.now();
+        firstFinisherTime = raceNow();
         leaderRaceTime = firstFinisher.raceTime;
 
         // The old rule gave everyone a flat 20 s after the leader. On Pettine
@@ -1765,7 +1971,8 @@ function updateHUD() {
         }, 4000);
     }
     
-    if (playerCar && playerCar.isBroken && !playerCar.notifiedBroken) {
+    if (playerCar && playerCar.isBroken && !playerCar.notifiedBroken &&
+        (raceMode === 'race' || raceMode === 'championship')) {
         playerCar.notifiedBroken = true;
         winnerAnnouncement.style.display = 'block';
         winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
@@ -1775,10 +1982,19 @@ function updateHUD() {
             winnerAnnouncement.style.display = 'none';
         }, 4000);
     }
-    
+
+    // Everything below is RACE-END machinery, and it only applies to a race.
+    // In qualifying the field is a single car - the player - so the moment
+    // they wrecked, "every car is finished or broken" was true and the full
+    // race-over path ran: "No one finished!", the round recorded with no
+    // points, currentTrackIndex advanced. The championship literally skipped
+    // a Grand Prix because of a qualifying crash. Sessions end through
+    // endQualifying / endPracticeSession, never through here.
+    if (raceMode !== 'race' && raceMode !== 'championship') return;
+
     // Handle 20s DNF timer
     let timeIsUp = false;
-    if (firstFinisherTime && (Date.now() - firstFinisherTime > dnfWindowMs)) {
+    if (firstFinisherTime && (raceNow() - firstFinisherTime > dnfWindowMs)) {
         timeIsUp = true;
         cars.forEach(c => {
             if (!c.finished && !c.isBroken) {
@@ -1793,12 +2009,15 @@ function updateHUD() {
     // we only end the race early if ALL cars are finished AND it's not a spectator race, 
     // or if the 20s timer has expired.
     const allFinished = cars.every(c => c.finished || c.isBroken);
-    const shouldEndRace = timeIsUp || (allFinished && playerCar);
-    
+    // With no player on track (spectator, or a Grand Prix you skipped) there is
+    // no car to wait for, so the field being classified is enough to end it.
+    const shouldEndRace = timeIsUp || (allFinished && (playerCar || skipMode));
+
     if (shouldEndRace && !raceFinished) {
         raceFinished = true;
         gameState = 'gameover';
         hud.style.display = 'none';
+        document.getElementById('skip-overlay').style.display = 'none';
         winnerAnnouncement.style.display = 'none';
         if (isMobile) mobileControls.style.display = 'none';
         if (isChampionship) {
@@ -1844,7 +2063,14 @@ function updateHUD() {
             resultMessage.innerText = "No one finished!";
             resultMessage.style.color = "#F44336";
         }
-        
+
+        if (skipMode) {
+            const winner = sortedCars[0];
+            const who = winner.driverName ? `${winner.driverName} (${winner.color})` : winner.color;
+            resultMessage.innerText = `Grand Prix skipped — ${who} wins`;
+            resultMessage.style.color = '#90a4ae';
+        }
+
         RaceLog.end(sortedCars.map(c => ({
             name: c.driverName || c.color,
             laps: `${Math.min(c.lap, TOTAL_LAPS)}/${TOTAL_LAPS}`,
@@ -1881,7 +2107,13 @@ function updateHUD() {
                     pos: i + 1,
                     pts: c.finished ? (f1Points[i] || 0) : 0,
                     dnf: c.isBroken && !c.finished
-                }))
+                })).concat(skipMode && skipPlayer ? [{
+                    // you sat this one out: classified DNS, no points
+                    color: skipPlayer.color,
+                    code: 'YOU',
+                    name: skipPlayer.driverName || skipPlayer.color,
+                    pos: null, pts: 0, dnf: false, dns: true
+                }] : [])
             });
         }
 
@@ -1951,6 +2183,23 @@ function updateHUD() {
             statsBody.appendChild(tr);
         });
         
+        // You skipped this one: show yourself at the bottom of the sheet as
+        // DNS rather than silently omitting you from your own championship.
+        if (skipMode && skipPlayer) {
+            const tr = document.createElement('tr');
+            tr.style.opacity = '0.6';
+            tr.innerHTML = `
+                <td>&ndash;</td>
+                <td style="color: ${skipPlayer.color}; font-weight: bold;">You (${skipPlayer.color})</td>
+                <td>0</td>
+                <td>DNS</td>
+                <td>-</td>
+                <td>DNS</td>
+                <td>-</td>
+            `;
+            statsBody.appendChild(tr);
+        }
+
         if (isChampionship) {
             championshipState.currentTrackIndex++;
             champRecapSection.style.display = 'block';
@@ -2046,6 +2295,50 @@ function gameLoop(timestamp) {
     const dt = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
     
+    // ---- skipped Grand Prix: fast-forward the real race -----------------
+    // The AI still races for real. Rather than reimplement the race headlessly
+    // (and risk it diverging from the one you actually drive), the genuine
+    // loop is run as fast as the frame budget allows with the drawing skipped.
+    // Damage, VSC, blue flags, points and the results screen are therefore
+    // exactly the same code that runs when you are on track.
+    //
+    // This has to sit ABOVE the countdown branch: that branch returns, so with
+    // the check below it the start lights played out in real time (five or six
+    // seconds of watching an empty screen) before the fast-forward began.
+    if (skipMode && (gameState === 'playing' || gameState === 'countdown')) {
+        // Two brakes on the inner loop: a wall-clock budget so the tab stays
+        // responsive, and a hard step cap so a clock that does not advance
+        // (or a very fast machine) can never turn this into a freeze.
+        const budgetEnd = performance.now() + 24;
+        const fixed = 1 / 60;
+        let steps = 0;
+        while (steps++ < 600 && performance.now() < budgetEnd && gameState !== 'gameover') {
+            skipClock += fixed * 1000;
+            if (gameState === 'countdown') {
+                // no start procedure to watch: release the field immediately
+                countdownTimer = goDelay;
+                lightState = 6;
+                gameState = 'playing';
+                raceStartTime = skipClock;
+                ais.forEach(ai => ai.startRace());
+                continue;
+            }
+            countdownTimer += fixed;
+            track.leaderFinished = leaderFinished;
+            track.currentRaceTime = skipClock - raceStartTime;
+            skipNow = skipClock;              // updateHUD reads this for the DNF window
+            updatePhysics(fixed);
+            updateHUD();
+        }
+        if (gameState !== 'gameover') {
+            const done = cars.filter(c => c.finished || c.isBroken).length;
+            document.getElementById('skip-progress').innerText =
+                `Simulating the race… ${done}/${cars.length} classified`;
+            requestAnimationFrame(gameLoop);
+        }
+        return;
+    }
+
     if (gameState === 'countdown') {
         if (!isFalseStartResetting) {
             countdownTimer += dt;
@@ -2220,7 +2513,7 @@ function gameLoop(timestamp) {
     
     if (gameState === 'playing') {
         countdownTimer += dt;
-        
+
         // Track player reaction time on first input
         if (playerCar && !playerCar.inputRecorded && (keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight)) {
             playerCar.reactionTime = (performance.now() - raceStartTime) / 1000;
@@ -2240,13 +2533,21 @@ function gameLoop(timestamp) {
         if (raceMode === 'qualifying' && dt < 0.05) qualiTick();
 
         // Warm-up lap plus two flying laps and the session is over - or the
-        // car is wrecked, in which case you keep whatever time you had set.
+        // car is wrecked, in which case you keep whatever time you had set
+        // (no time at all = back of the grid).
         if (raceMode === 'qualifying' && playerCar &&
             (playerCar.lap >= QUALI_LAPS || playerCar.isBroken)) {
             if (playerCar.isBroken) {
                 RaceLog.event('WRECK', 'player destroyed the car in qualifying — session over');
             }
             endQualifying();
+            return;
+        }
+
+        // A wreck in free practice ends that session the same way.
+        if (raceMode === 'practice' && playerCar && playerCar.isBroken) {
+            RaceLog.event('WRECK', 'player destroyed the car in practice — session over');
+            endPracticeSession();
             return;
         }
 
@@ -2421,9 +2722,9 @@ function nextChampionshipRound() {
         showChampionshipFinal();
         return;
     }
-    const trackType = championshipState.tracks[championshipState.currentTrackIndex];
-    if (qualifyingEnabled()) startQualifying(trackType);
-    else startGame(trackType);
+    // Every round opens on the Grand Prix preview; the session starts (or the
+    // whole round is skipped) from its buttons.
+    showGpPreview(championshipState.tracks[championshipState.currentTrackIndex]);
 }
 
 function showChampionshipFinal() {
@@ -2487,6 +2788,7 @@ function renderSeasonRecap() {
         for (const r of races) {
             const e = r.order.find(o => o.color === color);
             if (!e) { html += '<td class="sr-none">&ndash;</td>'; continue; }
+            if (e.dns) { html += '<td class="sr-dns">DNS</td>'; continue; }
             const cls = e.dnf ? 'sr-dnf' : (e.pos === 1 ? 'sr-win' : (e.pos <= 3 ? 'sr-pod' : ''));
             const txt = e.dnf ? 'DNF' : e.pos;
             // Small superscripts beside the result: P for pole, F for fastest lap.
@@ -2500,7 +2802,8 @@ function renderSeasonRecap() {
     html += '</tbody></table></div>' +
         '<div style="font-size:11px;opacity:0.65;margin-top:6px;">' +
         '<sup class="sr-pole">P</sup> pole &nbsp;·&nbsp; <sup class="sr-fl">F</sup> fastest lap' +
-        ' &nbsp;·&nbsp; &#9730; wet race &nbsp;·&nbsp; gold = win, green = podium</div>';
+        ' &nbsp;·&nbsp; &#9730; wet race &nbsp;·&nbsp; DNS = Grand Prix skipped' +
+        ' &nbsp;·&nbsp; gold = win, green = podium</div>';
 
     host.innerHTML = html;
 }
