@@ -6,184 +6,163 @@
 <title>I miei giochi</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body {
-    min-height:100%;
+  html, body { min-height:100%; }
+  html { background:#03050a; }
+  body {
+    min-height:100dvh;
     background: radial-gradient(circle at 50% 8%, #101a2e 0%, #060a14 55%, #03050a 100%);
-    font-family: 'Segoe UI', Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
     color:#dfe6f5;
-    display:flex; align-items:center; justify-content:center;
-    padding:32px 16px;
+    display:flex;
+    padding: clamp(10px, 2vh, 26px) clamp(14px, 2.5vw, 40px);
   }
-  .wrap { width:100%; max-width:640px; text-align:center; }
+  .wrap { width:100%; max-width:1560px; text-align:center; margin:auto; }
   h1 {
-    font-size:38px; letter-spacing:4px; margin-bottom:6px;
+    font-size: clamp(26px, 3.6vh, 36px); letter-spacing:4px; margin-bottom:4px;
     background: linear-gradient(90deg,#5ec8ff,#7fa8ff,#ffd85e);
     -webkit-background-clip:text; background-clip:text; color:transparent;
   }
-  .subtitle { color:#9fb3d9; font-size:14px; margin-bottom:34px; letter-spacing:1px; }
-  .games { display:flex; flex-direction:column; gap:18px; }
-  .card {
-    display:block; text-decoration:none; color:inherit;
-    background: rgba(15,22,40,0.9);
-    border: 1px solid rgba(90,140,255,0.28);
-    border-radius: 14px;
-    padding: 22px 24px;
+  .subtitle { color:#9fb3d9; font-size:13px; margin-bottom: clamp(12px, 2.2vh, 26px); letter-spacing:1px; }
+  .games {
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: 1fr;
+    gap: clamp(10px, 1.6vh, 16px);
     text-align:left;
+  }
+  .card {
+    --a1:#2f6fff; --a2:#5ec8ff;
+    display:flex; flex-direction:column; gap:8px;
+    text-decoration:none; color:inherit;
+    background: rgba(15,22,40,0.9);
+    border: 1px solid rgba(90,140,255,0.22);
+    border-radius: 14px;
+    padding: clamp(12px, 1.8vh, 18px) clamp(14px, 1.4vw, 20px);
     transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease;
   }
   .card:hover {
     transform: translateY(-3px);
-    border-color:#5ec8ff;
-    box-shadow: 0 10px 30px rgba(40,90,220,0.28);
+    border-color: var(--a2);
+    box-shadow: 0 10px 30px rgba(40,90,220,0.25);
   }
-  .card .row { display:flex; align-items:center; gap:16px; }
+  .cardTop { display:flex; align-items:center; gap:12px; }
   .icon {
-    width:56px; height:56px; flex-shrink:0; border-radius:12px;
-    display:flex; align-items:center; justify-content:center; font-size:30px;
-    background: linear-gradient(150deg,#2f6fff,#5ec8ff);
-    box-shadow: 0 0 18px rgba(90,140,255,0.4);
+    width: clamp(38px, 5.2vh, 46px); height: clamp(38px, 5.2vh, 46px);
+    flex-shrink:0; border-radius:11px;
+    display:flex; align-items:center; justify-content:center;
+    font-size: clamp(19px, 2.9vh, 24px);
+    background: linear-gradient(150deg, var(--a1), var(--a2));
+    box-shadow: 0 0 16px rgba(90,140,255,0.35);
   }
-  .card h2 { font-size:20px; margin-bottom:4px; }
-  .card p { color:#9fb3d9; font-size:13px; line-height:1.5; }
+  .card h2 { font-size: clamp(15px, 2.2vh, 18px); letter-spacing:.3px; }
   .play {
     margin-left:auto; flex-shrink:0;
-    padding:10px 22px; border-radius:24px; font-weight:700; font-size:14px; letter-spacing:1px;
-    background: linear-gradient(90deg,#2f6fff,#5ec8ff); color:#fff;
-    box-shadow:0 0 16px rgba(90,140,255,0.4);
+    padding: 6px 14px; border-radius:20px;
+    font-weight:700; font-size:11px; letter-spacing:1px;
+    color:#fff; background: linear-gradient(90deg, var(--a1), var(--a2));
+    opacity:.92;
   }
-  footer { margin-top:36px; color:#5f6b85; font-size:12px; }
-  @media (max-width:520px){
-    .card .row { flex-wrap:wrap; }
-    .play { margin-left:0; width:100%; text-align:center; margin-top:8px; }
+  .card p { color:#9fb3d9; font-size: clamp(12px, 1.7vh, 13.5px); line-height:1.5; }
+  footer { margin-top: clamp(10px, 2vh, 22px); color:#5f6b85; font-size:12px; }
+
+  @media (max-width:1100px){
+    .games { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width:640px){
+    .games { grid-template-columns: 1fr; }
+    h1 { font-size:26px; }
   }
 </style>
 </head>
 <body>
   <div class="wrap">
     <h1>I MIEI GIOCHI</h1>
-    <div class="subtitle">Una piccola raccolta giocabile dal browser</div>
+    <div class="subtitle">Nove giochi fatti in casa, giocabili direttamente dal browser</div>
 
     <div class="games">
-      <a class="card" href="conquista-esagonale-v6.html">
-        <div class="row">
+
+      <a class="card" style="--a1:#2f6fff; --a2:#5ec8ff;" href="conquista-esagonale-v6.html">
+        <div class="cardTop">
           <div class="icon">⬡</div>
-          <div>
-            <h2>Conquista Esagonale</h2>
-            <p>Strategia a turni su mappa esagonale: rinforza, attacca coi dadi, occupa territori neutri e conquista le capitali. Contro l'IA, con più modalità e difficoltà.</p>
-          </div>
+          <h2>Conquista Esagonale</h2>
           <span class="play">GIOCA</span>
         </div>
+        <p>Strategia a turni su una mappa esagonale generata nuova a ogni partita: piazza i rinforzi, attacca con i dadi, occupa i territori neutri senza colpo ferire e fai cadere le capitali per annetterti interi imperi. Modalità tradizionale o "capitale", IA da Facile a Impossibile.</p>
       </a>
-    </div>
-       <div class="games">
-      <a class="card" href="conquista-esagonale-mobile.html">
-        <div class="row">
-          <div class="icon">⬡</div>
-          <div>
-            <h2>Conquista Esagonale Mobile</h2>
-            <p>Strategia a turni su mappa esagonale: rinforza, attacca coi dadi, occupa territori neutri e conquista le capitali. Contro l'IA, con più modalità e difficoltà.</p>
-          </div>
+
+      <a class="card" style="--a1:#0fb8a9; --a2:#5ef0c8;" href="conquista-esagonale-mobile.html">
+        <div class="cardTop">
+          <div class="icon">📲</div>
+          <h2>Conquista Esagonale Mobile</h2>
           <span class="play">GIOCA</span>
         </div>
+        <p>Tutta la Conquista Esagonale, ripensata per il telefono: selezioni, attacchi e spostamenti con un tocco, zoom sulla mappa e statistiche in un pannello a scomparsa. Stessa profondità, formato tascabile: ideale per espandere l'impero dal divano.</p>
       </a>
-    </div>
-     <div class="games">
-      <a class="card" href="conquista-del-mondo.html">
-        <div class="row">
+
+      <a class="card" style="--a1:#1fa24c; --a2:#8fe07a;" href="conquista-del-mondo.html">
+        <div class="cardTop">
           <div class="icon">🌍</div>
-          <div>
-            <h2>Conquista Del mondo</h2>
-            <p>Strategia a turni su mappa realistica: rinforza, attacca coi dadi, occupa territori neutri e conquista le capitali. Contro l'IA, con più modalità e difficoltà.</p>
-          </div>
+          <h2>Conquista del Mondo</h2>
           <span class="play">GIOCA</span>
         </div>
+        <p>L'Europa come campo di battaglia: stati veri, capitali e rotte marittime. Giocala "realistica", con i confini disegnati sul territorio, oppure come grafo per la pura strategia. Rinforzi proporzionali all'area controllata e territori lasciabili a zero armate: l'audacia paga, gli avamposti sguarniti crollano.</p>
       </a>
-    </div>
-     <div class="games">
-      <a class="card" href="risiko.html">
-        <div class="row">
-          <div class="icon">🫡</div>
-          <div>
-            <h2>Risiko</h2>
-            <p>Classico gioco di strategia. Modalità a obiettivi segreti o di conquista totale. Con o senza carte. Contro l'IA, con più modalità e difficoltà.</p>
-          </div>
+
+      <a class="card" style="--a1:#d13b4b; --a2:#ff8a5e;" href="risiko.html">
+        <div class="cardTop">
+          <div class="icon">🎲</div>
+          <h2>Risiko</h2>
           <span class="play">GIOCA</span>
         </div>
+        <p>Il grande classico: obiettivi segreti o conquista totale, tris di carte (se li vuoi), bonus dei continenti e battaglie all'ultimo dado. Conquisti un territorio? Peschi una carta. Elimini un avversario? Ne erediti il mazzo. IA su quattro livelli, dalla vittima sacrificale allo stratega spietato.</p>
       </a>
-    </div>
 
-
-       <div class="games">
-      <a class="card" href="breakout.html">
-        <div class="row">
-          <div class="icon">_</div>
-          <div>
-            <h2>Breakout</h2>
-            <p>Classico gioco. Il primo videogioco basato sulla celebre meccanica in cui si controlla una racchetta orizzontale che si sposta lungo il fondo dello schermo e può fare rimbalzare verso l'alto una pallina che non risente della gravità, e con essa distruggere schiere di mattoni.</p>
-          </div>
+      <a class="card" style="--a1:#b04bd1; --a2:#ff5fd8;" href="risiko-grafo.html">
+        <div class="cardTop">
+          <div class="icon">🕸️</div>
+          <h2>Risiko a Grafo</h2>
           <span class="play">GIOCA</span>
         </div>
+        <p>Il Risiko spogliato della geografia: ogni territorio è un nodo, ogni confine un arco, e nessuna posizione è privilegiata — conta solo come tieni il fronte. Mappa sempre leggibile, perfetta anche da telefono. Obiettivi, carte e dadi: le solite regole spietate.</p>
       </a>
-    </div>
 
-   
-       <div class="games">
-      <a class="card" href="wordle.html">
-        <div class="row">
-          <div class="icon">📝</div>
-          <div>
-            <h2>Parolina</h2>
-            <p>Clone di Wordle.</p>
-          </div>
-          <span class="play">GIOCA</span>
-        </div>
-      </a>
-    </div>
-
-      
-       <div class="games">
-      <a class="card" href="risiko-grafo.html">
-        <div class="row">
-          <div class="icon">📊</div>
-          <div>
-            <h2>Risiko a Grafo</h2>
-            <p>Variante di Risiko.Giocabile anche da mobile.</p>
-          </div>
-          <span class="play">GIOCA</span>
-        </div>
-      </a>
-    </div>
-
-         
-       <div class="games">
-      <a class="card" href="racing.html">
-        <div class="row">
+      <a class="card" style="--a1:#ff512f; --a2:#f0a819;" href="Racing_v7/racing.html">
+        <div class="cardTop">
           <div class="icon">🏎️</div>
-          <div>
-            <h2>2D racing</h2>
-            <p>Un piccolo gioco di corsa di macchine.</p>
-          </div>
+          <h2>2D Racing</h2>
           <span class="play">GIOCA</span>
         </div>
+        <p>Altro che giochino: fisica con sottosterzo e sovrasterzo, dieci circuiti, qualifiche, scie, bandiere blu, pioggia e danni che si pagano cari. Fino a nove piloti IA, ognuno col suo stile di guida, e un campionato completo a punti F1 — safety car virtuale inclusa.</p>
       </a>
-    </div>
 
-         
-       <div class="games">
-      <a class="card" href="simon.html">
-        <div class="row">
-          <div class="icon">🎨</div>
-          <div>
-            <h2>Simon</h2>
-            <p>Clone di Simon.</p>
-          </div>
+      <a class="card" style="--a1:#7a5cff; --a2:#4dd0ff;" href="breakout.html">
+        <div class="cardTop">
+          <div class="icon">🧱</div>
+          <h2>Neon Breakout</h2>
           <span class="play">GIOCA</span>
         </div>
+        <p>Il classico del 1976 rimesso a nuovo in salsa neon: racchetta, pallina e muri di mattoni da polverizzare tra particelle e suoni synth. Livello dopo livello i muri si infittiscono e spuntano mattoni corazzati. Tre vite, riflessi pronti: mouse, frecce o touch.</p>
       </a>
+
+      <a class="card" style="--a1:#3aa655; --a2:#ffd85e;" href="wordle.html">
+        <div class="cardTop">
+          <div class="icon">📝</div>
+          <h2>Parolina</h2>
+          <span class="play">GIOCA</span>
+        </div>
+        <p>Cinque lettere, sei tentativi, i colori ti guidano verso la soluzione: il nostro clone di Wordle. Parola del giorno più partite libere senza limiti, statistiche con distribuzione dei tentativi e modalità difficile per i puristi. In inglese: ripassi anche il vocabolario.</p>
+      </a>
+
+      <a class="card" style="--a1:#22c1c3; --a2:#fdbb2d;" href="simon.html">
+        <div class="cardTop">
+          <div class="icon">🧠</div>
+          <h2>Simon</h2>
+          <span class="play">GIOCA</span>
+        </div>
+        <p>Quattro colori, quattro note, una sequenza che a ogni round si allunga — e accelera. Guarda, memorizza, ripeti: al primo errore sei fuori. Facile da spiegare, crudele da padroneggiare. Il record resta salvato, in attesa di essere battuto.</p>
+      </a>
+
     </div>
-
-
-
 
     <footer>Fatto con ♥ da Nicola e le sue IA</footer>
   </div>
