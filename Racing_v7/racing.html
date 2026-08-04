@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Racing Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="1000" height="700"></canvas>
+        <div id="ui-layer">
+            <div id="hud" style="display: none;">
+                <div id="lap-counter">Lap: 1/5</div>
+                <div id="position-counter">Pos: 1/4</div>
+                <div id="speedometer">0 km/h</div>
+                <div id="lap-timer" style="font-variant-numeric: tabular-nums;"></div>
+                <div id="dnf-timer" style="visibility: hidden; color: #ff5252; font-weight: bold;"></div>
+                <div id="weather-indicator"></div>
+                <button id="stopSessionBtn" class="hud-btn" style="display: none; background: #d84315;">Stop Session</button>
+                <button id="pauseBtn" class="hud-btn" style="background: #455a64;">&#9208; Pause</button>
+                <button id="quitBtn" class="hud-btn">Quit</button>
+            </div>
+            <div id="pause-overlay" style="display: none;">
+                <div id="pause-panel">
+                    <div style="font-size: 30px; font-weight: 900; letter-spacing: 4px;">PAUSED</div>
+                    <div style="font-size: 13px; opacity: 0.6; margin: 8px 0 22px;">
+                        P or Esc to resume
+                    </div>
+                    <button id="resume-btn" style="background: #4CAF50; color: #002;">Resume</button>
+                    <button id="pause-quit-btn" style="background: #37474f; color: #ddd;">Quit to menu</button>
+                </div>
+            </div>
+            <div id="timing-tower" style="display: none;"></div>
+            <div id="menu">
+                <h1>2D Racing</h1>
+                <div class="menu-group">
+                    <label>Track:</label>
+                    <select id="track-select">
+                        <option value="oval">Oval</option>
+                        <option value="f1">F1 Circuit</option>
+                        <option value="peanut">Peanut</option>
+                        <option value="circomassimo">Circus Maximus</option>
+                        <option value="circle">Circle</option>
+                        <option value="serpent">Serpent</option>
+                        <option value="quadrato">Square</option>
+                        <option value="triangle">Triangle</option>
+                        <option value="pettine">Comb</option>
+                        <option value="thunder">Thunder</option>
+                    </select>
+                </div>
+                <div class="menu-group">
+                    <label>Choose your car color:</label>
+                    <select id="color-select">
+                        <option value="red">Red</option>
+                        <option value="blue">Blue</option>
+                        <option value="yellow">Yellow</option>
+                        <option value="purple">Purple</option>
+                        <option value="orange">Orange</option>
+                        <option value="white">White</option>
+                        <option value="spectator">Spectator (AI Only)</option>
+                    </select>
+                </div>
+                <div class="menu-group">
+                    <label>Number of Laps:</label>
+                    <input type="number" id="laps-select" min="1" max="100" value="5" style="padding: 10px; border-radius: 4px; border: 1px solid #444; background: #222; color: white; width: 100%; box-sizing: border-box; font-size: 16px;">
+                </div>
+                <div class="menu-group">
+                    <label>Number of Opponents:</label>
+                    <select id="opponents-select">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3" selected>3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                    </select>
+                </div>
+                <div class="menu-group">
+                    <label>AI Difficulty:</label>
+                    <select id="difficulty-select">
+                        <option value="easy">Easy</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="hard">Hard</option>
+                        <option value="impossible">Impossible</option>
+                    </select>
+                </div>
+                <div class="menu-group" style="display: flex; align-items: center; justify-content: flex-start; gap: 10px;">
+                    <label for="wet-race-checkbox" style="display: inline; margin-bottom: 0;">Force Wet Race:</label>
+                    <input type="checkbox" id="wet-race-checkbox" style="width: auto; transform: scale(1.5);">
+                </div>
+                <div class="menu-group" style="display: flex; align-items: center; justify-content: flex-start; gap: 10px;">
+                    <label for="reverse-grid-checkbox" style="display: inline; margin-bottom: 0;">Reverse Grid in Championship:</label>
+                    <input type="checkbox" id="reverse-grid-checkbox" style="width: auto; transform: scale(1.5);">
+                </div>
+                <div style="font-size: 11px; opacity: 0.6; margin: -12px 0 18px; text-align: left;">
+                    You qualify before every race. Tick Reverse Grid and the championship
+                    is decided by the standings instead &mdash; round 1 drawn at random.
+                </div>
+                <button id="start-btn">Single Race</button>
+                <button id="practice-btn" style="margin-top: 10px; background: #26a69a; color: #002; ">Free Practice</button>
+                <button id="champ-btn" style="margin-top: 10px; background: #FFD700; color: #000;">Start Championship</button>
+                <button id="log-btn" style="margin-top: 10px; background: #37474f; color: #ddd; font-size: 15px;">Race Log</button>
+
+                <details id="how-to-play">
+                    <summary>How to play</summary>
+                    <div class="guide">
+
+                        <h3>Controls</h3>
+                        <ul>
+                            <li><b>↑</b> throttle &nbsp;·&nbsp; <b>↓</b> brake (and reverse once stopped)</li>
+                            <li><b>←&nbsp;→</b> steer &nbsp;·&nbsp; on a phone, use the on-screen pad</li>
+                            <li><b>P</b> or <b>Esc</b> pause &mdash; or the Pause button in the corner. Works
+                                any time: on the grid, mid&#8209;race, in qualifying. The clock stops with
+                                you, so a pause costs you nothing.</li>
+                        </ul>
+
+                        <h3>Driving the car</h3>
+                        <p>The car does not turn on rails. Two things stop it:</p>
+                        <ul>
+                            <li><b>Understeer.</b> Carry too much speed into a corner and the front washes out:
+                                you turn the wheel and the car keeps going straight towards the grass.
+                                The cure is to slow down <i>before</i> the corner, not in it.</li>
+                            <li><b>Power oversteer.</b> Squeeze the throttle hard at low speed while turning
+                                &mdash; a hairpin exit &mdash; and the rear steps out and the car spins further
+                                than you asked. Ease off, or catch it early.</li>
+                        </ul>
+                        <p>Both are much easier to provoke in the wet. Black marks on the tarmac mean
+                            you are sliding, and sliding is slow.</p>
+
+                        <h3>Surfaces</h3>
+                        <ul>
+                            <li><b>Tarmac</b> &mdash; full grip.</li>
+                            <li><b>Kerbs</b> &mdash; the red and white strips lining every corner. They cost
+                                20% of your grip and rattle the car, but they are meant to be used: running
+                                a wheel over one to straighten a corner is quick. Grass is not.</li>
+                            <li><b>Grass</b> &mdash; a third of the grip and heavy drag, and it lines the
+                                straights. Running wide there costs you the lap.</li>
+                            <li><b>Barriers</b> &mdash; hitting one square costs real damage; brushing along it barely does.</li>
+                            <li><b>Rain</b> &mdash; grip collapses. Corner speeds drop by 10&ndash;15%, and some
+                                drivers handle it far better than others.</li>
+                        </ul>
+
+                        <h3>Damage</h3>
+                        <p>The bar above each car is its condition. <b>Racing contact is free</b>: leaning
+                            on someone, banging wheels at the start, nudging the car ahead into a corner
+                            all cost nothing. Past about a third of top speed of closing, damage climbs
+                            with the square of the impact, so a real shunt can still end your race.
+                            Below <b>60%</b> the car loses grip and power, at <b>0%</b> it is out.
+                            The drivers race hard and will not simply move over.</p>
+
+                        <h3>Timing tower</h3>
+                        <p>Down the left: the order by three-letter driver code (<b>YOU</b> is you), and
+                            the gap in seconds to the car <i>directly ahead</i>. Anyone more than a lap
+                            behind shows the lap deficit instead &mdash; a time gap to a car you have
+                            already lapped means nothing.</p>
+
+                        <h3>Championship</h3>
+                        <p>A season across every circuit with F1 points. At the end you get the full
+                            season grid: every driver, every race, wins and podiums highlighted, DNFs
+                            marked, and a &#9733; against whoever set the fastest lap of each race.</p>
+
+                        <h3>Racing</h3>
+                        <ul>
+                            <li><b>Lights.</b> Move before they go out and you take a <b>5&nbsp;second penalty</b>
+                                and the grid is reset. The delay before the green is random &mdash; do not anticipate.</li>
+                            <li><b>Slipstream.</b> Tuck in behind a car and you get a tow: more power, less drag.
+                                It builds the closer you get, so use it down the straight and pull out late.</li>
+                            <li><b>Blue flags.</b> A small blue flag over a car means it is about to be lapped
+                                and must let the leader through. If it appears over <i>you</i>, you are a lap down.</li>
+                            <li><b>Qualifying.</b> You qualify before every race. The session is three laps:
+                                a warm&#8209;up lap from a standing start, then two flying laps &mdash; your
+                                best of the two counts. Every opponent runs the same three laps of their own,
+                                simulated with the same physics in clean air, and their times drop into the
+                                tower on the left as they come in. The classification is the starting grid.
+                                Whatever weather qualifying is run in, the race is run in too. You can press
+                                <b>End Qualifying</b> to stop early and take whatever you have set. The
+                                barriers cost the same as in the race &mdash; wreck the car and your session
+                                is over on whatever time you had. The car is rebuilt for the race, so you
+                                carry the grid slot over, not the damage.</li>
+                            <li><b>Reverse Grid in Championship.</b> Tick it and the championship is decided
+                                by the standings instead of by qualifying: the leader starts last, the
+                                backmarker starts on pole. The better your season is going, the harder the
+                                next race gets. Round&nbsp;1 has no standings to invert, so that grid is
+                                drawn at random.</li>
+                            <li><b>Racecraft.</b> A driver stuck behind someone builds into an attack: they
+                                brake later, commit harder and close right up. Once they are alongside they
+                                are free to outpace you &mdash; so a move that has been started can actually
+                                be finished.</li>
+                            <li><b>VSC.</b> If a car is destroyed, a yellow <b>VSC</b> banner appears and
+                                every engine is cut to 28% while a crane drives out, lifts the wreck and
+                                carries it behind the barriers.
+                                Full power returns the moment the track is clear.</li>
+                            <li><b>The finish.</b> Once the leader takes the flag, everyone else is classified
+                                on their next crossing of the line. If you are still out there
+                                <b>two of the leader's best laps</b> later, you are marked DNF.</li>
+                        </ul>
+
+                        <h3>The HUD</h3>
+                        <p>Lap · position · speed, then the live lap timer: <b>green</b> while you are up on
+                            your best lap, <b>red</b> once you have lost it. <b>L</b> is your last lap,
+                            <b>B</b> your best, and ★ marks a new personal best.</p>
+
+                        <h3>Opponents</h3>
+                        <p>The ten drivers are not reskins of each other. Senna is untouchable in the rain,
+                            Verstappen brakes later than anyone and will not yield, Prost never makes a mistake,
+                            Vettel is devastating in clean air but fussier in traffic, Alonso is the one you
+                            cannot pass. Difficulty scales their pace and their patience; on
+                            <b>Impossible</b> they run the true limit of the car and make no mistakes at all.</p>
+
+                        <h3>Free Practice</h3>
+                        <p>Your chosen circuit and weather, no opponents, as many laps as you like.
+                            Every lap is timed; hit <b>Stop Session</b> in the HUD and you get the full list
+                            with the best one marked.</p>
+
+                        <h3>Race Log</h3>
+                        <p>Every session is recorded &mdash; lap times, flags, contact, retirements, safety
+                            car periods, the final classification. Open it from the menu, or download it as
+                            a text file.</p>
+
+                        
+
+                    </div>
+                </details>
+            </div>
+            <div id="quali-screen" style="display: none;">
+                <h1 id="quali-title" style="margin: 0 0 4px; font-size: 26px;">Qualifying</h1>
+                <div style="font-size: 12px; opacity: 0.6; margin-bottom: 16px;">
+                    Provisional classification &mdash; this is the starting grid
+                </div>
+                <table id="quali-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 42px;">Pos</th>
+                            <th style="text-align: left;">Driver</th>
+                            <th style="width: 92px;">Best Lap</th>
+                            <th style="width: 82px;">Gap</th>
+                        </tr>
+                    </thead>
+                    <tbody id="quali-body"></tbody>
+                </table>
+                <button id="quali-race-btn" style="background: #4CAF50; color: #002;">Start Race</button>
+                <button id="quali-menu-btn" style="margin-top: 10px; background: #37474f; color: #ddd;">Menu</button>
+            </div>
+            <div id="game-over" style="display: none; padding: 20px; min-width: 400px;">
+                <h1 id="result-message">You Won!</h1>
+                <table id="stats-table" style="width: 100%; margin-bottom: 20px; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid #fff;">
+                            <th>Pos</th>
+                            <th>Car</th>
+                            <th>Laps</th>
+                            <th>Time</th>
+                            <th>Best Lap</th>
+                            <th>Gap</th>
+                            <th>Reaction</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stats-body">
+                    </tbody>
+                </table>
+                <div id="champ-recap-section" style="display: none; margin-top: 20px; border-top: 2px solid #555; padding-top: 10px;">
+                    <h2>Current Standings</h2>
+                    <table id="champ-recap-table" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid #fff;">
+                                <th>Pos</th>
+                                <th>Car</th>
+                                <th>Points</th>
+                            </tr>
+                        </thead>
+                        <tbody id="champ-recap-body">
+                        </tbody>
+                    </table>
+                </div>
+                <button id="restart-btn">Menu</button>
+                <button id="next-round-btn" style="display: none; margin-top: 10px; background: #FFD700; color: #000;">Next Round</button>
+            </div>
+            <div id="championship-final" style="display: none; padding: 20px; min-width: 400px; max-width: 90vw;">
+                <h1>Championship Results</h1>
+                <table id="champ-stats-table" style="width: 100%; margin-bottom: 20px; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid #fff;">
+                            <th>Pos</th>
+                            <th>Car</th>
+                            <th>Points</th>
+                        </tr>
+                    </thead>
+                    <tbody id="champ-stats-body">
+                    </tbody>
+                </table>
+                <div id="season-recap"></div>
+                <button id="champ-restart-btn">Main Menu</button>
+            </div>
+            <div id="vsc-banner" style="display: none; position: absolute; top: 8%; left: 50%;
+                 transform: translateX(-50%); background: #ffd600; color: #201800; padding: 8px 26px;
+                 border-radius: 6px; border: 3px solid #7a6500; font-size: 22px; font-weight: 900;
+                 letter-spacing: 3px; text-align: center; box-shadow: 0 0 18px rgba(255,214,0,0.55);">
+                VSC
+                <div style="font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 2px;">
+                    VIRTUAL SAFETY CAR &mdash; RECOVERY IN PROGRESS
+                </div>
+            </div>
+            <div id="log-screen" style="display: none; position: absolute; top: 50%; left: 50%;
+                 transform: translate(-50%, -50%); background: rgba(0,0,0,0.94); border: 2px solid #555;
+                 border-radius: 10px; padding: 22px; width: 80%; max-width: 820px; max-height: 84vh;
+                 pointer-events: auto; text-align: left;">
+                <h2 style="margin: 0 0 10px; text-align: center;">Race Log</h2>
+                <pre id="log-body" style="max-height: 58vh; overflow: auto; font-size: 11.5px;
+                     line-height: 1.45; background: #111; padding: 12px; border-radius: 6px;
+                     margin: 0; white-space: pre; color: #cfd8dc;"></pre>
+                <div style="text-align: center; margin-top: 14px;">
+                    <button id="log-download-btn" style="width: auto; padding: 10px 22px;">Download .txt</button>
+                    <button id="log-close-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #555;">Close</button>
+                </div>
+            </div>
+            <div id="winner-announcement" style="display: none; position: absolute; top: 20%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; border: 2px solid #555; text-align: center; font-size: 24px;">
+                <h2 id="winner-text" style="margin: 0;"></h2>
+            </div>
+        </div>
+        
+        <div id="mobile-controls" style="display: none;">
+            <div id="mobile-left-group">
+                <button id="btnUp">Gas</button>
+                <button id="btnDown">Brake</button>
+            </div>
+            <div id="mobile-right-group">
+                <button id="btnLeft">Left</button>
+                <button id="btnRight">Right</button>
+            </div>
+        </div>
+    </div>
+    <script src="racelog.js"></script>
+    <script src="track.js"></script>
+    <script src="car.js"></script>
+    <script src="ai.js"></script>
+    <script src="audio.js"></script>
+    <script>
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            const errDiv = document.createElement('div');
+            errDiv.style.position = 'fixed';
+            errDiv.style.top = '50px';
+            errDiv.style.left = '50px';
+            errDiv.style.backgroundColor = 'red';
+            errDiv.style.color = 'white';
+            errDiv.style.padding = '20px';
+            errDiv.style.zIndex = '9999';
+            errDiv.innerText = `Error: ${msg}\nLine: ${lineNo}\nURL: ${url}`;
+            document.body.appendChild(errDiv);
+            return false;
+        };
+    </script>
+    <script src="main.js"></script>
+</body>
+</html>
