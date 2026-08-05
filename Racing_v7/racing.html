@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2D Racing Game</title>
+    <title>2D Racing Game — v8</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,6 +17,7 @@
                 <div id="lap-timer" style="font-variant-numeric: tabular-nums;"></div>
                 <div id="dnf-timer" style="visibility: hidden; color: #ff5252; font-weight: bold;"></div>
                 <div id="weather-indicator"></div>
+                <div id="tyre-indicator"></div>
                 <button id="stopSessionBtn" class="hud-btn" style="display: none; background: #d84315;">Stop Session</button>
                 <button id="pauseBtn" class="hud-btn" style="background: #455a64;">&#9208; Pause</button>
                 <button id="quitBtn" class="hud-btn">Quit</button>
@@ -206,6 +207,26 @@
                                 every engine is cut to 28% while a crane drives out, lifts the wreck and
                                 carries it behind the barriers.
                                 Full power returns the moment the track is clear.</li>
+                            <li><b>Tyres.</b> You choose a compound before qualifying and again before
+                                the race, and the two can differ. Softer rubber is quicker while it lasts
+                                and falls away sharply once it is gone; the hard barely changes all race.
+                                Over a full race distance the three are within a fraction of a percent of
+                                each other &mdash; what you are choosing is <i>when</i> you want your
+                                performance, not how much. A set lasts the same fraction of any race, so a
+                                soft covers twice as many laps in a ten-lap race as in a five-lap one.
+                                Sliding the car wears it faster. The bar in the corner shows what is left.</li>
+                            <li><b>The AI choose too.</b> Each driver picks from their own style: Senna and
+                                Verstappen almost always take the soft, Prost and Lauda almost always the
+                                hard. Longer races push the whole field onto harder rubber.</li>
+                            <li><b>Puddles.</b> In the wet, standing water collects on the racing line.
+                                Hit one at speed and the car <b>aquaplanes</b>: the steering all but stops
+                                working and you carry straight on until you are through it. At walking pace
+                                you keep most of your control, so lifting is a real option &mdash; and going
+                                round is usually quicker than going through.</li>
+                            <li><b>Places gained.</b> One championship point per position recovered from
+                                the grid, up to five, on top of the usual score. It is listed separately
+                                everywhere so you can see what you earned by overtaking rather than by
+                                qualifying.</li>
                             <li><b>Grand Chelem.</b> Pole, the win, the fastest lap and leading every
                                 single lap of the race &mdash; all four in one Grand Prix. It is marked with
                                 a gold <span style="color:#FFD700;">&#9733;</span> beside your name in the
@@ -253,6 +274,14 @@
                     </div>
                 </div>
             </div>
+            <div id="tyre-screen" style="display: none;">
+                <h1 id="tyre-title" style="margin: 0 0 4px; font-size: 24px;">Choose your tyres</h1>
+                <div id="tyre-subtitle" style="font-size: 13px; opacity: 0.65; margin-bottom: 18px;"></div>
+                <div id="tyre-options"></div>
+                <div style="font-size: 11px; opacity: 0.5; margin-top: 14px;">
+                    Softer rubber is quicker while it lasts and falls away sharply once it is gone.
+                </div>
+            </div>
             <div id="gp-preview" style="display: none;">
                 <h1 id="gp-title" style="margin: 0 0 2px; font-size: 24px;">Round 1</h1>
                 <div id="gp-weather" style="font-size: 14px; opacity: 0.85; margin-bottom: 14px;">Dry</div>
@@ -287,11 +316,13 @@
                         <tr style="border-bottom: 1px solid #fff;">
                             <th>Pos</th>
                             <th>Car</th>
+                            <th>Tyre</th>
                             <th>Laps</th>
                             <th>Time</th>
                             <th>Best Lap</th>
                             <th>Gap</th>
-                            <th>Reaction</th>
+                            <th title="points for finishing position">Race pts</th>
+                            <th title="bonus points for places gained from the grid">Bonus pts</th>
                         </tr>
                     </thead>
                     <tbody id="stats-body">
@@ -304,12 +335,18 @@
                             <tr style="border-bottom: 1px solid #fff;">
                                 <th>Pos</th>
                                 <th>Car</th>
-                                <th>Points</th>
+                                <th title="points for finishing positions">Race pts</th>
+                                <th title="bonus points for places gained from the grid">Bonus pts</th>
+                                <th>Total</th>
                             </tr>
                         </thead>
                         <tbody id="champ-recap-body">
                         </tbody>
                     </table>
+                    <div class="pts-legend">
+                        <b>Bonus pts</b> &mdash; 1 point for every place gained from your grid slot,
+                        up to 5 per race. Already included in the total.
+                    </div>
                 </div>
                 <button id="restart-btn">Menu</button>
                 <button id="next-round-btn" style="display: none; margin-top: 10px; background: #FFD700; color: #000;">Next Round</button>
@@ -321,12 +358,18 @@
                         <tr style="border-bottom: 1px solid #fff;">
                             <th>Pos</th>
                             <th>Car</th>
-                            <th>Points</th>
+                            <th title="points for finishing positions">Race pts</th>
+                            <th title="bonus points for places gained from the grid">Bonus pts</th>
+                            <th>Total</th>
                         </tr>
                     </thead>
                     <tbody id="champ-stats-body">
                     </tbody>
                 </table>
+                <div class="pts-legend">
+                    <b>Bonus pts</b> &mdash; 1 point for every place gained from your grid slot,
+                    up to 5 per race. Already included in the total.
+                </div>
                 <div id="champ-legend"></div>
                 <div id="season-recap"></div>
                 <button id="champ-restart-btn">Main Menu</button>

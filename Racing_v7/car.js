@@ -1,5 +1,46 @@
 let __carUid = 0;
 
+// =========================================================================
+//  TYRE COMPOUNDS
+// -------------------------------------------------------------------------
+//  `grip` is the fresh multiplier, `falloff` how much of it is lost by the
+//  time the tyre is finished, and `life` is the fraction of the RACE the
+//  compound survives.
+//
+//  life is a fraction of the race rather than a number of laps, so a set
+//  lasts proportionally longer the longer the race: a soft is spent after
+//  ~4.5 laps of a 5-lap race and ~9 laps of a 10-lap one.
+//
+//  That has a consequence worth stating, because it decides how these numbers
+//  were chosen. If life is a fraction of the distance then the shape of every
+//  stint is identical at every race length - so race length CANNOT be what
+//  makes one compound better than another, and tuning for "softs win short
+//  races" is impossible by construction.
+//
+//  So they are tuned the other way: the three have the same MEAN pace across
+//  a race to within 0.01%, and completely different shapes. Soft starts 6.1%
+//  quicker than hard and finishes 9.8% slower. Nothing is a free win; what
+//  you are choosing is WHEN you want your performance. What then breaks the
+//  tie is situational - track position, how much you slide the car (wear
+//  accrues faster under load), a corner-heavy circuit, and the places-gained
+//  bonus that pays for early aggression.
+//
+//  The multiplier is applied to the STEERING RATE, not just to grip. In this
+//  car model the binding limit almost everywhere is how fast the car can
+//  change direction, not how much lateral load it can hold - so a compound
+//  that only touched `grip` would have been nearly invisible, the same trap
+//  the rain fell into.
+// =========================================================================
+const TYRES = {
+    soft:   { key: 'soft',   label: 'Soft',   short: 'S', colour: '#e53935',
+              grip: 1.050, falloff: 0.1390, life: 0.90 },
+    medium: { key: 'medium', label: 'Medium', short: 'M', colour: '#fdd835',
+              grip: 1.000, falloff: 0.0667, life: 1.50 },
+    hard:   { key: 'hard',   label: 'Hard',   short: 'H', colour: '#e0e0e0',
+              grip: 0.990, falloff: 0.0300, life: 2.20 }
+};
+const TYRE_KEYS = ['soft', 'medium', 'hard'];
+
 // --- Player damage handicap ---------------------------------------------
 // Applied to the player's car only. Two handles: a straight scale on every
 // hit, and extra impact speed that costs nothing at all, so light scrapes
@@ -77,6 +118,15 @@ class Car {
         // Slipstream strength, 0..1 (set by main.js)
         this.draftStrength = 0;
 
+        // --- Tyres -----------------------------------------------------
+        // wear runs 0 (fresh) -> 1 (finished) over compound.life * TOTAL_LAPS
+        // laps. tyrePerf is the resulting handling multiplier, recomputed each
+        // frame and read by ai.js so the AI's speed profile matches the rubber
+        // it is actually on.
+        this.tyre = TYRES.medium;
+        this.tyreWear = 0;
+        this.tyrePerf = 1;
+
         // Blue flag (set each frame by main.js when a car on a higher lap closes in)
         this.blueFlag = false;
         this.blueFlagTimer = 0;
@@ -104,22 +154,63 @@ class Car {
 
         const speedForKerb = Math.sqrt(this.velocity.x ** 2 + this.velocity.y ** 2);
 
+        // --- Tyres -----------------------------------------------------
+        // Wear accrues with distance covered, and faster when the car is
+        // leaning on the tyre: a driver who slides it about destroys a set
+        // sooner than one who is smooth, without any per-driver special case.
+        // Explicit, because TOTAL_LAPS is 9999 during a session: a qualifying
+        // set has to be scaled to the qualifying distance or a soft would be
+        // finished before the flying lap even starts.
+        const laps = this._tyreRaceLaps || 5;
+        const tyre = this.tyre || TYRES.medium;
+        if (!this.finished && !this.isBroken && this._lapPixels) {
+            const moved = Math.hypot(this.velocity.x, this.velocity.y) * dt;
+            const lapFrac = moved / this._lapPixels;                 // laps covered this frame
+            const abuse = 1 + 0.55 * (this.gripUse || 0);
+            this.tyreWear += lapFrac * abuse / Math.max(0.05, tyre.life * laps);
+        }
+        const w = Math.max(0, Math.min(1.25, this.tyreWear));
+        // ^1.6: the first half of a set costs almost nothing, the last of it
+        // falls away quickly - the cliff is what makes the choice interesting.
+        this.tyrePerf = tyre.grip - tyre.falloff * Math.pow(w, 1.6);
+
         // Adjust physics based on surface
-        let currentGrip = this.baseGrip * this.condition;
+        let currentGrip = this.baseGrip * this.condition * this.tyrePerf;
         let currentFriction = this.baseFriction;
-        
+
         // Rain effect on asphalt
         if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass') {
-            // 0.20, not 0.35. In this car model the *steering rate* is the
-            // binding limit almost everywhere; above ~0.25 the wet grip clamp
-            // never actually engages, so rain cost nothing but a few km/h of
-            // top speed and wet-weather skill was completely inert.
-            currentGrip *= 0.20;
+            // In this car model the *steering rate* is the binding limit
+            // almost everywhere, so the wet grip clamp only bites well below
+            // the value you would expect. 0.13 rather than 0.20: rain now
+            // costs real lap time instead of a few km/h of top speed.
+            currentGrip *= 0.13;
             // Wet-weather skill, from the driver style table in ai.js.
-            // Senna 1.42, Schumacher 1.28, Hamilton 1.26 ... Lauda 0.90.
             if (this.wetGripBonus) currentGrip *= this.wetGripBonus;
         }
-        
+
+        // --- Puddles ---------------------------------------------------
+        // Standing water: grip collapses and the car is dragged back. Only
+        // ever present in the wet.
+        this.inPuddle = false;
+        this.aquaplane = 0;
+        if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass' &&
+            typeof track.puddleAt === 'function' && track.puddleAt(this.x, this.y)) {
+            this.inPuddle = true;
+            // Aquaplaning: the tyres are riding on water, so the front has
+            // almost nothing to steer with. It builds with speed - crawl
+            // through and you keep some control, arrive at racing speed and
+            // you are a passenger until you are through the other side.
+            this.aquaplane = Math.max(0, Math.min(1, (speedForKerb - 55) / 150));
+            currentGrip *= 0.45 - 0.25 * this.aquaplane;
+            currentFriction *= 2.2;
+            if (speedForKerb > 90 && Math.random() < 0.5) {
+                const spray = (Math.random() - 0.5) * 16 * (speedForKerb / 300);
+                this.velocity.x += -Math.sin(this.angle) * spray;
+                this.velocity.y += Math.cos(this.angle) * spray;
+            }
+        }
+
         if (surface === 'grass') {
             currentGrip *= 0.3; // Slippery!
             currentFriction *= 2.5; // Slows you down!
@@ -158,7 +249,7 @@ class Car {
             // Slipstream: continuous with distance rather than an on/off cone,
             // so the tow builds as you close in instead of snapping on.
             if (this.draftStrength > 0) {
-                forwardForce += this.enginePower * 0.18 * this.draftStrength * vsc;
+                forwardForce += this.enginePower * 0.26 * this.draftStrength * vsc;
             }
         }
         if (this.inputs.down) {
@@ -184,7 +275,14 @@ class Car {
             //              rather than into a magic change of direction.
             const speedTerm = Math.max(0.10, 1 - (speed / 500));
             const understeer = 1 - 0.35 * (this.gripUse || 0);
-            const steerEffectiveness = speedTerm * understeer;
+            // The compound acts here, on how fast the car can change
+            // direction. This is the binding limit in this model, so it is
+            // the only place a tyre can make a difference you can feel.
+            // Aquaplaning kills the steering almost entirely: at speed only a
+            // tenth of the input reaches the road, so the car carries straight
+            // on through the water whatever you ask of it.
+            const aqua = 1 - 0.90 * (this.aquaplane || 0);
+            const steerEffectiveness = speedTerm * understeer * (this.tyrePerf || 1) * aqua;
             const steerAmount = this.maxSteer * dt * steerEffectiveness;
 
             // Allow reversing steer direction if going backwards
@@ -258,7 +356,7 @@ class Car {
         
         // Apply friction/drag
         let drag = currentFriction;
-        if (this.draftStrength > 0) drag *= (1 - 0.22 * this.draftStrength);
+        if (this.draftStrength > 0) drag *= (1 - 0.30 * this.draftStrength);
         
         this.velocity.x -= this.velocity.x * drag * dt;
         this.velocity.y -= this.velocity.y * drag * dt;

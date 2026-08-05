@@ -40,7 +40,7 @@ canvas {
 
 /* Every centred panel must be listed here: #ui-layer is pointer-events:none,
    so a panel left out of this rule renders unstyled AND its buttons are dead. */
-#menu, #game-over, #championship-final, #quali-screen, #gp-preview {
+#menu, #game-over, #championship-final, #quali-screen, #gp-preview, #tyre-screen {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -276,7 +276,7 @@ button:hover {
     line-height: 1.35;
     font-variant-numeric: tabular-nums;
     pointer-events: none;
-    min-width: 128px;
+    min-width: 146px;
     text-shadow: none;
 }
 
@@ -353,6 +353,121 @@ button:hover {
     padding: 30px 46px;
     text-align: center;
     min-width: 300px;
+}
+
+/* ---- tyre choice --------------------------------------------------- */
+#tyre-screen { min-width: 430px; }
+
+#tyre-options {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+button.tyre-opt {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    margin: 0;
+    padding: 14px 6px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    color: #fff;
+    font-weight: normal;
+}
+
+button.tyre-opt:hover {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.tyre-dot {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 3px solid rgba(0, 0, 0, 0.55);
+    margin-bottom: 2px;
+}
+
+.tyre-name { font-size: 15px; font-weight: bold; letter-spacing: 0.5px; }
+.tyre-stat { font-size: 11px; opacity: 0.7; }
+
+/* small coloured pip used in the results table and the HUD */
+.tyre-pip {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+.pts-bonus { color: #4CAF50; }
+
+.pts-legend {
+    font-size: 11px;
+    opacity: 0.6;
+    margin: -12px 0 6px;
+    text-align: left;
+}
+
+.pts-legend b { color: #4CAF50; opacity: 0.9; }
+
+#tyre-indicator {
+    display: flex;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+}
+
+/* A dark well with its own border, so the fill never has to be read against
+   whatever the track happens to be behind it. */
+#tyre-wear-bar {
+    display: inline-block;
+    width: 52px;
+    height: 9px;
+    border-radius: 5px;
+    background: #14181c;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
+    margin-left: 7px;
+    overflow: hidden;
+    vertical-align: middle;
+}
+
+#tyre-wear-fill {
+    display: block;
+    height: 100%;
+    width: 100%;
+    background: #00e676;
+    transition: width 0.25s linear;
+}
+
+#tyre-wear-pct {
+    margin-left: 6px;
+    font-size: 13px;
+    font-weight: bold;
+    min-width: 34px;
+    text-align: right;
+    text-shadow: 0 0 3px #000, 1px 1px 0 #000;
+}
+
+/* compound letter in the timing tower */
+#timing-tower .tt-tyre {
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    line-height: 13px;
+    border-radius: 50%;
+    text-align: center;
+    font-size: 9px;
+    font-weight: bold;
+    color: rgba(0, 0, 0, 0.82);
+    border: 1px solid rgba(0, 0, 0, 0.55);
+    margin-right: 4px;
 }
 
 /* ---- Grand Prix preview ------------------------------------------- */

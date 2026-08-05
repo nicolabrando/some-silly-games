@@ -1,3 +1,7 @@
+// Number of radii around a puddle's outline. Enough to look organic,
+// few enough that the per-frame containment test stays trivial.
+const PUDDLE_LOBES = 11;
+
 class SegmentedTrack {
     constructor() {
         // To be overridden by subclasses
@@ -607,6 +611,112 @@ class SegmentedTrack {
         }
     }
 
+    // --- Puddles ---------------------------------------------------------
+    // Standing water, only in the wet. Placed on the racing line itself so
+    // they are unavoidable at speed rather than scenery you can steer round,
+    // and offset sideways so the fast line through a corner is a real choice.
+    // Regenerated per race (main.js calls makePuddles at the start).
+    makePuddles(count) {
+        this.puddles = [];
+        if (typeof this.getRacingLine !== 'function') return this.puddles;
+        const line = this.getRacingLine('standard');
+        const N = line.count;
+        const n = count === undefined ? 5 : count;
+        const used = [];
+        for (let attempt = 0; attempt < n * 12 && this.puddles.length < n; attempt++) {
+            const i = Math.floor(Math.random() * N);
+            // keep them apart: a cluster is just a wet sector
+            if (used.some(j => Math.abs(i - j) < N / (n + 2))) continue;
+            used.push(i);
+            const nd = line.nodes[i];
+            const side = (Math.random() < 0.5 ? 1 : -1);
+            const off = (0.25 + Math.random() * 0.55) * this.trackWidth * side;
+            const r = 26 + Math.random() * 22;
+
+            // An irregular outline rather than a circle. PUDDLE_LOBES radii
+            // around the centre, each randomly scaled, then smoothed with its
+            // neighbours so the edge undulates instead of spiking. Water finds
+            // the shape of the tarmac; a perfect disc reads as a decal.
+            const raw = [];
+            for (let k = 0; k < PUDDLE_LOBES; k++) raw.push(0.62 + Math.random() * 0.70);
+            const rad = [];
+            for (let k = 0; k < PUDDLE_LOBES; k++) {
+                const a = raw[(k - 1 + PUDDLE_LOBES) % PUDDLE_LOBES];
+                const b = raw[k];
+                const c = raw[(k + 1) % PUDDLE_LOBES];
+                rad.push((a + 2 * b + c) / 4);
+            }
+            this.puddles.push({
+                x: nd.cx + nd.nx * off,
+                y: nd.cy + nd.ny * off,
+                r: r,
+                rad: rad,
+                rot: Math.random() * Math.PI * 2,
+                rMax: r * Math.max.apply(null, rad)
+            });
+        }
+        return this.puddles;
+    }
+
+    // Radius of a puddle in the direction of a given angle.
+    _puddleRadius(p, ang) {
+        if (!p.rad) return p.r;
+        const n = p.rad.length;
+        const t = ((ang - p.rot) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2) * n;
+        const i0 = Math.floor(t) % n;
+        const i1 = (i0 + 1) % n;
+        const f = t - Math.floor(t);
+        return p.r * (p.rad[i0] * (1 - f) + p.rad[i1] * f);
+    }
+
+    puddleAt(x, y) {
+        if (!this.puddles || !this.puddles.length) return false;
+        for (const p of this.puddles) {
+            const dx = x - p.x, dy = y - p.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 > (p.rMax || p.r) * (p.rMax || p.r)) continue;   // cheap reject
+            const rr = this._puddleRadius(p, Math.atan2(dy, dx));
+            if (d2 < rr * rr) return true;
+        }
+        return false;
+    }
+
+    drawPuddles(ctx) {
+        if (!this.puddles || !this.puddles.length) return;
+        ctx.save();
+        for (const p of this.puddles) {
+            const n = (p.rad && p.rad.length) || 1;
+            // Points on the outline, joined with a Catmull-Rom style smoothing
+            // through the midpoints so the shape is organic, not a polygon.
+            const pts = [];
+            for (let k = 0; k < n; k++) {
+                const a = p.rot + (k / n) * Math.PI * 2;
+                const rr = p.r * (p.rad ? p.rad[k] : 1);
+                pts.push([p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr]);
+            }
+            ctx.beginPath();
+            const mid = (i, j) => [(pts[i][0] + pts[j][0]) / 2, (pts[i][1] + pts[j][1]) / 2];
+            let m = mid(n - 1, 0);
+            ctx.moveTo(m[0], m[1]);
+            for (let k = 0; k < n; k++) {
+                const nx = mid(k, (k + 1) % n);
+                ctx.quadraticCurveTo(pts[k][0], pts[k][1], nx[0], nx[1]);
+            }
+            ctx.closePath();
+
+            const g = ctx.createRadialGradient(p.x, p.y, p.r * 0.1, p.x, p.y, p.rMax || p.r);
+            g.addColorStop(0, 'rgba(64,104,150,0.80)');
+            g.addColorStop(0.65, 'rgba(78,120,166,0.60)');
+            g.addColorStop(1, 'rgba(96,140,186,0.34)');
+            ctx.fillStyle = g;
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(190,225,250,0.34)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
     draw(ctx) {
         // Stands first: they sit outside the barriers, behind everything else.
         this.drawStands(ctx);
@@ -679,6 +789,8 @@ class SegmentedTrack {
         ctx.stroke();
 
         this.drawStartLine(ctx);
+        // On top of the asphalt, under the cars.
+        this.drawPuddles(ctx);
     }
     
     drawStartLine(ctx) {

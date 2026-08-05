@@ -154,28 +154,28 @@ const AI_PROFILES = {
 const AI_DRIVER_STYLES = {
     // Blinding through the quick stuff and peerless in the rain; gives it back
     // on the straights and lives closest to the edge - by far the most mistakes.
-    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.024, cleanAir: 1, trim: 0.9934 },
+    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.024, cleanAir: 1, trim: 0.9979 },
     // The Professor: never errs, superb alone - and genuinely poor in the wet
     // and reluctant wheel to wheel.
-    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.990, cleanAir: 1.01, trim: 1.0151 },
+    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.990, cleanAir: 1.01, trim: 1.0114 },
     // Relentless metronome, brutal on defence, superb in the rain; nothing
     // special in clean air.
-    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.047, cleanAir: 0.999, trim: 0.9973 },
+    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.047, cleanAir: 0.999, trim: 1.0002 },
     // Latest braker on the grid, never yields - and error-prone with it.
-    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.981, cleanAir: 0.998, trim: 1.0096 },
+    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.981, cleanAir: 0.998, trim: 1.0126 },
     // Thrives in the wet and in a fight; the weakest of the lot on his own.
-    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.007, cleanAir: 0.997, trim: 0.9984 },
+    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.007, cleanAir: 0.997, trim: 1.0010 },
     // Unbeatable wheel to wheel, ordinary once the road is clear.
-    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.010, cleanAir: 0.997, trim: 0.9964 },
+    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.010, cleanAir: 0.997, trim: 0.9954 },
     // Devastating in clean air and on a straight; hates traffic and the rain.
-    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 1.012, cleanAir: 1.014, trim: 0.9880 },
+    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 1.012, cleanAir: 1.014, trim: 0.9973 },
     // Famously smooth and almost mistake-free; passive in a fight.
-    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.021, cleanAir: 1.005, trim: 1.0007 },
+    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.021, cleanAir: 1.005, trim: 0.9928 },
     // The computer: calculated risk, no heroics, no mistakes - and no pace in
     // the wet.
-    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.020, cleanAir: 1.008, trim: 0.9961 },
+    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.020, cleanAir: 1.008, trim: 0.9919 },
     // Wins at the slowest speed necessary: no weakness, no standout either.
-    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.018, cleanAir: 1.003, trim: 1.0044 }
+    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.018, cleanAir: 1.003, trim: 0.9988 }
 };
 
 // Physics constants mirrored from car.js - keep in sync if the car changes.
@@ -494,23 +494,29 @@ class AI {
         const opt = this.p.radiusOptimism;
         const radiusOf = (nd) => nd.radius + (nd.radiusRaw !== undefined ? (nd.radiusRaw - nd.radius) * opt : 0);
 
+        // What the tyres are actually giving right now. car.js applies this to
+        // the steering rate; the AI has to aim to the same limit or it will
+        // keep entering corners at soft-tyre speed on a worn set of hards.
+        const tyreF = car.tyrePerf || 1;
+
         const cornerCap = (idx) => {
             const nd = nodes[idx];
             const R = radiusOf(nd);
             // vCorner is tabulated for nd.radius; rescale it for the radius we
             // are actually willing to commit to (v scales ~ with R here).
-            const vSteer = AI_MAX_STEER / (1 / R + AI_MAX_STEER / 500);
+            const steerRateNow = AI_MAX_STEER * tyreF;
+            const vSteer = steerRateNow / (1 / R + steerRateNow / 500);
             const vGrip = Math.sqrt(latLimit * R);
             const cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
                                 Math.max(this.p.cornerFactor, AI_ATTACK_CORNER_CAP));
-            return Math.min(nd.vCorner * 1.35, vSteer, vGrip) * AI_CORNER_SAFETY * cf;
+            return Math.min(nd.vCorner * 1.35 * tyreF, vSteer, vGrip) * AI_CORNER_SAFETY * cf;
         };
 
         // Under the VSC everyone has the same reduced power, so the AI must
         // aim lower too rather than sitting at full throttle pointlessly.
         const vscF = (typeof vscPowerFactor !== 'undefined') ? vscPowerFactor : 1;
         let vTop = AI_TOP_SPEED * this.p.straightFactor * condition * vscF;
-        if (car.draftStrength > 0) vTop *= 1 + 0.12 * car.draftStrength;
+        if (car.draftStrength > 0) vTop *= 1 + 0.17 * car.draftStrength;
         if (onGrass) vTop = Math.min(vTop, 150);
         else if (onKerb) vTop *= 0.95;
         if (typeof isRaining !== 'undefined' && isRaining) vTop *= 0.97;
@@ -676,6 +682,13 @@ class AI {
                                                   (1 + AI_ALONGSIDE_GAIN * room);
                                 if (v < alongside) v = alongside;
                             }
+                            // A tow is only worth having if you are allowed
+                            // to spend it. Without this the AI simply lifted
+                            // to hold its safe gap, so a stronger slipstream
+                            // sped the whole train up equally and changed
+                            // nothing: measured 0.65 places of movement per
+                            // race either way.
+                            v += (car.draftStrength || 0) * 45;
                             if (v < this.followSpeed) this.followSpeed = v;
                         }
                     }
@@ -716,7 +729,9 @@ class AI {
         // burst used to force a move, not a permanent pace increase - the
         // difficulty ladder is unaffected in clean air.
         const heldUp = hasTarget && bestFwd > 0 && bestFwd < 95 && !this.car.blueFlag;
-        if (heldUp) this.followTimer += dt;
+        // Sitting in a tow is what gives you the run, so it should bring the
+        // move on sooner rather than being a reason to sit there.
+        if (heldUp) this.followTimer += dt * (1 + 1.3 * (car.draftStrength || 0));
         else this.followTimer = Math.max(0, this.followTimer - dt * 2.5);
         this.attack = Math.max(0, Math.min(1, this.followTimer / AI_ATTACK_BUILD));
 
@@ -825,6 +840,41 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
 
 // Notional single flying lap, lower is quicker. Used to set the grid instead
 // of shuffling it at random, so the front row means something.
+// ---------------------------------------------------------------------------
+//  TYRE CHOICE
+//  A driver picks rubber the way they drive. The aggressive, error-prone,
+//  wheel-to-wheel types take the soft and accept the cliff; the smooth,
+//  calculating ones take something that will still be there at the end. Race
+//  length pushes the whole field one way: nobody starts a long race on softs.
+//
+//  Deliberately noisy. A deterministic rule put the same nine drivers on the
+//  same compound every single time, which is exactly the "everyone makes the
+//  same choice" outcome this is meant to avoid.
+// ---------------------------------------------------------------------------
+AI.chooseTyre = function (driverName, laps, raining) {
+    const s = AI_DRIVER_STYLES[driverName];
+
+    // 0 = wants the hard, 1 = wants the soft
+    let want = 0.5;
+    if (s) {
+        want += (s.err - 0.7) * 0.16;          // lives on the edge -> soft
+        want += (1 - s.gap) * 0.55;            // sits close, wants track position
+        want += (s.overtake - 0.85) * 0.45;    // fights -> wants the early edge
+        want -= (s.steerTau - 1.0) * 0.30;     // smooth hands -> kinder on tyres
+        want -= (s.cleanAir - 1.0) * 6.0;      // clean-air specialists play the long game
+    }
+    // A long race eats a soft alive; a short one barely troubles it.
+    want += (5 - laps) * 0.055;
+    // In the wet the cliff matters less: nobody is near the limit anyway.
+    if (raining) want += 0.10;
+
+    want += (Math.random() - 0.5) * 0.42;      // genuine spread, race to race
+
+    if (want > 0.62) return 'soft';
+    if (want < 0.38) return 'hard';
+    return 'medium';
+};
+
 AI.qualifyingPace = function (driverName, difficulty, skillVariation, raining) {
     const p = AI.buildProfile(driverName, difficulty, skillVariation);
 

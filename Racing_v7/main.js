@@ -51,6 +51,18 @@ let racePoleColor = null;   // who started P1 in the race now running
 // pole + win + fastest lap + led every single lap.
 let lapLeaders = [];
 
+// --- Tyres ---------------------------------------------------------------
+// The compound the player has chosen for the session about to start. Picked
+// separately for qualifying and for the race, so a soft-tyre banzai lap and a
+// hard-tyre race stint are a legitimate plan.
+let playerTyre = 'medium';
+
+// --- Places-gained bonus -------------------------------------------------
+// One championship point per position recovered from the grid, up to five.
+const PLACES_BONUS_PER = 1;
+const PLACES_BONUS_CAP = 5;
+let pendingTyreCb = null;
+
 // --- Timing tower display order -----------------------------------------
 // Sorting by distance covered is correct but still strobes when two cars are
 // genuinely wheel to wheel: they trade the position every few frames and the
@@ -63,8 +75,16 @@ const TOWER_MARGIN = 22;    // px of track progress needed to take a position
 // Single monotone score: finishers are locked in their finishing order and
 // always ahead of anyone still running.
 function towerScore(c) {
-    if (c.finished) return 1e9 - (c.finishIndex === undefined ? 0 : c.finishIndex);
-    if (c.isBroken) return -1e9 + (c.trackProgress || 0);
+    // Finishers are ranked by race TIME, not by the order they crossed the
+    // line. Those differ whenever a penalty is involved: a car that takes the
+    // flag fifth with a five-second jump-start penalty is classified lower,
+    // and ranking the tower by crossing order left the live order and the
+    // results sheet three places apart.
+    if (c.finished) return 1e9 - (isFinite(c.raceTime) ? c.raceTime : 0);
+    // A retired car is ranked by the distance it covered, exactly as the
+    // classification does. Sinking it to the bottom of the tower looked tidier
+    // but meant the live order and the final results sheet disagreed - by up
+    // to three places at the flag.
     return c.trackProgress || 0;
 }
 
@@ -76,7 +96,12 @@ function stableTowerOrder(sorted) {
         towerOrder = sorted.slice();
         return towerOrder;
     }
-    for (let pass = 0; pass < 2; pass++) {
+    // Two settling passes a frame while the race is running, so the hysteresis
+    // does its job. Once cars are taking the flag their order is a fact rather
+    // than a judgement call, so settle it completely - otherwise the tower can
+    // still be a few places behind the truth at the moment the race ends.
+    const nPasses = leaderFinished ? towerOrder.length : 2;
+    for (let pass = 0; pass < nPasses; pass++) {
         for (let i = 0; i < towerOrder.length - 1; i++) {
             const a = towerOrder[i], b = towerOrder[i + 1];
             if (towerScore(b) > towerScore(a) + TOWER_MARGIN) {
@@ -108,7 +133,11 @@ let skipPlayer = null;      // the player's entry, held out of the field
 
 // The DNF window is measured against the wall clock during a normal race and
 // against the simulation clock while a Grand Prix is being skipped.
-function raceNow() { return skipMode ? skipNow : Date.now(); }
+// performance.now(), not Date.now(): raceStartTime, track.currentRaceTime and
+// the pause compensation are all measured against it, and firstFinisherTime
+// being on a different clock meant the pause adjustment was mixing two time
+// bases that only happen to share a unit.
+function raceNow() { return skipMode ? skipNow : performance.now(); }
 // UI Elements
 const menu = document.getElementById('menu');
 const hud = document.getElementById('hud');
@@ -141,6 +170,10 @@ const pauseBtn = document.getElementById('pauseBtn');
 const pauseOverlay = document.getElementById('pause-overlay');
 const resumeBtn = document.getElementById('resume-btn');
 const pauseQuitBtn = document.getElementById('pause-quit-btn');
+const tyreScreen = document.getElementById('tyre-screen');
+const tyreTitle = document.getElementById('tyre-title');
+const tyreSubtitle = document.getElementById('tyre-subtitle');
+const tyreOptions = document.getElementById('tyre-options');
 const qualiScreen = document.getElementById('quali-screen');
 const qualiBody = document.getElementById('quali-body');
 const qualiTitle = document.getElementById('quali-title');
@@ -173,8 +206,14 @@ startBtn.addEventListener('click', () => {
     raceMode = 'race';
     pendingGrid = null;
     pendingWeather = null;
-    if (qualifyingEnabled()) startQualifying(null);
-    else startGame();
+    const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
+    if (qualifyingEnabled()) {
+        showTyreChoice('Qualifying tyres', 'One flying lap is all that matters here.',
+            QUALI_LAPS - 1, () => startQualifying(null));
+    } else {
+        showTyreChoice('Race tyres', 'This set has to last the whole race.',
+            laps, () => startGame());
+    }
 });
 
 champBtn.addEventListener('click', () => {
@@ -257,15 +296,23 @@ stopSessionBtn.addEventListener('click', () => {
 document.getElementById('gp-start-btn').addEventListener('click', () => {
     document.getElementById('gp-preview').style.display = 'none';
     const trackType = championshipState.tracks[championshipState.currentTrackIndex];
-    if (qualifyingEnabled()) startQualifying(trackType);
-    else startGame(trackType);
+    const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
+    if (qualifyingEnabled()) {
+        showTyreChoice('Qualifying tyres', 'One flying lap is all that matters here.',
+            QUALI_LAPS - 1, () => startQualifying(trackType));
+    } else {
+        showTyreChoice('Race tyres', 'This set has to last the whole race.',
+            laps, () => startGame(trackType));
+    }
 });
 
 document.getElementById('gp-skip-btn').addEventListener('click', skipGrandPrix);
 
 qualiRaceBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
-    startGame(qualiTrackType);
+    const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
+    showTyreChoice('Race tyres', 'A fresh set. This one has to last the whole race.',
+        laps, () => startGame(qualiTrackType));
 });
 
 qualiMenuBtn.addEventListener('click', () => {
@@ -448,6 +495,10 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
     car.maxHealth = 1e9;          // a qualifying lap is not a damage test
     car.health = car.maxHealth;
     car.nextWaypoint = 0;
+    car._lapPixels = line.length;
+    car._tyreRaceLaps = QUALI_LAPS;
+    car.tyre = TYRES[AI.chooseTyre(driverName, QUALI_LAPS, raining)] || TYRES.medium;
+    car.tyreWear = 0;
     // Standing start, exactly like the player's session: lap 1 is the warm-up
     // lap and is thrown away, laps 2 and 3 are the flying laps.
     car.velocity = { x: 0, y: 0 };
@@ -562,6 +613,10 @@ function startQualifying(forceTrackType) {
     track.leaderFinished = false;
     track.currentRaceTime = 0;
     qualiTrack = track;
+    if (typeof track.makePuddles === 'function') {
+        track.puddles = [];
+        if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
+    }
 
     // The weekend's weather is decided here and reused for the race, so
     // qualifying and the race are never run in different conditions.
@@ -577,6 +632,7 @@ function startQualifying(forceTrackType) {
         hud.insertBefore(weatherIndicator, quitBtn);
     }
     weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
+    renderTyreIndicator(null);
 
     TOTAL_LAPS = 9999;              // the session ends on lap count, not the flag
     vscActive = false;
@@ -617,6 +673,10 @@ function startQualifying(forceTrackType) {
         car.maxHealth = 255 + 10 * Math.max(0, Math.min(QUALI_LAPS, 40) - 5);
         car.health = car.maxHealth;
         car.nextWaypoint = 0;
+        car._lapPixels = line.length;
+        car.tyre = TYRES[playerTyre] || TYRES.medium;
+        car.tyreWear = 0;
+        car._tyreRaceLaps = QUALI_LAPS;
         cars.push(car);
         playerCar = car;
     }
@@ -650,6 +710,69 @@ function startQualifying(forceTrackType) {
     if (typeof initAudio === 'function') initAudio(!playerCar);
     lastTime = performance.now();
     requestAnimationFrame(gameLoop);
+}
+
+// ===========================================================================
+// TYRE CHOICE
+// ===========================================================================
+// HUD readout: compound plus a bar for what is left of it.
+function renderTyreIndicator(car) {
+    const el = document.getElementById('tyre-indicator');
+    if (!el) return;
+    if (!car || !car.tyre) { el.innerHTML = ''; return; }
+    const left = Math.max(0, Math.min(1, 1 - (car.tyreWear || 0)));
+    // Green on a green track over green grass was unreadable. The bar now has
+    // a dark well and a border of its own, the colour ramp runs through amber
+    // to red, and the number is spelled out so it never depends on the fill
+    // being legible at all.
+    const col = left > 0.55 ? '#00e676' : (left > 0.30 ? '#ffc400' : '#ff3d00');
+    el.innerHTML =
+        '<span class="tyre-pip" style="background:' + car.tyre.colour + ';"></span>' +
+        '<b>' + car.tyre.short + '</b>' +
+        '<span id="tyre-wear-bar"><span id="tyre-wear-fill" style="width:' +
+        (left * 100).toFixed(0) + '%;background:' + col + ';"></span></span>' +
+        '<span id="tyre-wear-pct" style="color:' + col + ';">' +
+        (left * 100).toFixed(0) + '%</span>';
+}
+
+function tyreLapsText(key, laps) {
+    const t = TYRES[key];
+    const life = t.life * laps;
+    return life >= laps ? 'lasts the distance'
+                        : '~' + life.toFixed(1) + ' of ' + laps + ' laps';
+}
+
+function showTyreChoice(title, subtitle, laps, cb) {
+    pendingTyreCb = cb;
+    menu.style.display = 'none';
+    gameOverScreen.style.display = 'none';
+    qualiScreen.style.display = 'none';
+    document.getElementById('gp-preview').style.display = 'none';
+    hud.style.display = 'none';
+    gameState = 'menu';
+
+    tyreTitle.innerText = title;
+    tyreSubtitle.innerText = subtitle;
+    tyreOptions.innerHTML = TYRE_KEYS.map(k => {
+        const t = TYRES[k];
+        const pace = ((t.grip - 1) * 100);
+        return '<button class="tyre-opt" data-tyre="' + k + '">' +
+            '<span class="tyre-dot" style="background:' + t.colour + ';"></span>' +
+            '<span class="tyre-name">' + t.label + '</span>' +
+            '<span class="tyre-stat">' + (pace >= 0 ? '+' : '') + pace.toFixed(1) + '% pace</span>' +
+            '<span class="tyre-stat">' + tyreLapsText(k, laps) + '</span>' +
+            '</button>';
+    }).join('');
+    Array.prototype.forEach.call(tyreOptions.querySelectorAll('.tyre-opt'), (b) => {
+        b.addEventListener('click', () => {
+            playerTyre = b.getAttribute('data-tyre');
+            tyreScreen.style.display = 'none';
+            const cb2 = pendingTyreCb;
+            pendingTyreCb = null;
+            if (cb2) cb2(playerTyre);
+        });
+    });
+    tyreScreen.style.display = 'block';
 }
 
 // ===========================================================================
@@ -705,6 +828,9 @@ function measureTrackStats(qTrack, raining) {
     car.angle = n0.heading;
     car.maxHealth = 1e9; car.health = car.maxHealth;
     car.nextWaypoint = 0;
+    car._lapPixels = line.length;
+    car._tyreRaceLaps = 5;
+    car.tyre = TYRES.medium; car.tyreWear = 0;
     const v0 = Math.min(n0.vCorner || 200, 200);
     car.velocity = { x: Math.cos(n0.heading) * v0, y: Math.sin(n0.heading) * v0 };
 
@@ -941,6 +1067,12 @@ function startGame(forceTrackType = null) {
     // frame doesn't stutter while building it lazily.
     if (typeof track.getRacingLine === 'function') track.getRacingLine();
 
+    // Standing water, only when it is raining. Fresh every race.
+    if (typeof track.makePuddles === 'function') {
+        track.puddles = [];
+        if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
+    }
+
     cars = [];
     ais = [];
     playerCar = null; // Reset playerCar
@@ -1081,6 +1213,16 @@ function startGame(forceTrackType = null) {
         const car = new Car(gridPos.x, gridPos.y, p.color, p.isPlayer);
         car.driverName = p.driverName;
         car.gridIndex = i;              // stable tie-break before anyone moves
+        car.startGridPos = i + 1;       // for the places-gained bonus
+
+        // Tyres. The player has just chosen; each AI picks from its own style,
+        // so the grid is a mix rather than ten cars on the same rubber.
+        car._lapPixels = track.getRacingLine ? track.getRacingLine('standard').length : 3000;
+        const tKey = p.isPlayer ? playerTyre
+                                : AI.chooseTyre(p.driverName, TOTAL_LAPS, isRaining);
+        car.tyre = TYRES[tKey] || TYRES.medium;
+        car.tyreWear = 0;
+        car._tyreRaceLaps = TOTAL_LAPS;
         car.startX = gridPos.x;
         car.startY = gridPos.y;
         car.startAngle = gridPos.angle; // New property to store the grid angle
@@ -1138,6 +1280,11 @@ function startGame(forceTrackType = null) {
         car.nextWaypoint = closestWp;
     });
     
+    // The HUD is not updated during the countdown, so the tyre readout still
+    // showed the compound from qualifying right up to the lights going out.
+    // Render it here, the moment the grid exists.
+    renderTyreIndicator(playerCar || cars[0] || null);
+
     // ---- open the log for this session ----------------------------------
     RaceLog.start({
         mode: isPractice ? 'Free Practice' : (isChampionship ? 'Championship round' : 'Single race'),
@@ -1248,6 +1395,12 @@ function updatePhysics(dt) {
             if (angleDiff > 0.40 || headingDiff > 0.7) continue;
 
             // Three independent falloffs, multiplied together.
+            // The cone is deliberately UNCHANGED from v7. Widening it was
+            // measured: it bought 0.15 places of extra movement per race and
+            // cost 30% more contact and double the retirements, because a
+            // wider cone also tows the car being overtaken. All of the gain
+            // came from the force multipliers and from letting the AI spend
+            // the tow (see ai.js), not from catching it more often.
             const distFactor = 1 - Math.max(0, (dist - 45) / 145);   // full strength up to 45px
             const coneFactor = 1 - (angleDiff / 0.40);
             const alignFactor = 1 - (headingDiff / 0.7);
@@ -1484,6 +1637,70 @@ function driverCode(car) {
 //  obstacle. It is taken off by a crane; while that happens every car runs
 //  on reduced power and the yellow VSC banner is up.
 // =========================================================================
+// --- grandstand geometry -------------------------------------------------
+// Shared by the wreck's drop point AND the crane's route. The drop point has
+// always avoided the crowd; the crane did not, so it drove through the stands
+// on its way in and out.
+function pointOnStand(track, px, py, pad) {
+    const stands = (typeof track.getStands === 'function') ? track.getStands() : [];
+    const p = pad === undefined ? 18 : pad;
+    for (const st of stands) {
+        const dx = px - st.x, dy = py - st.y;
+        const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
+        const u = dx * ca - dy * sa;
+        const v = dx * sa + dy * ca;
+        if (Math.abs(u) < st.len / 2 + p && Math.abs(v) < st.depth / 2 + p) return true;
+    }
+    return false;
+}
+
+// How much of a straight route lies inside a grandstand, sampled.
+function segmentStandHits(track, x1, y1, x2, y2, pad) {
+    let hits = 0;
+    const STEPS = 16;
+    for (let i = 0; i <= STEPS; i++) {
+        const k = i / STEPS;
+        if (pointOnStand(track, x1 + (x2 - x1) * k, y1 + (y2 - y1) * k, pad)) hits++;
+    }
+    return hits;
+}
+
+// Last line of defence: shove a point to the nearest edge of any grandstand it
+// is inside. Route scoring gets the crane most of the way there, but on a
+// layout ringed with stands there is not always a clear line, and a search
+// cannot promise "never". This can, because it is applied every frame to the
+// position actually drawn.
+function nudgeOffStand(track, p, pad) {
+    const stands = (typeof track.getStands === 'function') ? track.getStands() : [];
+    const m = pad === undefined ? 14 : pad;
+    for (let iter = 0; iter < 3; iter++) {
+        let moved = false;
+        for (const st of stands) {
+            const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
+            const dx = p.x - st.x, dy = p.y - st.y;
+            const u = dx * ca - dy * sa;              // into the stand's own frame
+            const v = dx * sa + dy * ca;
+            const hu = st.len / 2 + m, hv = st.depth / 2 + m;
+            if (Math.abs(u) >= hu || Math.abs(v) >= hv) continue;
+
+            // push out of the nearer face
+            const outU = hu - Math.abs(u);
+            const outV = hv - Math.abs(v);
+            let nu = u, nv = v;
+            if (outU < outV) nu = (u >= 0 ? hu : -hu);
+            else nv = (v >= 0 ? hv : -hv);
+
+            // back to world coordinates
+            const cb = Math.cos(st.angle), sb = Math.sin(st.angle);
+            p.x = st.x + (nu * cb - nv * sb);
+            p.y = st.y + (nu * sb + nv * cb);
+            moved = true;
+        }
+        if (!moved) break;
+    }
+    return p;
+}
+
 function startRecovery(car) {
     // Where to drag it to: out past the barrier, into somewhere that is
     // genuinely off the circuit.
@@ -1518,17 +1735,7 @@ function startRecovery(car) {
     nx /= len; ny /= len;
 
     const clearance = track.grassWidth + 30;
-    const stands = (typeof track.getStands === 'function') ? track.getStands() : [];
-    const onStand = (px, py) => {
-        for (const st of stands) {
-            const dx = px - st.x, dy = py - st.y;
-            const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
-            const u = dx * ca - dy * sa;
-            const v = dx * sa + dy * ca;
-            if (Math.abs(u) < st.len / 2 + 18 && Math.abs(v) < st.depth / 2 + 18) return true;
-        }
-        return false;
-    };
+    const onStand = (px, py, pad) => pointOnStand(track, px, py, pad);
     // Score every candidate rather than taking the first that passes: on an
     // enclosed layout (the Comb, Thunder) there may be no perfect spot, and
     // "first acceptable or else give up" dumped the wreck back on the racing
@@ -1555,6 +1762,14 @@ function startRecovery(car) {
             score -= Math.abs(spin) * 6;                  // prefer straight out
             score -= dist * 0.05;                         // prefer the short tow
 
+            // The crane LEADS the wreck, so during the haul it sits a tow
+            // length further out than this spot and finishes there. Scoring
+            // only the wreck's resting place left the crane itself parked in
+            // the crowd on the tracks that are ringed with stands.
+            const ex = px + vx * 34, ey = py + vy * 34;
+            if (onStand(ex, ey, 14)) score -= 240;
+            score -= segmentStandHits(track, car.x, car.y, ex, ey, 12) * 18;
+
             if (score > bestScore) { bestScore = score; tx = px; ty = py; }
         }
     }
@@ -1572,6 +1787,66 @@ function startRecovery(car) {
     const dirx = ux / ul, diry = uy / ul;
 
     const TOW = 34;                               // crane-to-hook distance
+    const pick = { x: car.x + dirx * TOW, y: car.y + diry * TOW };
+
+    // Where the crane waits, and therefore the route it drives in and out on.
+    // This used to be a fixed 90px further out along the same line, with no
+    // check at all - so on a track ringed with grandstands the crane parked in
+    // the crowd and drove straight through it. Search for a spot that is clear
+    // itself AND whose straight run to the car does not cross a stand.
+    // Where the crane finishes the haul, and therefore where it withdraws from.
+    const haulEnd = { x: tx + dirx * TOW, y: ty + diry * TOW };
+
+    // Candidate parking spots: fanned out behind the drop point, plus a set
+    // running ALONG the run-off strip either side of it. That strip is
+    // stand-free by construction - getStands() rejects any stand that overlaps
+    // the circuit - so on a layout boxed in by grandstands there is always a
+    // clear way in even when every outward direction is blocked.
+    const cand = [];
+    for (let a = 0; a < 24; a++) {
+        const spin = (a % 2 === 0 ? 1 : -1) * Math.floor(a / 2) * (Math.PI / 8);
+        const ca = Math.cos(spin), sa = Math.sin(spin);
+        const vx = dirx * ca - diry * sa;
+        const vy = dirx * sa + diry * ca;
+        for (const back of [55, 70, 90, 115, 145]) {
+            cand.push({ x: tx + vx * back, y: ty + vy * back, spin: Math.abs(spin), back: back });
+        }
+    }
+    const tgx = -diry, tgy = dirx;                       // along the track
+    for (const side of [1, -1]) {
+        for (const along of [60, 95, 135, 180]) {
+            for (const out of [track.grassWidth + 26, track.grassWidth + 48]) {
+                cand.push({
+                    x: proj.projX + nx * out + tgx * side * along,
+                    y: proj.projY + ny * out + tgy * side * along,
+                    spin: 0.9, back: along
+                });
+            }
+        }
+    }
+
+    let hx = null, hy = null, bestHome = -Infinity;
+    {
+        for (const c of cand) {
+            const px = c.x, py = c.y;
+            const spin = c.spin, back = c.back;
+            if (px < 16 || px > 984 || py < 16 || py > 684) continue;
+
+            let score = 0;
+            if (pointOnStand(track, px, py, 22)) score -= 400;       // parked in the crowd
+            // both legs it actually drives: in to the wreck, and back out again
+            score -= segmentStandHits(track, px, py, pick.x, pick.y, 12) * 40;
+            score -= segmentStandHits(track, haulEnd.x, haulEnd.y, px, py, 12) * 40;
+            score -= Math.abs(spin) * 6;                             // prefer straight out
+            score -= back * 0.06;                                    // prefer close by
+            // and it must not be sitting on the racing surface either
+            if (track.getClosestPoint(px, py).dist < track.grassWidth) score -= 200;
+
+            if (score > bestHome) { bestHome = score; hx = px; hy = py; }
+        }
+    }
+    if (hx === null) { hx = tx + dirx * 90; hy = ty + diry * 90; }
+
     const rec = {
         car: car,
         phase: 'approach',
@@ -1580,9 +1855,9 @@ function startRecovery(car) {
         to: { x: tx, y: ty },
         tow: TOW,
         // where the crane comes from, and where it stands to pick the car up:
-        home: { x: tx + dirx * 90, y: ty + diry * 90 },
-        pick: { x: car.x + dirx * TOW, y: car.y + diry * TOW },
-        crane: { x: tx + dirx * 90, y: ty + diry * 90 }
+        home: { x: hx, y: hy },
+        pick: pick,
+        crane: { x: hx, y: hy }
     };
     recoveries.push(rec);
 
@@ -1650,7 +1925,13 @@ function updateRecovery(dt) {
             r.crane.y = r.clearFrom.y + (r.home.y - r.clearFrom.y) * e;
             if (r.t >= 1.8) { r.phase = 'done'; r.t = 0; }
 
-        } else {
+        }
+
+        // Whatever the route worked out, the crane is never drawn inside a
+        // grandstand.
+        if (r.phase !== 'done') nudgeOffStand(track, r.crane, 14);
+
+        if (r.phase === 'done') {
             r.car.recovering = false;
             r.car.recovered = true;                 // parked, out of the way
             r.car.liftAmount = 0;
@@ -1804,7 +2085,7 @@ function endPracticeSession() {
     statsBody.innerHTML = '';
     if (!laps.length) {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="7" style="padding: 14px; opacity: 0.7;">No completed laps.</td>`;
+        tr.innerHTML = `<td colspan="9" style="padding: 14px; opacity: 0.7;">No completed laps.</td>`;
         statsBody.appendChild(tr);
         return;
     }
@@ -1817,9 +2098,11 @@ function endPracticeSession() {
             <td>${i + 1}</td>
             <td style="font-weight: bold; color: ${isBest ? '#4CAF50' : '#fff'};">Lap ${i + 1}${isBest ? ' ★' : ''}</td>
             <td>-</td>
+            <td>-</td>
             <td style="color: ${isBest ? '#4CAF50' : '#fff'};">${(ms / 1000).toFixed(3)}</td>
             <td style="color: #4CAF50;">${(best / 1000).toFixed(3)}</td>
             <td>${isBest ? '-' : delta}</td>
+            <td>-</td>
             <td>-</td>
         `;
         statsBody.appendChild(tr);
@@ -1847,6 +2130,7 @@ function updateHUD() {
 
     // Lap
     if (playerCar) {
+        renderTyreIndicator(playerCar);
         if (raceMode === 'practice') {
             lapCounter.innerText = `Practice — lap ${playerCar.lap + 1}`;
         } else if (raceMode === 'qualifying') {
@@ -1980,11 +2264,20 @@ function updateHUD() {
             }
 
             const name = driverCode(c);
+            // Compound alongside the name: you can see at a glance who is on
+            // what, which is the whole point of having a choice.
+            const tw = c.tyre ? Math.max(0, Math.min(1, 1 - (c.tyreWear || 0))) : 1;
+            const tyrePip = c.tyre
+                ? `<span class="tt-tyre" style="background:${c.tyre.colour};` +
+                  `opacity:${(0.35 + 0.65 * tw).toFixed(2)};" title="${c.tyre.label}">` +
+                  `${c.tyre.short}</span>`
+                : '<span class="tt-tyre" style="opacity:0;">-</span>';
             rows.push(
                 `<div class="tt-row${c.isPlayer ? ' me' : ''}">` +
                 `<span class="tt-pos">${i + 1}</span>` +
                 `<span class="tt-chip" style="background:${c.color};"></span>` +
                 `<span class="tt-name"${(c.isBroken && !c.finished) ? ' style="opacity:.45;"' : ''}>${name}</span>` +
+                tyrePip +
                 `<span class="tt-gap">${gap}</span>` +
                 `</div>`);
         }
@@ -2006,6 +2299,7 @@ function updateHUD() {
         // the race instead - which lap the leader is on, and who it is.
         const ldr = sortedCars[0];
         if (ldr) {
+            renderTyreIndicator(ldr);
             const lap = Math.min(ldr.lap + (ldr.finished ? 0 : 1), TOTAL_LAPS);
             lapCounter.innerText = `Lap: ${lap}/${TOTAL_LAPS}`;
             posCounter.innerText = `Leader: ${driverCode(ldr)}`;
@@ -2182,6 +2476,21 @@ function updateHUD() {
                 `(pole, win, fastest lap, led all ${TOTAL_LAPS} laps)`);
         }
 
+        // Work out points BEFORE the season record is written: it used to be
+        // built first, so every bonus it stored was undefined.
+        if (isChampionship) {
+            sortedCars.forEach((c, index) => {
+                let pts = 0, bon = 0;
+                if (c.finished) {
+                    pts = f1Points[index] || 0;
+                    const gained = Math.max(0, (c.startGridPos || (index + 1)) - (index + 1));
+                    bon = Math.min(PLACES_BONUS_CAP, gained * PLACES_BONUS_PER);
+                }
+                c._ptsEarned = pts;
+                c._bonusEarned = bon;
+            });
+        }
+
         // Season record: one row per race, kept for the end-of-championship recap
         if (isChampionship) {
             championshipState.results = championshipState.results || [];
@@ -2197,6 +2506,8 @@ function updateHUD() {
                     name: c.driverName || c.color,
                     pos: i + 1,
                     pts: c.finished ? (f1Points[i] || 0) : 0,
+                    bonus: c._bonusEarned || 0,
+                    tyre: c.tyre ? c.tyre.key : null,
                     dnf: c.isBroken && !c.finished
                 })).concat(skipMode && skipPlayer ? [{
                     // you sat this one out: classified DNS, no points
@@ -2214,10 +2525,23 @@ function updateHUD() {
             const tr = document.createElement('tr');
             
             // Assign Championship Points
-            let ptsEarned = 0;
+            // Places gained: one point per position recovered from the grid,
+            // capped at 5. Deliberately generous next to the scoring tail -
+            // P8 is worth 4 - so a hard drive from the back is worth about as
+            // much as a quiet run in the top ten. That is the point.
+            const ptsEarned = c._ptsEarned || 0;
+            const bonusEarned = c._bonusEarned || 0;
             if (isChampionship && c.finished) {
-                ptsEarned = f1Points[index] || 0;
                 championshipState.points[c.color] += ptsEarned;
+                if (bonusEarned > 0) {
+                    championshipState.bonusPoints[c.color] =
+                        (championshipState.bonusPoints[c.color] || 0) + bonusEarned;
+                    championshipState.points[c.color] += bonusEarned;
+                    const gained = Math.max(0, (c.startGridPos || (index + 1)) - (index + 1));
+                    RaceLog.event('BONUS', `${c.driverName || c.color} — +${bonusEarned} for ` +
+                        `${gained} place${gained > 1 ? 's' : ''} gained ` +
+                        `(P${c.startGridPos} to P${index + 1})`);
+                }
             }
             
             // Format time
@@ -2264,12 +2588,14 @@ function updateHUD() {
 
             tr.innerHTML = `
                 <td>${index + 1}</td>
-                <td style="color: ${c.color}; font-weight: bold; text-transform: capitalize;">${nameDisplay} ${isChampionship && ptsEarned > 0 ? `[+${ptsEarned} pts]` : ''}</td>
+                <td style="color: ${c.color}; font-weight: bold; text-transform: capitalize;">${nameDisplay}</td>
+                <td>${c.tyre ? `<span class="tyre-pip" style="background:${c.tyre.colour};" title="${c.tyre.label}"></span>${c.tyre.short}` : '-'}</td>
                 <td${isLapped || isDNF ? ' style="opacity: 0.55;"' : ''}>${lapsStr}</td>
                 <td${dim}>${timeStr}</td>
                 <td style="color: ${isFastest ? '#ce93d8' : '#4CAF50'}; font-weight: ${isFastest ? 'bold' : 'normal'};">${bestLapStr}</td>
                 <td>${gapStr}</td>
-                <td>${reactStr}</td>
+                <td>${isChampionship ? (ptsEarned || 0) : '-'}</td>
+                <td class="pts-bonus"${bonusEarned > 0 ? ` title="${Math.max(0, (c.startGridPos || (index + 1)) - (index + 1))} places gained: P${c.startGridPos} to P${index + 1}"` : ''}>${isChampionship && bonusEarned > 0 ? '+' + bonusEarned : (isChampionship ? '&mdash;' : '-')}</td>
             `;
             statsBody.appendChild(tr);
         });
@@ -2282,11 +2608,13 @@ function updateHUD() {
             tr.innerHTML = `
                 <td>&ndash;</td>
                 <td style="color: ${skipPlayer.color}; font-weight: bold;">You (${skipPlayer.color})</td>
+                <td>-</td>
                 <td>0</td>
                 <td>DNS</td>
                 <td>-</td>
                 <td>DNS</td>
-                <td>-</td>
+                <td>0</td>
+                <td class="pts-bonus">&mdash;</td>
             `;
             statsBody.appendChild(tr);
         }
@@ -2307,10 +2635,13 @@ function updateHUD() {
                 const participant = championshipState.participants.find(p => p.color === col);
                 const nameDisplay = participant && participant.driverName ? `${participant.driverName} (${col})` : col;
                 
+                const b = (championshipState.bonusPoints || {})[col] || 0;
                 tr.innerHTML = `
                     <td>${idx + 1}</td>
                     <td style="color: ${col}; font-weight: bold;">${nameDisplay}</td>
-                    <td>${championshipState.points[col]} pts</td>
+                    <td>${championshipState.points[col] - b}</td>
+                    <td class="pts-bonus">${b > 0 ? '+' + b : '&mdash;'}</td>
+                    <td><b>${championshipState.points[col]}</b></td>
                 `;
                 champRecapBody.appendChild(tr);
             });
@@ -2768,6 +3099,7 @@ function startChampionship() {
         weather: weather,
         currentTrackIndex: 0,
         points: {},
+        bonusPoints: {},          // places-gained, tracked apart from race points
         participants: [],
         results: [],
         difficulty: difficulty
@@ -2787,16 +3119,19 @@ function startChampionship() {
             let name = availableNames[i % availableNames.length];
             championshipState.participants.push({ isPlayer: false, color: aiCol, skillVariation: 0.8 + (Math.random() * 0.3), driverName: name });
             championshipState.points[aiCol] = 0;
+            championshipState.bonusPoints[aiCol] = 0;
         }
     } else {
         championshipState.participants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: "You" });
         championshipState.points[color] = 0;
+        championshipState.bonusPoints[color] = 0;
         
         for (let i = 0; i < numOpponents; i++) {
             let aiCol = aiColors[i % aiColors.length];
             let name = availableNames[i % availableNames.length];
             championshipState.participants.push({ isPlayer: false, color: aiCol, skillVariation: 0.8 + (Math.random() * 0.3), driverName: name });
             championshipState.points[aiCol] = 0;
+            championshipState.bonusPoints[aiCol] = 0;
         }
     }
     
@@ -2851,10 +3186,14 @@ function showChampionshipFinal() {
               `${n > 3 ? `&times;${n}` : ''}</span>`
             : '';
 
+        const bonus = (championshipState.bonusPoints || {})[color] || 0;
+        const racePts = championshipState.points[color] - bonus;
         tr.innerHTML = `
             <td>${idx + 1}</td>
             <td style="color: ${color}; font-weight: bold;">${nameDisplay}${star}</td>
-            <td>${championshipState.points[color]} pts</td>
+            <td>${racePts}</td>
+            <td class="pts-bonus">${bonus > 0 ? '+' + bonus : '&mdash;'}</td>
+            <td><b>${championshipState.points[color]}</b></td>
         `;
         champStatsBody.appendChild(tr);
     });
