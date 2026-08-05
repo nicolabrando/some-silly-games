@@ -294,6 +294,20 @@ class SegmentedTrack {
                 if (tc < bestT) { best = cand; bestT = tc; }
             }
             this._lineFast = best;
+
+            // Arc length of the start line itself. Node 0 is wherever the
+            // first track segment happens to begin, which is no use as a
+            // datum: distances have to be measured from the line every car
+            // crosses, or two cars at the same point on track read differently.
+            for (const line of [this._lineStd, this._lineFast]) {
+                let si = 0, md = Infinity;
+                for (let i = 0; i < line.count; i++) {
+                    const d = Math.hypot(line.nodes[i].cx - this.startX,
+                                         line.nodes[i].cy - this.startY);
+                    if (d < md) { md = d; si = i; }
+                }
+                line.sStart = line.nodes[si].s;
+            }
         }
         return level === 'fast' ? this._lineFast : this._lineStd;
     }

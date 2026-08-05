@@ -18,8 +18,11 @@ let __carUid = 0;
 //  races" is impossible by construction.
 //
 //  So they are tuned the other way: the three have the same MEAN pace across
-//  a race to within 0.01%, and completely different shapes. Soft starts 6.1%
-//  quicker than hard and finishes 9.8% slower. Nothing is a free win; what
+//  a race to within 0.001%, and completely different shapes. Soft starts 10.3%
+//  quicker than hard and finishes 16.6% slower - over its stint it throws away
+//  a quarter of its performance, while the hard loses half a percent. The
+//  first version of these numbers was half as dramatic and the difference was
+//  not noticeable from the driving seat. Nothing is a free win; what
 //  you are choosing is WHEN you want your performance. What then breaks the
 //  tie is situational - track position, how much you slide the car (wear
 //  accrues faster under load), a corner-heavy circuit, and the places-gained
@@ -33,11 +36,11 @@ let __carUid = 0;
 // =========================================================================
 const TYRES = {
     soft:   { key: 'soft',   label: 'Soft',   short: 'S', colour: '#e53935',
-              grip: 1.050, falloff: 0.1390, life: 0.90 },
+              grip: 1.090, falloff: 0.2285, life: 0.90 },
     medium: { key: 'medium', label: 'Medium', short: 'M', colour: '#fdd835',
-              grip: 1.000, falloff: 0.0667, life: 1.50 },
+              grip: 1.000, falloff: 0.0696, life: 1.50 },
     hard:   { key: 'hard',   label: 'Hard',   short: 'H', colour: '#e0e0e0',
-              grip: 0.990, falloff: 0.0300, life: 2.20 }
+              grip: 0.988, falloff: 0.0240, life: 2.60 }
 };
 const TYRE_KEYS = ['soft', 'medium', 'hard'];
 
@@ -107,12 +110,15 @@ class Car {
         this.gripUse = 0;
         this.powerOversteer = 0;
 
-        // Monotone distance covered round the circuit, in track pixels, and
-        // its value at the last finish-line crossing. Never wraps, so it can
-        // be compared between two cars anywhere on the lap.
+        // Distance covered round the circuit, in track pixels, measured from
+        // the start line, and its value at the last crossing. Directly
+        // comparable between any two cars anywhere on the lap.
         this.trackProgress = 0;
         this.lapStartProgress = 0;
+        this.lapS = 0;              // position round the current lap, 0 at the line
         this._lastS = undefined;
+        this._lastDist = undefined;
+        this._lapAnchored = undefined;
         this._nodeIdx = undefined;
 
         // Slipstream strength, 0..1 (set by main.js)
@@ -459,9 +465,11 @@ class Car {
         }
     }
     
-    // Monotone odometer of real progress round the circuit, in track pixels.
+    // Distance covered round the circuit, in track pixels, measured from the
+    // START LINE - the same datum for every car, so two cars level on track
+    // read the same number wherever they started from.
     //
-    // Three earlier attempts were wrong, each for its own reason:
+    // Four earlier attempts were wrong, each for its own reason:
     //   1. a hardcoded "x > 650" half-distance marker - geometry-specific;
     //   2. distance *travelled* - inflated by every spin and reverse, so a car
     //      could bank a lap it had never completed;
@@ -469,11 +477,19 @@ class Car {
     //      200px radius, which on a hairpin jumps to the far side of the corner
     //      and on the straight clears the finish line before the car does. Both
     //      made cars look a lap apart when they were side by side, which is
-    //      what produced blue flags out of nowhere.
+    //      what produced blue flags out of nowhere;
+    //   4. forward-only accumulation from wherever the car happened to start.
+    //      That reads zero at each car's own grid slot, and the slots are 30px
+    //      apart, so the car starting last carried a permanent ~270px credit -
+    //      a sixth of a lap on the Oval. Level on track, it was scored a
+    //      quarter of a second up the road, and once it went a lap down that
+    //      credit was enough to float it back above cars on the lead lap. It
+    //      then appeared in the timing tower wherever it physically was rather
+    //      than at the bottom where a lapped car belongs.
     //
-    // This measures from the car's actual position: the nearest node of the
-    // (uniformly sampled) racing line, found with a local search, unwrapped
-    // across the start line and accumulated forwards only.
+    // So: arc length from the start line, unwrapped across it. Two cars level
+    // on track now read the same number whatever grid slot they came from, and
+    // a car a lap down reads exactly one lap length behind.
     updateTrackProgress(track) {
         if (typeof track.getRacingLine !== 'function') return;
         const line = track.getRacingLine('standard');
@@ -500,15 +516,29 @@ class Car {
         }
         this._nodeIdx = best;
 
-        const sNow = nodes[best].s;
-        if (this._lastS === undefined) {
-            this._lastS = sNow;
-        } else {
-            let ds = sNow - this._lastS;
-            if (ds < -total / 2) ds += total;        // wrapped forwards
-            else if (ds > total / 2) ds -= total;    // wrapped backwards
-            if (ds > 0) this.trackProgress += ds;
-            this._lastS = sNow;
+        // Where we are round the lap, 0 at the start line. Same origin for
+        // every car, which is the whole point.
+        const sStart = line.sStart || 0;
+        this.lapS = (((nodes[best].s - sStart) % total) + total) % total;
+
+        // Unwrap it across the line into a continuous distance. A car cannot
+        // cover half a lap in one frame, so the nearest continuation of last
+        // frame's reading is the true one.
+        let d = this.lapS;
+        if (this._lastDist !== undefined) {
+            d += Math.round((this._lastDist - d) / total) * total;
+        }
+        this.trackProgress = d;
+        this._lastDist = d;
+        this._lastS = nodes[best].s;
+
+        // The grid sits behind the line, so a car starts the race most of a
+        // lap "into" lap zero. Anchor the first reading or the half-distance
+        // check below fires on the formation lap and the very first crossing
+        // scores a lap nobody drove.
+        if (this._lapAnchored === undefined) {
+            this.lapStartProgress = d;
+            this._lapAnchored = true;
         }
 
         if (!this.halfwayMarkerCrossed &&

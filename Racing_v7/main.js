@@ -5,6 +5,10 @@ let track;
 let cars = [];
 let ais = [];
 let playerCar;
+// Seat two, occupied only in two-player mode. playerCar is always seat one, so
+// every existing single-player path keeps working untouched.
+let player2Car = null;
+let twoPlayer = false;
 let gameState = 'menu'; // 'menu', 'countdown', 'playing', 'gameover'
 let lastTime = 0;
 let TOTAL_LAPS = 10;
@@ -56,6 +60,8 @@ let lapLeaders = [];
 // separately for qualifying and for the race, so a soft-tyre banzai lap and a
 // hard-tyre race stint are a legitimate plan.
 let playerTyre = 'medium';
+let playerTyre2 = 'medium';     // seat two, two-player mode
+let pendingTyreSeat = 1;        // which seat the tyre screen is currently asking
 
 // --- Places-gained bonus -------------------------------------------------
 // One championship point per position recovered from the grid, up to five.
@@ -96,15 +102,31 @@ function stableTowerOrder(sorted) {
         towerOrder = sorted.slice();
         return towerOrder;
     }
+    // The hysteresis is there to stop two cars running side by side from
+    // trading places every frame. It has no business slowing down a car that
+    // is a whole lap out of position: that is not a close call, and made a
+    // freshly lapped car climb the tower one place per frame.
+    const lapLen = (track && typeof track.getRacingLine === 'function')
+        ? track.getRacingLine('standard').length : Infinity;
+    const marginFor = (a, b) => Math.abs(towerScore(a) - towerScore(b)) > lapLen * 0.5
+        ? 0 : TOWER_MARGIN;
+
     // Two settling passes a frame while the race is running, so the hysteresis
     // does its job. Once cars are taking the flag their order is a fact rather
     // than a judgement call, so settle it completely - otherwise the tower can
-    // still be a few places behind the truth at the moment the race ends.
-    const nPasses = leaderFinished ? towerOrder.length : 2;
+    // still be a few places behind the truth at the moment the race ends. A
+    // lap-scale inversion is settled completely too.
+    let lapGap = false;
+    for (let i = 0; i < towerOrder.length - 1 && !lapGap; i++) {
+        if (towerScore(towerOrder[i + 1]) > towerScore(towerOrder[i]) + lapLen * 0.5) {
+            lapGap = true;
+        }
+    }
+    const nPasses = (leaderFinished || lapGap) ? towerOrder.length : 2;
     for (let pass = 0; pass < nPasses; pass++) {
         for (let i = 0; i < towerOrder.length - 1; i++) {
             const a = towerOrder[i], b = towerOrder[i + 1];
-            if (towerScore(b) > towerScore(a) + TOWER_MARGIN) {
+            if (towerScore(b) > towerScore(a) + marginFor(a, b)) {
                 towerOrder[i] = b;
                 towerOrder[i + 1] = a;
             }
@@ -130,6 +152,7 @@ let skipMode = false;
 let skipClock = 0;
 let skipNow = 0;
 let skipPlayer = null;      // the player's entry, held out of the field
+let skipPlayers = [];       // every human entry (two of them on one keyboard)
 
 // The DNF window is measured against the wall clock during a normal race and
 // against the simulation clock while a Grand Prix is being skipped.
@@ -180,26 +203,116 @@ const qualiTitle = document.getElementById('quali-title');
 const qualiRaceBtn = document.getElementById('quali-race-btn');
 const qualiMenuBtn = document.getElementById('quali-menu-btn');
 
-const keys = {
-    ArrowUp: false,
-    ArrowDown: false,
-    ArrowLeft: false,
-    ArrowRight: false
+// ===========================================================================
+// CONTROLS
+//
+// Nothing downstream of here ever names a physical key. Each seat has its own
+// logical input - up / down / left / right - and a scheme that says which keys
+// fill it in. So "arrows or WASD" is a menu setting, and a second seat is just
+// a second set of the same four booleans.
+// ===========================================================================
+const KEY_SCHEMES = {
+    arrows: {
+        label: 'Arrow keys', short: '↑←↓→',
+        up: 'arrowup', down: 'arrowdown', left: 'arrowleft', right: 'arrowright'
+    },
+    wasd: {
+        label: 'W A S D', short: 'W A S D',
+        up: 'w', down: 's', left: 'a', right: 'd'
+    }
 };
+const KEY_DIRS = ['up', 'down', 'left', 'right'];
+
+const keys  = { up: false, down: false, left: false, right: false };   // seat 1
+const keys2 = { up: false, down: false, left: false, right: false };   // seat 2
+
+// Seat 1 uses whatever the menu says; seat 2 always gets the other scheme, so
+// the two can never fight over a key.
+function schemeName(seat) {
+    const sel = document.getElementById('controls-select');
+    const first = (sel && sel.value === 'wasd') ? 'wasd' : 'arrows';
+    if (seat === 2) return first === 'wasd' ? 'arrows' : 'wasd';
+    return first;
+}
+function schemeOf(seat) { return KEY_SCHEMES[schemeName(seat)]; }
+
+function clearKeys() {
+    for (const d of KEY_DIRS) { keys[d] = false; keys2[d] = false; }
+}
+
+// Both seats are routed at all times. Writing seat 2 when nobody is sitting in
+// it costs nothing, and it means key handling never has to know what mode the
+// game is in.
+function routeKey(raw, down) {
+    const k = (raw || '').toLowerCase();
+    let used = false;
+    for (const seat of [1, 2]) {
+        const s = schemeOf(seat);
+        const target = seat === 1 ? keys : keys2;
+        for (const d of KEY_DIRS) {
+            if (s[d] === k) { target[d] = down; used = true; }
+        }
+    }
+    return used;
+}
+
+function typingInAField(e) {
+    const t = e && e.target;
+    if (!t || !t.tagName) return false;
+    const tag = t.tagName.toUpperCase();
+    return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+}
 
 window.addEventListener('keydown', (e) => {
-    if (keys.hasOwnProperty(e.key)) {
-        keys[e.key] = true;
-        e.preventDefault();
-    }
+    if (typingInAField(e)) return;          // W in the lap box is a W
+    if (routeKey(e.key, true)) e.preventDefault();
 });
 
 window.addEventListener('keyup', (e) => {
-    if (keys.hasOwnProperty(e.key)) {
-        keys[e.key] = false;
-        e.preventDefault();
-    }
+    if (typingInAField(e)) return;
+    if (routeKey(e.key, false)) e.preventDefault();
 });
+
+// --- menu: players + controls -------------------------------------------
+// Seat 2 always takes whichever scheme seat 1 did not, so the menu only ever
+// asks one question and the hint spells out the consequence.
+function syncControlsUi() {
+    const two = twoPlayerEnabled();
+    const g2 = document.getElementById('p2-color-group');
+    const colorSel = document.getElementById('color-select');
+    const spectator = colorSel.querySelector
+        ? colorSel.querySelector('option[value="spectator"]') : null;
+
+    if (g2) g2.style.display = two ? 'block' : 'none';
+    const l1 = document.getElementById('p1-color-label');
+    if (l1) l1.innerText = two ? 'Player 1 car color:' : 'Choose your car color:';
+    const cl = document.getElementById('controls-label');
+    if (cl) cl.innerText = two ? 'Controls (Player 1):' : 'Controls:';
+
+    // Two people, nobody spectating.
+    if (spectator) spectator.disabled = two;
+    if (two && colorSel.value === 'spectator') colorSel.value = 'red';
+
+    // Two seats cannot share a colour.
+    const sel2 = document.getElementById('p2-color-select');
+    if (two && sel2 && sel2.value === colorSel.value) {
+        sel2.value = P_COLORS.find(c => c !== colorSel.value);
+    }
+
+    const hint = document.getElementById('controls-hint');
+    if (hint) {
+        const s1 = schemeOf(1), s2 = schemeOf(2);
+        hint.innerHTML = two
+            ? `<b>Player 1</b> ${s1.short} &nbsp;·&nbsp; <b>Player 2</b> ${s2.short}` +
+              ' — both cars are on track at once, on one keyboard.'
+            : `${s1.short} — up throttles, down brakes, left and right steer.`;
+    }
+}
+['players-select', 'controls-select', 'color-select', 'p2-color-select'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.addEventListener) el.addEventListener('change', syncControlsUi);
+});
+syncControlsUi();
 
 startBtn.addEventListener('click', () => {
     isChampionship = false;
@@ -208,10 +321,10 @@ startBtn.addEventListener('click', () => {
     pendingWeather = null;
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
     if (qualifyingEnabled()) {
-        showTyreChoice('Qualifying tyres', 'One flying lap is all that matters here.',
+        chooseTyres('Qualifying tyres', 'One flying lap is all that matters here.',
             QUALI_LAPS - 1, () => startQualifying(null));
     } else {
-        showTyreChoice('Race tyres', 'This set has to last the whole race.',
+        chooseTyres('Race tyres', 'This set has to last the whole race.',
             laps, () => startGame());
     }
 });
@@ -256,8 +369,8 @@ function setPaused(want) {
         pauseOverlay.style.display = 'flex';
         pauseBtn.innerText = '▶ Resume';
         if (typeof stopAudio === 'function') stopAudio();
-        // release the controls so the car isn't left on full throttle
-        keys.ArrowUp = keys.ArrowDown = keys.ArrowLeft = keys.ArrowRight = false;
+        // release the controls so no car is left on full throttle
+        clearKeys();
         return;
     }
 
@@ -267,7 +380,7 @@ function setPaused(want) {
     if (firstFinisherTime) firstFinisherTime += paused;
     pauseOverlay.style.display = 'none';
     pauseBtn.innerText = '⏸ Pause';
-    if (typeof initAudio === 'function') initAudio(!playerCar);
+    if (typeof initAudio === 'function') initAudio(!playerCar, humanCars().length);
     lastTime = performance.now();
     requestAnimationFrame(gameLoop);      // the loop stopped; start it again
 }
@@ -298,10 +411,10 @@ document.getElementById('gp-start-btn').addEventListener('click', () => {
     const trackType = championshipState.tracks[championshipState.currentTrackIndex];
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
     if (qualifyingEnabled()) {
-        showTyreChoice('Qualifying tyres', 'One flying lap is all that matters here.',
+        chooseTyres('Qualifying tyres', 'One flying lap is all that matters here.',
             QUALI_LAPS - 1, () => startQualifying(trackType));
     } else {
-        showTyreChoice('Race tyres', 'This set has to last the whole race.',
+        chooseTyres('Race tyres', 'This set has to last the whole race.',
             laps, () => startGame(trackType));
     }
 });
@@ -311,7 +424,7 @@ document.getElementById('gp-skip-btn').addEventListener('click', skipGrandPrix);
 qualiRaceBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
-    showTyreChoice('Race tyres', 'A fresh set. This one has to last the whole race.',
+    chooseTyres('Race tyres', 'A fresh set. This one has to last the whole race.',
         laps, () => startGame(qualiTrackType));
 });
 
@@ -329,6 +442,7 @@ restartBtn.addEventListener('click', () => {
     pendingWeather = null;
     skipMode = false;
     skipPlayer = null;
+    skipPlayers = [];
     menu.style.display = 'block';
 });
 
@@ -336,6 +450,7 @@ nextRoundBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
     skipMode = false;
     skipPlayer = null;
+    skipPlayers = [];
     nextChampionshipRound();
 });
 
@@ -349,6 +464,7 @@ quitBtn.addEventListener('click', () => {
     isPaused = false;
     pauseOverlay.style.display = 'none';
     hud.style.display = 'none';
+    hideSplitHud();
     timingTower.style.display = 'none';
     stopSessionBtn.style.display = 'none';
     stopSessionBtn.innerText = 'Stop Session';
@@ -364,6 +480,7 @@ quitBtn.addEventListener('click', () => {
     pendingWeather = null;
     skipMode = false;
     skipPlayer = null;
+    skipPlayers = [];
     document.getElementById('skip-overlay').style.display = 'none';
 });
 
@@ -383,10 +500,10 @@ if (isMobile) {
         btn.addEventListener('touchcancel', (e) => { e.preventDefault(); keys[keyName] = false; });
     };
     
-    bindTouch(btnUp, 'ArrowUp');
-    bindTouch(btnDown, 'ArrowDown');
-    bindTouch(btnLeft, 'ArrowLeft');
-    bindTouch(btnRight, 'ArrowRight');
+    bindTouch(btnUp, 'up');
+    bindTouch(btnDown, 'down');
+    bindTouch(btnLeft, 'left');
+    bindTouch(btnRight, 'right');
 }
 
 // ===========================================================================
@@ -404,9 +521,40 @@ const QUALI_LAPS = 3;
 // spectator mode (there is no player to drive a session) and reverse grid,
 // where the grid comes from the standings so there is nothing to qualify for.
 function qualifyingEnabled() {
-    if (document.getElementById('color-select').value === 'spectator') return false;
-    if (isChampionship && reverseGridEnabled()) return false;
-    return true;
+    // A championship carries its own field: whether anyone is driving was
+    // settled when it was created, not by whatever the menu says now.
+    if (isChampionship) {
+        if (reverseGridEnabled()) return false;
+        return !!(championshipState && championshipState.participants.some(p => p.isPlayer));
+    }
+    return humanSeats().length > 0;
+}
+
+function twoPlayerEnabled() {
+    const sel = document.getElementById('players-select');
+    return !!(sel && sel.value === '2');
+}
+
+const P_COLORS = ['red', 'blue', 'yellow', 'purple', 'orange', 'white'];
+
+// The human entries for a field built from the menu: none when spectating,
+// one normally, two on a shared keyboard. Seat order is the seat number, and
+// the two seats can never end up the same colour.
+function humanSeats() {
+    const color = document.getElementById('color-select').value;
+    if (!twoPlayerEnabled()) {
+        if (color === 'spectator') return [];
+        return [{ isPlayer: true, playerIndex: 1, color: color,
+                  skillVariation: 1, driverName: 'You' }];
+    }
+    const c1 = color === 'spectator' ? 'red' : color;
+    const sel2 = document.getElementById('p2-color-select');
+    let c2 = (sel2 && sel2.value) || 'blue';
+    if (c2 === c1) c2 = P_COLORS.find(c => c !== c1);
+    return [
+        { isPlayer: true, playerIndex: 1, color: c1, skillVariation: 1, driverName: 'Player 1' },
+        { isPlayer: true, playerIndex: 2, color: c2, skillVariation: 1, driverName: 'Player 2' }
+    ];
 }
 
 function reverseGridEnabled() {
@@ -440,9 +588,9 @@ function buildField() {
     let aiColors = [...possibleColors];
     const field = [];
 
-    if (color !== 'spectator') {
-        field.push({ isPlayer: true, color: color, skillVariation: 1, driverName: 'You' });
-        aiColors = aiColors.filter(c => c !== color);
+    for (const h of humanSeats()) {
+        field.push(h);
+        aiColors = aiColors.filter(c => c !== h.color);
     }
 
     const legendaryDrivers = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
@@ -553,10 +701,14 @@ function qualiOrder() {
         .filter(q => q.lap !== null)
         .map(q => ({ p: q.p, lap: q.lap }));
 
-    if (playerCar) {
+    // One row per human on track. A driver whose session is already over keeps
+    // the time they set - laps driven afterwards do not count.
+    for (const c of humanCars()) {
+        const seat = c.playerIndex || 1;
         rows.push({
-            p: pendingField.find(x => x.isPlayer),
-            lap: playerCar.bestLapTime,   // null until the first flying lap
+            p: pendingField.find(x => x.isPlayer && (x.playerIndex || 1) === seat),
+            lap: c.qualiDone ? (c.qualiFinalTime !== undefined ? c.qualiFinalTime : c.bestLapTime)
+                             : c.bestLapTime,   // null until the first flying lap
             isPlayer: true
         });
     }
@@ -578,8 +730,7 @@ function renderQualiTower() {
         if (r.lap === null) gap = '--';
         else if (i === 0) gap = (r.lap / 1000).toFixed(1);
         else gap = '+' + ((r.lap - pole) / 1000).toFixed(1);
-        const code = r.p ? (r.p.isPlayer ? 'YOU' : (DRIVER_CODES[r.p.driverName] ||
-                     (r.p.driverName || r.p.color).slice(0, 3).toUpperCase())) : '---';
+        const code = participantCode(r.p);
         return `<div class="tt-row${r.p && r.p.isPlayer ? ' me' : ''}">` +
                `<span class="tt-pos">${i + 1}</span>` +
                `<span class="tt-chip" style="background:${r.p ? r.p.color : '#888'};"></span>` +
@@ -606,6 +757,7 @@ function startQualifying(forceTrackType) {
     document.getElementById('lap-timer').innerText = '';
     posCounter.innerText = '';
     lapCounter.innerText = 'Qualifying — warm-up lap';
+    hideSplitHud();
 
     qualiTrackType = forceTrackType || document.getElementById('track-select').value;
     track = makeTrack(qualiTrackType);
@@ -613,10 +765,6 @@ function startQualifying(forceTrackType) {
     track.leaderFinished = false;
     track.currentRaceTime = 0;
     qualiTrack = track;
-    if (typeof track.makePuddles === 'function') {
-        track.puddles = [];
-        if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
-    }
 
     // The weekend's weather is decided here and reused for the race, so
     // qualifying and the race are never run in different conditions.
@@ -634,6 +782,14 @@ function startQualifying(forceTrackType) {
     weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
     renderTyreIndicator(null);
 
+    // AFTER the weather is decided, not before. This used to sit above the
+    // block that sets isRaining, so a session got the PREVIOUS session's
+    // weather: puddles appeared in dry qualifying and were missing in wet.
+    if (typeof track.makePuddles === 'function') {
+        track.puddles = [];
+        if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
+    }
+
     TOTAL_LAPS = 9999;              // the session ends on lap count, not the flag
     vscActive = false;
     vscPowerFactor = 1;
@@ -648,37 +804,48 @@ function startQualifying(forceTrackType) {
     qualiTimes = [];
     qualiQueue = pendingField.filter(p => !p.isPlayer);
 
-    // The player starts on the line, on the racing line, already rolling:
+    // The players start on the line, on the racing line, already rolling:
     // this is an out lap from the pits, not a standing start.
     cars = [];
     ais = [];
     playerCar = null;
+    player2Car = null;
 
-    const playerP = pendingField.find(p => p.isPlayer);
-    if (playerP) {
+    const humans = pendingField.filter(p => p.isPlayer);
+    twoPlayer = humans.length > 1;
+
+    if (humans.length) {
         const line = track.getRacingLine();
         let si = 0, md = Infinity;
         line.nodes.forEach((n, i) => {
             const d = Math.hypot(n.cx - track.startX, n.cy - track.startY);
             if (d < md) { md = d; si = i; }
         });
-        const n0 = line.nodes[si];
-        const car = new Car(n0.cx, n0.cy, playerP.color, true);
-        car.driverName = 'You';
-        car.angle = n0.heading;
-        car.startX = n0.cx; car.startY = n0.cy; car.startAngle = n0.heading;
-        // Qualifying is not a free hit: the barriers cost the same as in the
-        // race, and a heavy enough shunt ends your session. The car is rebuilt
-        // for the race though - you carry the grid slot over, not the damage.
-        car.maxHealth = 255 + 10 * Math.max(0, Math.min(QUALI_LAPS, 40) - 5);
-        car.health = car.maxHealth;
-        car.nextWaypoint = 0;
-        car._lapPixels = line.length;
-        car.tyre = TYRES[playerTyre] || TYRES.medium;
-        car.tyreWear = 0;
-        car._tyreRaceLaps = QUALI_LAPS;
-        cars.push(car);
-        playerCar = car;
+
+        humans.forEach((playerP, k) => {
+            // Two cars cannot leave the pits from the same square metre, so
+            // seat 2 rolls out a few nodes back down the racing line. Both are
+            // timed from their own first crossing, so nobody is disadvantaged.
+            const idx = ((si - k * 5) % line.nodes.length + line.nodes.length) % line.nodes.length;
+            const n0 = line.nodes[idx];
+            const car = new Car(n0.cx, n0.cy, playerP.color, true);
+            car.driverName = playerP.driverName || 'You';
+            car.playerIndex = playerP.playerIndex || 1;
+            car.angle = n0.heading;
+            car.startX = n0.cx; car.startY = n0.cy; car.startAngle = n0.heading;
+            // Qualifying is not a free hit: the barriers cost the same as in the
+            // race, and a heavy enough shunt ends your session. The car is rebuilt
+            // for the race though - you carry the grid slot over, not the damage.
+            car.maxHealth = 255 + 10 * Math.max(0, Math.min(QUALI_LAPS, 40) - 5);
+            car.health = car.maxHealth;
+            car.nextWaypoint = 0;
+            car._lapPixels = line.length;
+            car.tyre = TYRES[seatTyre(car.playerIndex)] || TYRES.medium;
+            car.tyreWear = 0;
+            car._tyreRaceLaps = QUALI_LAPS;
+            cars.push(car);
+            if (car.playerIndex === 2) player2Car = car; else playerCar = car;
+        });
     }
 
     RaceLog.start({
@@ -707,7 +874,7 @@ function startQualifying(forceTrackType) {
     pauseBtn.innerText = '⏸ Pause';
     winnerAnnouncement.style.display = 'none';
 
-    if (typeof initAudio === 'function') initAudio(!playerCar);
+    if (typeof initAudio === 'function') initAudio(!playerCar, humanCars().length);
     lastTime = performance.now();
     requestAnimationFrame(gameLoop);
 }
@@ -735,6 +902,93 @@ function renderTyreIndicator(car) {
         (left * 100).toFixed(0) + '%</span>';
 }
 
+// ===========================================================================
+// TWO-PLAYER HUD
+//
+// One bar along the top can only ever describe one driver. With two people on
+// the keyboard each gets their own card along the bottom, colour-keyed to the
+// car, and the top bar keeps only what they share: weather, DNF clock, buttons.
+// ===========================================================================
+function hideSplitHud() {
+    const el = document.getElementById('hud2');
+    if (el) el.style.display = 'none';
+}
+
+function fmtLapMs(ms) {
+    if (ms === null || ms === undefined || !isFinite(ms)) return '--.---';
+    return (ms / 1000).toFixed(3);
+}
+
+function playerCardHtml(car, pos, field) {
+    const s = schemeOf(car.playerIndex || 1);
+    const speed = Math.sqrt(car.velocity.x ** 2 + car.velocity.y ** 2);
+
+    let line1;
+    if (raceMode === 'practice') {
+        line1 = `Lap ${car.lap + 1}`;
+    } else if (raceMode === 'qualifying') {
+        line1 = car.qualiDone ? 'Session over'
+              : (car.lap === 0 ? 'Warm-up lap'
+                               : `Flying lap ${car.lap}/${QUALI_LAPS - 1}`);
+    } else {
+        line1 = `Lap ${Math.min(car.lap + 1, TOTAL_LAPS)}/${TOTAL_LAPS}` +
+                (pos ? ` &nbsp; P${pos}/${field}` : '');
+    }
+
+    // tyre
+    let tyreHtml = '';
+    if (car.tyre) {
+        const left = Math.max(0, Math.min(1, 1 - (car.tyreWear || 0)));
+        const col = left > 0.55 ? '#00e676' : (left > 0.30 ? '#ffc400' : '#ff3d00');
+        tyreHtml =
+            `<span class="p-pip" style="background:${car.tyre.colour};"></span>` +
+            `<b>${car.tyre.short}</b>` +
+            `<span class="p-bar"><span style="width:${(left * 100).toFixed(0)}%;` +
+            `background:${col};"></span></span>` +
+            `<span style="color:${col};">${(left * 100).toFixed(0)}%</span>`;
+    }
+
+    const nowMs = typeof track.currentRaceTime === 'number' ? track.currentRaceTime : 0;
+    const cur = car.finished || car.qualiDone
+        ? (car.lastLapTime || 0)
+        : Math.max(0, nowMs - car.lapStartTime);
+    const curCol = car.bestLapTime ? (cur > car.bestLapTime ? '#ff8a80' : '#69f0ae') : '#fff';
+
+    const dead = car.isBroken ? '<span class="p-dead">OUT</span>' : '';
+
+    return `<div class="p-line"><span class="p-who" style="color:${car.color};">` +
+           `${humanLabel(car)}</span>` +
+           `<span class="p-keys">${s.short}</span>${dead}</div>` +
+           `<div class="p-line"><span>${line1}</span></div>` +
+           `<div class="p-line"><span class="p-speed">${Math.floor(speed * 0.5)} km/h</span>` +
+           tyreHtml + `</div>` +
+           `<div class="p-line"><span style="color:${curCol};">${fmtLapMs(cur)}</span>` +
+           `<span style="opacity:.6;">B ${fmtLapMs(car.bestLapTime)}</span></div>`;
+}
+
+function renderSplitHud(sortedCars) {
+    const box = document.getElementById('hud2');
+    if (!box) return;
+    if (!twoPlayer || !humanCars().length || skipMode) { box.style.display = 'none'; return; }
+
+    box.style.display = 'flex';
+    const p1 = document.getElementById('p1-card');
+    const p2 = document.getElementById('p2-card');
+    const seats = [[playerCar, p1], [player2Car, p2]];
+
+    for (let i = 0; i < seats.length; i++) {
+        const car = seats[i][0], el = seats[i][1];
+        if (!el) continue;
+        if (!car) { el.style.display = 'none'; continue; }
+        el.style.display = 'block';
+        el.style.borderLeftColor = car.color;
+        el.style.borderRightColor = car.color;
+        el.className = 'p-card' + (i === 1 ? ' p-right' : '');
+        const pos = sortedCars ? sortedCars.indexOf(car) + 1 : 0;
+        el.innerHTML = playerCardHtml(car, pos, sortedCars ? sortedCars.length : 0);
+    }
+}
+
 function tyreLapsText(key, laps) {
     const t = TYRES[key];
     const life = t.life * laps;
@@ -742,13 +996,31 @@ function tyreLapsText(key, laps) {
                         : '~' + life.toFixed(1) + ' of ' + laps + ' laps';
 }
 
-function showTyreChoice(title, subtitle, laps, cb) {
+// Each seat runs its own set. Two players choose one after the other, and
+// nothing else in the game has to care how many choices were made.
+function seatTyre(index) {
+    return (index === 2 ? playerTyre2 : playerTyre) || 'medium';
+}
+
+function chooseTyres(title, subtitle, laps, done) {
+    if (!twoPlayerEnabled()) {
+        showTyreChoice(title, subtitle, laps, done, 1);
+        return;
+    }
+    showTyreChoice(title + ' — Player 1', subtitle, laps, () => {
+        showTyreChoice(title + ' — Player 2', subtitle, laps, done, 2);
+    }, 1);
+}
+
+function showTyreChoice(title, subtitle, laps, cb, seat) {
+    pendingTyreSeat = seat === 2 ? 2 : 1;
     pendingTyreCb = cb;
     menu.style.display = 'none';
     gameOverScreen.style.display = 'none';
     qualiScreen.style.display = 'none';
     document.getElementById('gp-preview').style.display = 'none';
     hud.style.display = 'none';
+    hideSplitHud();
     gameState = 'menu';
 
     tyreTitle.innerText = title;
@@ -765,11 +1037,12 @@ function showTyreChoice(title, subtitle, laps, cb) {
     }).join('');
     Array.prototype.forEach.call(tyreOptions.querySelectorAll('.tyre-opt'), (b) => {
         b.addEventListener('click', () => {
-            playerTyre = b.getAttribute('data-tyre');
+            const pick = b.getAttribute('data-tyre');
+            if (pendingTyreSeat === 2) playerTyre2 = pick; else playerTyre = pick;
             tyreScreen.style.display = 'none';
             const cb2 = pendingTyreCb;
             pendingTyreCb = null;
-            if (cb2) cb2(playerTyre);
+            if (cb2) cb2(pick);
         });
     });
     tyreScreen.style.display = 'block';
@@ -869,6 +1142,7 @@ function showGpPreview(trackType) {
     gameOverScreen.style.display = 'none';
     qualiScreen.style.display = 'none';
     hud.style.display = 'none';
+    hideSplitHud();
     gameState = 'menu';               // nothing is running while this is up
 
     const round = championshipState.currentTrackIndex + 1;
@@ -928,7 +1202,8 @@ function skipGrandPrix() {
     skipMode = true;
     skipClock = 0;
     skipNow = 0;
-    skipPlayer = championshipState.participants.find(p => p.isPlayer) || null;
+    skipPlayers = championshipState.participants.filter(p => p.isPlayer);
+    skipPlayer = skipPlayers[0] || null;
 
     startGame(trackType);        // builds the field WITHOUT the player
 }
@@ -943,6 +1218,7 @@ function endQualifying() {
     gameState = 'gameover';
     raceFinished = true;
     hud.style.display = 'none';
+    hideSplitHud();
     timingTower.style.display = 'none';
     stopSessionBtn.style.display = 'none';
     stopSessionBtn.innerText = 'Stop Session';
@@ -965,7 +1241,7 @@ function endQualifying() {
 
     qualiTitle.innerText = isRaining ? 'Qualifying — Wet 🌧️' : 'Qualifying — Dry ☀️';
     qualiBody.innerHTML = rows.map((r, i) => {
-        const name = r.p ? (r.p.isPlayer ? 'YOU' : r.p.driverName) : '?';
+        const name = r.p ? (r.p.isPlayer && !twoPlayer ? 'YOU' : r.p.driverName) : '?';
         const time = r.lap === null ? '<span style="opacity:.45;">no time</span>'
                                     : (r.lap / 1000).toFixed(3);
         const gap = r.lap === null ? '&ndash;'
@@ -1076,7 +1352,8 @@ function startGame(forceTrackType = null) {
     cars = [];
     ais = [];
     playerCar = null; // Reset playerCar
-    
+    player2Car = null;
+
     // Find closest waypoint to start line
     let startIdx = 0;
     let minDist = Infinity;
@@ -1135,7 +1412,11 @@ function startGame(forceTrackType = null) {
     let gridSource = 'simulated qualifying';
 
     if (isPractice) {
-        currentParticipants.push({ isPlayer: true, color: color === 'spectator' ? 'red' : color, skillVariation: 1, driverName: 'You' });
+        // Free practice with nobody driving would be an empty track, so a
+        // spectator still gets a car here.
+        const seats = humanSeats();
+        currentParticipants = seats.length ? seats
+            : [{ isPlayer: true, playerIndex: 1, color: 'red', skillVariation: 1, driverName: 'You' }];
     } else if (pendingGrid) {
         // 1. The player just drove a qualifying session: that order IS the grid.
         currentParticipants = [...pendingGrid];
@@ -1177,9 +1458,9 @@ function startGame(forceTrackType = null) {
             .sort((a, b) => a.lap - b.lap)
             .map(x => x.p);
 
-        const player = currentParticipants.find(p => p.isPlayer);
-        if (player) {
-            qualified.splice(Math.floor(qualified.length / 2), 0, player);
+        const players = currentParticipants.filter(p => p.isPlayer);
+        if (players.length) {
+            qualified.splice(Math.floor(qualified.length / 2), 0, ...players);
         }
         currentParticipants = qualified;
     }
@@ -1187,6 +1468,10 @@ function startGame(forceTrackType = null) {
     // Skipped Grand Prix: you are not on the grid at all. The AI race that
     // follows is a real one for everyone else.
     if (skipMode) currentParticipants = currentParticipants.filter(p => !p.isPlayer);
+
+    // The field is settled: this is what decides whether the game is in
+    // two-player mode for the session about to run, not the menu.
+    twoPlayer = currentParticipants.filter(p => p.isPlayer).length > 1;
 
     // Consumed: the next race builds its own grid unless it too is qualified for.
     pendingGrid = null;
@@ -1212,13 +1497,14 @@ function startGame(forceTrackType = null) {
         
         const car = new Car(gridPos.x, gridPos.y, p.color, p.isPlayer);
         car.driverName = p.driverName;
+        car.playerIndex = p.isPlayer ? (p.playerIndex || 1) : 0;
         car.gridIndex = i;              // stable tie-break before anyone moves
         car.startGridPos = i + 1;       // for the places-gained bonus
 
         // Tyres. The player has just chosen; each AI picks from its own style,
         // so the grid is a mix rather than ten cars on the same rubber.
         car._lapPixels = track.getRacingLine ? track.getRacingLine('standard').length : 3000;
-        const tKey = p.isPlayer ? playerTyre
+        const tKey = p.isPlayer ? seatTyre(car.playerIndex)
                                 : AI.chooseTyre(p.driverName, TOTAL_LAPS, isRaining);
         car.tyre = TYRES[tKey] || TYRES.medium;
         car.tyreWear = 0;
@@ -1230,7 +1516,8 @@ function startGame(forceTrackType = null) {
         cars.push(car);
         
         if (p.isPlayer) {
-            playerCar = car;
+            if (car.playerIndex === 2) player2Car = car;
+            else playerCar = car;
         } else {
             ais.push(new AI(car, isChampionship ? championshipState.difficulty : difficulty, p.skillVariation));
         }
@@ -1283,7 +1570,12 @@ function startGame(forceTrackType = null) {
     // The HUD is not updated during the countdown, so the tyre readout still
     // showed the compound from qualifying right up to the lights going out.
     // Render it here, the moment the grid exists.
-    renderTyreIndicator(playerCar || cars[0] || null);
+    if (twoPlayer) {
+        renderTyreIndicator(null);      // the cards carry it, one per driver
+        renderSplitHud(null);
+    } else {
+        renderTyreIndicator(playerCar || cars[0] || null);
+    }
 
     // ---- open the log for this session ----------------------------------
     RaceLog.start({
@@ -1313,24 +1605,59 @@ function startGame(forceTrackType = null) {
     
     // Initialize Audio
     if (typeof initAudio === 'function') {
-        initAudio(!playerCar); // Pass true if spectator mode
+        initAudio(!playerCar, humanCars().length); // Pass true if spectator mode
     }
     
     lastTime = performance.now();
     requestAnimationFrame(gameLoop);
 }
 
+// --- human seats ---------------------------------------------------------
+// One place that knows which cars are driven by a person and which keys feed
+// them. Seat 2 simply does not exist in a one-player game, so every call below
+// is a no-op there.
+function humanCars() {
+    const out = [];
+    if (playerCar) out.push(playerCar);
+    if (player2Car) out.push(player2Car);
+    return out;
+}
+
+function seatKeys(car) {
+    return (car && car.playerIndex === 2) ? keys2 : keys;
+}
+
+function applyHumanInputs() {
+    for (const c of humanCars()) {
+        // A driver whose qualifying session is over coasts to a stop: they
+        // cannot keep circulating and improving on a time everyone else has
+        // already finished chasing.
+        if (c.qualiDone) {
+            c.inputs.up = c.inputs.down = c.inputs.left = c.inputs.right = false;
+            continue;
+        }
+        const k = seatKeys(c);
+        c.inputs.up = k.up;
+        c.inputs.down = k.down;
+        c.inputs.left = k.left;
+        c.inputs.right = k.right;
+    }
+}
+
+// How a human is labelled. Alone you are "YOU"; with someone else on the
+// keyboard you need to be able to tell the two of you apart.
+function humanLabel(car) {
+    if (!car || !car.isPlayer) return '';
+    if (!twoPlayer) return 'YOU';
+    return car.playerIndex === 2 ? 'P2' : 'P1';
+}
+
 function updatePhysics(dt) {
     if (dt > 0.05) dt = 0.05; // cap dt for physics stability (min 20fps logic)
     
     // Player input
-    if (playerCar) {
-        playerCar.inputs.up = keys.ArrowUp;
-        playerCar.inputs.down = keys.ArrowDown;
-        playerCar.inputs.left = keys.ArrowLeft;
-        playerCar.inputs.right = keys.ArrowRight;
-    }
-    
+    applyHumanInputs();
+
     // AI input
     ais.forEach(ai => ai.update(track, dt));
 
@@ -1352,6 +1679,10 @@ function updatePhysics(dt) {
     });
     
     // --- Slipstreaming (Drafting) Check ---
+    // A stopped car leaves no wake, and a crawling one leaves a weak one. The
+    // ramp is set below where racing actually happens: over six circuits, only
+    // 0.6% of racing car-frames are under 15 units of forward speed and 4% are
+    // under 45, so the tow behind a moving car is untouched.
     cars.forEach(car => {
         car.isDrafting = false; // Reset drafting state
         car.draftStrength = 0;
@@ -1379,6 +1710,16 @@ function updatePhysics(dt) {
         for (const otherCar of cars) {
             if (car === otherCar || otherCar.isBroken) continue;
 
+            // A slipstream is a hole punched in the air, so a car that is not
+            // moving is not making one. Sitting behind a parked car - one that
+            // has finished its qualifying laps, spun, or is stopped on the
+            // grid - used to hand out a full tow.
+            const ofx = Math.cos(otherCar.angle), ofy = Math.sin(otherCar.angle);
+            const otherFwd = otherCar.velocity.x * ofx + otherCar.velocity.y * ofy;
+            const wake = Math.max(0, Math.min(1,
+                (otherFwd - DRAFT_MIN_SPEED) / (DRAFT_FULL_SPEED - DRAFT_MIN_SPEED)));
+            if (wake <= 0) continue;
+
             const dx = otherCar.x - car.x;
             const dy = otherCar.y - car.y;
             const dist = Math.hypot(dx, dy);
@@ -1405,7 +1746,7 @@ function updatePhysics(dt) {
             const coneFactor = 1 - (angleDiff / 0.40);
             const alignFactor = 1 - (headingDiff / 0.7);
 
-            const strength = Math.max(0, Math.min(1, distFactor * coneFactor * alignFactor));
+            const strength = Math.max(0, Math.min(1, distFactor * coneFactor * alignFactor * wake));
             if (strength > best) best = strength;
         }
 
@@ -1426,6 +1767,7 @@ function updatePhysics(dt) {
     
     // --- Wrecks, Virtual Safety Car and recovery --------------------------
     updateRecovery(dt);
+    applyVscHold();
 
     // --- Blue flags -------------------------------------------------------
     // Shown to a car that is about to be lapped: a quicker car on a higher lap
@@ -1622,9 +1964,21 @@ const DRIVER_CODES = {
     'Max Verstappen': 'VER', 'Niki Lauda': 'LAU', 'Fernando Alonso': 'ALO',
     'Sebastian Vettel': 'VET'
 };
+// The same label from a participant record rather than a live car, for the
+// screens that exist before or after the cars do.
+function participantCode(p) {
+    if (!p) return '---';
+    if (p.isPlayer) {
+        if (!twoPlayer) return 'YOU';
+        return (p.playerIndex || 1) === 2 ? 'P2' : 'P1';
+    }
+    return DRIVER_CODES[p.driverName] ||
+           (p.driverName || p.color || '---').slice(0, 3).toUpperCase();
+}
+
 function driverCode(car) {
     if (!car) return '---';
-    if (car.isPlayer) return 'YOU';
+    if (car.isPlayer) return humanLabel(car);
     const n = car.driverName;
     if (n && DRIVER_CODES[n]) return DRIVER_CODES[n];
     if (n) return n.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase();
@@ -1637,6 +1991,98 @@ function driverCode(car) {
 //  obstacle. It is taken off by a crane; while that happens every car runs
 //  on reduced power and the yellow VSC banner is up.
 // =========================================================================
+// --- VSC: no overtaking -------------------------------------------------
+// Cutting everyone's power equally is not enough to freeze the order, because
+// a car with a run, a tow, or fresher tyres still closes and goes by. So each
+// car meets an invisible wall that travels with the one in front: inside the
+// hold distance it simply cannot go quicker than the car ahead, and the last
+// stretch is a hard stop it cannot cross at all.
+const VSC_HOLD_GAP = 62;      // px of track progress where the wall starts
+const VSC_WALL_GAP = 30;      // px it can never get closer than
+const VSC_PUSH_MAX = 1.2;     // px/frame the wall gives back: a nudge, not a jump
+
+// Forward speed a car needs before it leaves a slipstream behind it.
+const DRAFT_MIN_SPEED = 15;   // stopped or crawling: no wake at all
+const DRAFT_FULL_SPEED = 45;  // at or above this: a full wake
+
+// The running order at the moment the VSC came out. Positions are held
+// against THIS, not against a fresh sort every frame: re-sorting each frame
+// let a pass that completed inside a single frame stick, because by the time
+// the hold ran the two cars had already swapped and it dutifully held the new
+// order. Freezing the list is also how a real VSC is adjudicated.
+let vscOrder = null;
+
+// Which way the circuit runs where this car is standing. Taken from the
+// racing line, so it is right whichever way the car itself is pointing.
+function trackDirAt(c) {
+    if (!track || typeof track.getRacingLine !== 'function') return null;
+    const line = track.getRacingLine('standard');
+    if (!line || c._nodeIdx === undefined) return null;
+    const n = line.nodes[c._nodeIdx];
+    if (!n) return null;
+    if (isFinite(n.heading)) return { x: Math.cos(n.heading), y: Math.sin(n.heading) };
+    if (isFinite(n.tx)) return { x: n.tx, y: n.ty };
+    return null;
+}
+
+function applyVscHold() {
+    if (!vscActive) { vscOrder = null; return; }
+    const running = cars.filter(c => !c.finished && !c.isBroken);
+    if (running.length < 2) return;
+
+    if (!vscOrder) {
+        vscOrder = running.slice()
+            .sort((a, b) => (b.trackProgress || 0) - (a.trackProgress || 0))
+            .map(c => c.uid);
+    }
+
+    // The WALL is applied against whoever is physically ahead right now, not
+    // against the frozen list. Holding the frozen order physically was worse:
+    // if two cars did briefly swap, it then held the wrong one back and let
+    // them separate in the wrong direction. The frozen list governs the
+    // CLASSIFICATION instead - which is what the player actually sees, and is
+    // guaranteed rather than merely very likely.
+    const held = running.slice()
+        .sort((a, b) => (b.trackProgress || 0) - (a.trackProgress || 0));
+
+    for (let i = 1; i < held.length; i++) {
+        const ahead = held[i - 1], c = held[i];
+        const gap = (ahead.trackProgress || 0) - (c.trackProgress || 0);
+        if (gap >= VSC_HOLD_GAP) continue;
+
+        // Everything below works along the TRACK, not along the car's own
+        // nose. A car sideways on - mid-spin, or caught out of a slow corner -
+        // has a heading that points across the circuit, and holding it back
+        // "backwards" then threw it sideways across the tarmac at a
+        // thousand pixels a second.
+        const t = trackDirAt(c);
+        if (!t) continue;
+
+        const fwd = c.velocity.x * t.x + c.velocity.y * t.y;
+        const ta = trackDirAt(ahead) || t;
+        const aheadFwd = ahead.velocity.x * ta.x + ahead.velocity.y * ta.y;
+
+        // Inside the wall it may not out-run the car ahead; right up against
+        // it, it has to give a little back.
+        const squeeze = gap <= VSC_WALL_GAP ? 0.92 : 1.0;
+        const cap = Math.max(0, aheadFwd * squeeze);
+        if (fwd > cap) {
+            c.velocity.x -= t.x * (fwd - cap);
+            c.velocity.y -= t.y * (fwd - cap);
+        }
+
+        // Still inside the wall: ease it back off the car in front. A nudge,
+        // capped per frame - the gap is restored over a few tenths instead of
+        // in one jump, which is the difference between a car being held up
+        // and a car appearing somewhere else.
+        if (gap < VSC_WALL_GAP) {
+            const back = Math.min(VSC_PUSH_MAX, VSC_WALL_GAP - gap);
+            c.x -= t.x * back;
+            c.y -= t.y * back;
+        }
+    }
+}
+
 // --- grandstand geometry -------------------------------------------------
 // Shared by the wreck's drop point AND the crane's route. The drop point has
 // always avoided the crowd; the crane did not, so it drove through the stands
@@ -2058,22 +2504,31 @@ function endPracticeSession() {
     gameState = 'gameover';
     raceFinished = true;
     hud.style.display = 'none';
+    hideSplitHud();
     timingTower.style.display = 'none';
     stopSessionBtn.style.display = 'none';
     if (isMobile) mobileControls.style.display = 'none';
     if (typeof stopAudio === 'function') stopAudio();
 
-    const laps = (playerCar && playerCar.lapTimes) ? playerCar.lapTimes : [];
-    const best = laps.length ? Math.min(...laps) : null;
+    // Every lap either driver set, each judged against their own best.
+    const rows = [];
+    let laps = [], best = null;
+    for (const c of humanCars()) {
+        const ls = c.lapTimes || [];
+        const b = ls.length ? Math.min(...ls) : null;
+        if (c === playerCar) { laps = ls; best = b; }
+        ls.forEach((ms, i) => rows.push({
+            name: (twoPlayer ? humanLabel(c) + ' ' : '') + `Lap ${i + 1}`,
+            laps: 1,
+            time: (ms / 1000).toFixed(3),
+            best: ms === b ? 'BEST' : '',
+            note: ''
+        }));
+    }
 
-    RaceLog.event('SESSION', `practice stopped after ${laps.length} timed laps` +
+    RaceLog.event('SESSION', `practice stopped after ${rows.length} timed laps` +
         (best ? `, best ${(best / 1000).toFixed(3)}` : ''));
-    RaceLog.end(laps.map((ms, i) => ({
-        name: `Lap ${i + 1}`, laps: 1,
-        time: (ms / 1000).toFixed(3),
-        best: ms === best ? 'BEST' : '',
-        note: ''
-    })));
+    RaceLog.end(rows);
 
     document.getElementById('result-message').innerText = 'Practice Session';
     resultMessage.style.color = '#26a69a';
@@ -2128,8 +2583,20 @@ function updateHUD() {
         // Don't return here so spectator can still update standings
     }
 
+    // With two drivers the top bar cannot speak for either of them: the
+    // per-driver readouts move to the two cards along the bottom.
+    if (twoPlayer) {
+        lapCounter.innerText = '';
+        posCounter.innerText = '';
+        speedometer.innerText = '';
+        const lt2 = document.getElementById('lap-timer');
+        if (lt2) lt2.innerHTML = '';
+        const ti2 = document.getElementById('tyre-indicator');
+        if (ti2) ti2.innerHTML = '';
+    }
+
     // Lap
-    if (playerCar) {
+    if (playerCar && !twoPlayer) {
         renderTyreIndicator(playerCar);
         if (raceMode === 'practice') {
             lapCounter.innerText = `Practice — lap ${playerCar.lap + 1}`;
@@ -2212,6 +2679,12 @@ function updateHUD() {
         // so two cars running side by side crossed that line a frame apart and
         // swapped, and the distance term flips again as they pass it. The
         // order was correct on average and jittering several times a second.
+        // Under the VSC the order is held, so the classification reads from
+        // the frozen list rather than from distance covered.
+        if (vscActive && vscOrder) {
+            const ia = vscOrder.indexOf(a.uid), ib = vscOrder.indexOf(b.uid);
+            if (ia !== -1 && ib !== -1 && ia !== ib) return ia - ib;
+        }
         const pa = a.trackProgress || 0, pb = b.trackProgress || 0;
         if (pa !== pb) return pb - pa;
         return (a.gridIndex || 0) - (b.gridIndex || 0);   // stable at lights-out
@@ -2284,8 +2757,10 @@ function updateHUD() {
         timingTower.innerHTML = rows.join('');
     }
 
+    renderSplitHud(sortedCars);
+
     const pos = playerCar ? sortedCars.indexOf(playerCar) + 1 : "-";
-    if (playerCar) {
+    if (playerCar && !twoPlayer) {
         if (raceMode === 'practice') {
             posCounter.innerText = '';
         } else if (raceMode === 'qualifying') {
@@ -2294,9 +2769,10 @@ function updateHUD() {
         } else {
             posCounter.innerText = `Pos: ${pos}/${cars.length}`;
         }
-    } else if (raceMode === 'race' || raceMode === 'championship') {
+    } else if (!playerCar && (raceMode === 'race' || raceMode === 'championship')) {
         // Spectating: there is no car of yours to report, so the HUD follows
         // the race instead - which lap the leader is on, and who it is.
+        // Two-player is NOT this case - both drivers have their own card.
         const ldr = sortedCars[0];
         if (ldr) {
             renderTyreIndicator(ldr);
@@ -2326,8 +2802,9 @@ function updateHUD() {
         // Show temporary winner announcement
         winnerAnnouncement.style.display = 'block';
         winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
-        if (firstFinisher === playerCar) {
-            winnerText.innerHTML = "You Finished First!";
+        if (firstFinisher.isPlayer) {
+            winnerText.innerHTML = twoPlayer
+                ? `${humanLabel(firstFinisher)} Finished First!` : 'You Finished First!';
             winnerText.style.color = "#4CAF50";
         } else {
             const nameDisplay = firstFinisher.driverName ? `${firstFinisher.driverName} (${firstFinisher.color})` : firstFinisher.color.toUpperCase();
@@ -2340,16 +2817,19 @@ function updateHUD() {
         }, 4000);
     }
     
-    if (playerCar && playerCar.isBroken && !playerCar.notifiedBroken &&
-        (raceMode === 'race' || raceMode === 'championship')) {
-        playerCar.notifiedBroken = true;
-        winnerAnnouncement.style.display = 'block';
-        winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
-        winnerText.innerHTML = "Car Destroyed!";
-        winnerText.style.color = "#F44336";
-        setTimeout(() => {
-            winnerAnnouncement.style.display = 'none';
-        }, 4000);
+    for (const hc of humanCars()) {
+        if (hc.isBroken && !hc.notifiedBroken &&
+            (raceMode === 'race' || raceMode === 'championship')) {
+            hc.notifiedBroken = true;
+            winnerAnnouncement.style.display = 'block';
+            winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
+            winnerText.innerHTML = twoPlayer
+                ? `${humanLabel(hc)} — Car Destroyed!` : 'Car Destroyed!';
+            winnerText.style.color = "#F44336";
+            setTimeout(() => {
+                winnerAnnouncement.style.display = 'none';
+            }, 4000);
+        }
     }
 
     // Everything below is RACE-END machinery, and it only applies to a race.
@@ -2387,6 +2867,7 @@ function updateHUD() {
         raceFinished = true;
         gameState = 'gameover';
         hud.style.display = 'none';
+        hideSplitHud();
         document.getElementById('skip-overlay').style.display = 'none';
         winnerAnnouncement.style.display = 'none';
         if (isMobile) mobileControls.style.display = 'none';
@@ -2404,7 +2885,15 @@ function updateHUD() {
         }
         
         let headerText = "Race Finished!";
-        if (playerCar) {
+        if (twoPlayer && humanCars().length) {
+            // Two people raced: the headline is how they finished against each
+            // other, in the order they crossed the line.
+            headerText = humanCars()
+                .slice()
+                .sort((a, b) => sortedCars.indexOf(a) - sortedCars.indexOf(b))
+                .map(c => `${humanLabel(c)} P${sortedCars.indexOf(c) + 1}`)
+                .join('  ·  ');
+        } else if (playerCar) {
             if (sortedCars[0] === playerCar) {
                 headerText = "You Won!";
             } else {
@@ -2417,7 +2906,13 @@ function updateHUD() {
         document.getElementById('result-message').innerText = headerText;
 
         if (sortedCars[0].finished) {
-            if (sortedCars[0] === playerCar) {
+            if (twoPlayer && humanCars().length) {
+                // Keep the head-to-head as the headline, and colour it by
+                // whether a person won the race outright.
+                resultMessage.innerText = headerText;
+                resultMessage.style.color =
+                    sortedCars[0].isPlayer ? '#4CAF50' : '#fff';
+            } else if (sortedCars[0] === playerCar) {
                 resultMessage.innerText = "You Won!";
                 resultMessage.style.color = "#4CAF50";
             } else {
@@ -2509,13 +3004,13 @@ function updateHUD() {
                     bonus: c._bonusEarned || 0,
                     tyre: c.tyre ? c.tyre.key : null,
                     dnf: c.isBroken && !c.finished
-                })).concat(skipMode && skipPlayer ? [{
+                })).concat(skipMode ? skipPlayers.map(sp => ({
                     // you sat this one out: classified DNS, no points
-                    color: skipPlayer.color,
-                    code: 'YOU',
-                    name: skipPlayer.driverName || skipPlayer.color,
+                    color: sp.color,
+                    code: participantCode(sp),
+                    name: sp.driverName || sp.color,
                     pos: null, pts: 0, dnf: false, dns: true
-                }] : [])
+                })) : [])
             });
         }
 
@@ -2602,21 +3097,24 @@ function updateHUD() {
         
         // You skipped this one: show yourself at the bottom of the sheet as
         // DNS rather than silently omitting you from your own championship.
-        if (skipMode && skipPlayer) {
-            const tr = document.createElement('tr');
-            tr.style.opacity = '0.6';
-            tr.innerHTML = `
-                <td>&ndash;</td>
-                <td style="color: ${skipPlayer.color}; font-weight: bold;">You (${skipPlayer.color})</td>
-                <td>-</td>
-                <td>0</td>
-                <td>DNS</td>
-                <td>-</td>
-                <td>DNS</td>
-                <td>0</td>
-                <td class="pts-bonus">&mdash;</td>
-            `;
-            statsBody.appendChild(tr);
+        if (skipMode) {
+            for (const sp of skipPlayers) {
+                const tr = document.createElement('tr');
+                tr.style.opacity = '0.6';
+                const who = twoPlayer ? (sp.driverName || 'Player') : 'You';
+                tr.innerHTML = `
+                    <td>&ndash;</td>
+                    <td style="color: ${sp.color}; font-weight: bold;">${who} (${sp.color})</td>
+                    <td>-</td>
+                    <td>0</td>
+                    <td>DNS</td>
+                    <td>-</td>
+                    <td>DNS</td>
+                    <td>0</td>
+                    <td class="pts-bonus">&mdash;</td>
+                `;
+                statsBody.appendChild(tr);
+            }
         }
 
         if (isChampionship) {
@@ -2782,13 +3280,9 @@ function gameLoop(timestamp) {
         }
         
         // False start check & physics update for jumping cars
-        if (playerCar) {
-            playerCar.inputs.up = keys.ArrowUp;
-            playerCar.inputs.down = keys.ArrowDown;
-            playerCar.inputs.left = keys.ArrowLeft;
-            playerCar.inputs.right = keys.ArrowRight;
-        }
-        
+        applyHumanInputs();
+
+
         cars.forEach(car => {
             if (!car.isPlayer) {
                 // A jumped start is a twitch off the line, not a launch: the
@@ -2822,7 +3316,7 @@ function gameLoop(timestamp) {
                 winnerAnnouncement.style.backgroundColor = 'rgba(20,0,0,0.92)';
 
                 const whoName = car.isPlayer
-                    ? 'YOU'
+                    ? humanLabel(car)
                     : (car.driverName ? car.driverName.toUpperCase() : car.color.toUpperCase());
                 const whoCar = car.driverName ? ` &ndash; ${car.color} car` : '';
 
@@ -2868,7 +3362,10 @@ function gameLoop(timestamp) {
                         c.waypointProgress = 0;
                         c.trackProgress = 0;
                         c.lapStartProgress = 0;
+                        c.lapS = 0;
                         c._lastS = undefined;
+                        c._lastDist = undefined;
+                        c._lapAnchored = undefined;   // re-anchor on the new grid
                         c._nodeIdx = undefined;
                         c.finished = false;
                         c.finishIndex = undefined;
@@ -2925,9 +3422,12 @@ function gameLoop(timestamp) {
             drawLights(ctx);
         }
         
+        // One engine per driver at the keyboard, each following its own car.
         if (typeof updateEngineSound === 'function') {
-            const speed = playerCar ? Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2) : 0;
-            updateEngineSound(speed, playerCar ? playerCar.inputs.up : false);
+            humanCars().forEach((c, i) => {
+                const speed = Math.sqrt(c.velocity.x ** 2 + c.velocity.y ** 2);
+                updateEngineSound(speed, c.inputs.up, i);
+            });
         }
         
         requestAnimationFrame(gameLoop);
@@ -2937,10 +3437,13 @@ function gameLoop(timestamp) {
     if (gameState === 'playing') {
         countdownTimer += dt;
 
-        // Track player reaction time on first input
-        if (playerCar && !playerCar.inputRecorded && (keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight)) {
-            playerCar.reactionTime = (performance.now() - raceStartTime) / 1000;
-            playerCar.inputRecorded = true;
+        // Track each human's reaction time on their first input
+        for (const c of humanCars()) {
+            const k = seatKeys(c);
+            if (!c.inputRecorded && (k.up || k.down || k.left || k.right)) {
+                c.reactionTime = (performance.now() - raceStartTime) / 1000;
+                c.inputRecorded = true;
+            }
         }
         
         track.leaderFinished = leaderFinished;
@@ -2955,21 +3458,32 @@ function gameLoop(timestamp) {
         // whatever is left before the grid is set, so nobody is ever missed.
         if (raceMode === 'qualifying' && dt < 0.05) qualiTick();
 
-        // Warm-up lap plus two flying laps and the session is over - or the
-        // car is wrecked, in which case you keep whatever time you had set
-        // (no time at all = back of the grid).
-        if (raceMode === 'qualifying' && playerCar &&
-            (playerCar.lap >= QUALI_LAPS || playerCar.isBroken)) {
-            if (playerCar.isBroken) {
-                RaceLog.event('WRECK', 'player destroyed the car in qualifying — session over');
+        // Warm-up lap plus two flying laps and a driver's session is over - or
+        // the car is wrecked, in which case they keep whatever time they had
+        // set (no time at all = back of the grid). With two on track the
+        // session runs until BOTH are done; whoever finishes first parks.
+        if (raceMode === 'qualifying' && humanCars().length) {
+            for (const c of humanCars()) {
+                if (c.qualiDone) continue;
+                if (c.lap >= QUALI_LAPS || c.isBroken) {
+                    c.qualiDone = true;
+                    c.qualiFinalTime = c.bestLapTime;
+                    if (c.isBroken) {
+                        RaceLog.event('WRECK', `${humanLabel(c)} destroyed the car in ` +
+                            'qualifying — session over');
+                    }
+                }
             }
-            endQualifying();
-            return;
+            if (humanCars().every(c => c.qualiDone)) {
+                endQualifying();
+                return;
+            }
         }
 
         // A wreck in free practice ends that session the same way.
-        if (raceMode === 'practice' && playerCar && playerCar.isBroken) {
-            RaceLog.event('WRECK', 'player destroyed the car in practice — session over');
+        if (raceMode === 'practice' && humanCars().length &&
+            humanCars().every(c => c.isBroken)) {
+            RaceLog.event('WRECK', 'the car was destroyed in practice — session over');
             endPracticeSession();
             return;
         }
@@ -3064,9 +3578,12 @@ function gameLoop(timestamp) {
             drawLights(ctx);
         }
         
+        // One engine per driver at the keyboard, each following its own car.
         if (typeof updateEngineSound === 'function') {
-            const speed = playerCar ? Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2) : 0;
-            updateEngineSound(speed, playerCar ? playerCar.inputs.up : false);
+            humanCars().forEach((c, i) => {
+                const speed = Math.sqrt(c.velocity.x ** 2 + c.velocity.y ** 2);
+                updateEngineSound(speed, c.inputs.up, i);
+            });
         }
         
         requestAnimationFrame(gameLoop);
@@ -3083,8 +3600,12 @@ function startChampionship() {
     const numOpponents = parseInt(document.getElementById('opponents-select').value, 10);
     
     const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white', 'green', 'cyan', 'pink', 'gray', 'lime', 'black'];
-    const aiColors = possibleColors.filter(c => c !== color);
-    
+    let aiColors = possibleColors.filter(c => c !== color);
+
+    // Fixed for the whole season: the field is built once and every round
+    // races the same drivers.
+    twoPlayer = twoPlayerEnabled() && color !== 'spectator';
+
     const tracks = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent', 'quadrato', 'triangle', 'pettine', 'thunder'];
 
     // The season's weather is rolled once, up front, at the same 20% per race
@@ -3122,10 +3643,13 @@ function startChampionship() {
             championshipState.bonusPoints[aiCol] = 0;
         }
     } else {
-        championshipState.participants.push({ isPlayer: true, color: color, skillVariation: 1, driverName: "You" });
-        championshipState.points[color] = 0;
-        championshipState.bonusPoints[color] = 0;
-        
+        for (const seat of humanSeats()) {
+            championshipState.participants.push(seat);
+            championshipState.points[seat.color] = 0;
+            championshipState.bonusPoints[seat.color] = 0;
+            aiColors = aiColors.filter(c => c !== seat.color);
+        }
+
         for (let i = 0; i < numOpponents; i++) {
             let aiCol = aiColors[i % aiColors.length];
             let name = availableNames[i % availableNames.length];
@@ -3157,6 +3681,7 @@ function nextChampionshipRound() {
 
 function showChampionshipFinal() {
     hud.style.display = 'none';
+    hideSplitHud();
     if (isMobile) mobileControls.style.display = 'none';
     champFinalScreen.style.display = 'block';
     
@@ -3232,8 +3757,7 @@ function renderSeasonRecap() {
 
     for (const color of order) {
         const p = championshipState.participants.find(x => x.color === color);
-        const label = p ? (p.isPlayer ? 'YOU' : (DRIVER_CODES[p.driverName] ||
-                          (p.driverName || color).slice(0, 3).toUpperCase())) : color.slice(0, 3).toUpperCase();
+        const label = p ? participantCode(p) : color.slice(0, 3).toUpperCase();
         html += `<tr><td style="text-align:left;white-space:nowrap;">` +
                 `<span class="tt-chip" style="background:${color};display:inline-block;vertical-align:middle;margin-right:6px;"></span>` +
                 `<b style="color:${color};">${label}</b></td>`;

@@ -1,6 +1,7 @@
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-let engineOscillator = null;
+let engineOscillator = null;    // seat 1, kept as its own name for clarity
 let engineGain = null;
+let engines = [];               // one voice per driver at the keyboard
 let isAudioInitialized = false;
 
 // BGM variables
@@ -50,54 +51,88 @@ const BGM_DRUM = [
 let noteIndex = 0;
 let noiseBuffer = null;
 
-function initAudio(isSpectator = false) {
+// ---------------------------------------------------------------------------
+//  ENGINES
+//  One voice per driver at the keyboard. With two of them the pair has to be
+//  tellable apart by ear, so the second engine is pitched a little differently
+//  and the two are panned to opposite sides - your car is the one on your side
+//  of the stereo image.
+// ---------------------------------------------------------------------------
+const ENGINE_VOICES = [
+    { pitch: 1.00, cutoff: 800, pan: -0.45 },   // seat 1
+    { pitch: 1.18, cutoff: 950, pan: 0.45 }     // seat 2, a shade higher strung
+];
+
+function makeEngineVoice(spec, level) {
+    const osc = audioContext.createOscillator();
+    osc.type = 'sawtooth';
+
+    const gain = audioContext.createGain();
+    gain.gain.value = level;
+
+    // Lowpass filter to muffle the raw sawtooth
+    const filter = audioContext.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = spec.cutoff;
+
+    osc.connect(filter);
+    filter.connect(gain);
+
+    // Panning is a nicety, not a requirement: older engines have no panner.
+    let tail = gain;
+    if (typeof audioContext.createStereoPanner === 'function') {
+        const pan = audioContext.createStereoPanner();
+        pan.pan.value = spec.pan;
+        gain.connect(pan);
+        tail = pan;
+    }
+    tail.connect(audioContext.destination);
+
+    osc.frequency.value = 50 * spec.pitch;      // idle
+    osc.start();
+    return { osc: osc, gain: gain, pitch: spec.pitch, base: level };
+}
+
+function initAudio(isSpectator = false, seats = 1) {
     if (isAudioInitialized) return;
-    
+
     // Resume context if suspended (browser policy)
     if (audioContext.state === 'suspended') {
         audioContext.resume();
     }
-    
+
+    engines = [];
     if (!isSpectator) {
-        // Engine Sound Setup
-        engineOscillator = audioContext.createOscillator();
-        engineOscillator.type = 'sawtooth';
-        
-        engineGain = audioContext.createGain();
-        engineGain.gain.value = 0.05; // Base low volume
-        
-        // Lowpass filter to muffle the raw sawtooth
-        const filter = audioContext.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 800;
-        
-        engineOscillator.connect(filter);
-        filter.connect(engineGain);
-        engineGain.connect(audioContext.destination);
-        
-        engineOscillator.frequency.value = 50; // Idle frequency
-        engineOscillator.start();
+        const n = Math.max(1, Math.min(ENGINE_VOICES.length, seats || 1));
+        // Two engines at full level is just loud, so share the headroom.
+        const level = 0.05 * (n > 1 ? 0.8 : 1);
+        for (let i = 0; i < n; i++) engines.push(makeEngineVoice(ENGINE_VOICES[i], level));
+
+        engineOscillator = engines[0].osc;
+        engineGain = engines[0].gain;
     } else {
         // BGM Setup
         startBGM();
     }
-    
+
     isAudioInitialized = true;
 }
 
-function updateEngineSound(speed, isAccelerating) {
-    if (!isAudioInitialized || !engineOscillator) return;
-    
+function updateEngineSound(speed, isAccelerating, seat = 0) {
+    if (!isAudioInitialized) return;
+    const e = engines[seat];
+    if (!e) return;
+
     // Map speed to frequency (e.g. 0 -> 50Hz, max speed -> 200Hz)
     // Assuming max speed is around 350
-    const targetFreq = 50 + (speed * 0.4); 
-    
+    const targetFreq = (50 + (speed * 0.4)) * e.pitch;
+
     // Smooth transition
-    engineOscillator.frequency.setTargetAtTime(targetFreq, audioContext.currentTime, 0.1);
-    
+    e.osc.frequency.setTargetAtTime(targetFreq, audioContext.currentTime, 0.1);
+
     // Adjust volume based on throttle
-    const targetVolume = isAccelerating ? 0.1 : 0.05;
-    engineGain.gain.setTargetAtTime(targetVolume, audioContext.currentTime, 0.1);
+    const targetVolume = isAccelerating ? e.base * 2 : e.base;
+    e.gain.gain.setTargetAtTime(targetVolume, audioContext.currentTime, 0.1);
 }
 
 // short burst of white noise, reused for the hi-hat
@@ -189,10 +224,12 @@ function startBGM() {
 }
 
 function stopAudio() {
-    if (engineOscillator) {
-        engineOscillator.stop();
-        engineOscillator = null;
+    for (const e of engines) {
+        try { e.osc.stop(); } catch (err) { /* already stopped */ }
     }
+    engines = [];
+    engineOscillator = null;
+    engineGain = null;
     if (bgmInterval) {
         clearInterval(bgmInterval);
         bgmInterval = null;

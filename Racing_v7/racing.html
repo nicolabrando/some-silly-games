@@ -22,6 +22,12 @@
                 <button id="pauseBtn" class="hud-btn" style="background: #455a64;">&#9208; Pause</button>
                 <button id="quitBtn" class="hud-btn">Quit</button>
             </div>
+            <!-- Two-player HUD: one card per seat, along the bottom. The top
+                 bar keeps the shared things (weather, DNF clock, buttons). -->
+            <div id="hud2" style="display: none;">
+                <div class="p-card" id="p1-card"></div>
+                <div class="p-card" id="p2-card"></div>
+            </div>
             <div id="pause-overlay" style="display: none;">
                 <div id="pause-panel">
                     <div style="font-size: 30px; font-weight: 900; letter-spacing: 4px;">PAUSED</div>
@@ -51,7 +57,14 @@
                     </select>
                 </div>
                 <div class="menu-group">
-                    <label>Choose your car color:</label>
+                    <label>Players:</label>
+                    <select id="players-select">
+                        <option value="1" selected>1 Player</option>
+                        <option value="2">2 Players &mdash; same keyboard</option>
+                    </select>
+                </div>
+                <div class="menu-group">
+                    <label id="p1-color-label">Choose your car color:</label>
                     <select id="color-select">
                         <option value="red">Red</option>
                         <option value="blue">Blue</option>
@@ -61,6 +74,25 @@
                         <option value="white">White</option>
                         <option value="spectator">Spectator (AI Only)</option>
                     </select>
+                </div>
+                <div class="menu-group" id="p2-color-group" style="display: none;">
+                    <label>Player 2 car color:</label>
+                    <select id="p2-color-select">
+                        <option value="blue" selected>Blue</option>
+                        <option value="red">Red</option>
+                        <option value="yellow">Yellow</option>
+                        <option value="purple">Purple</option>
+                        <option value="orange">Orange</option>
+                        <option value="white">White</option>
+                    </select>
+                </div>
+                <div class="menu-group">
+                    <label id="controls-label">Controls:</label>
+                    <select id="controls-select">
+                        <option value="arrows" selected>Arrow keys &nbsp;&uarr; &larr; &darr; &rarr;</option>
+                        <option value="wasd">W A S D</option>
+                    </select>
+                    <div id="controls-hint">Arrow keys: &uarr; throttle, &darr; brake, &larr;&rarr; steer.</div>
                 </div>
                 <div class="menu-group">
                     <label>Number of Laps:</label>
@@ -113,11 +145,33 @@
 
                         <h3>Controls</h3>
                         <ul>
-                            <li><b>↑</b> throttle &nbsp;·&nbsp; <b>↓</b> brake (and reverse once stopped)</li>
-                            <li><b>←&nbsp;→</b> steer &nbsp;·&nbsp; on a phone, use the on-screen pad</li>
+                            <li><b>Up</b> throttle &nbsp;·&nbsp; <b>Down</b> brake (and reverse once stopped)</li>
+                            <li><b>Left / Right</b> steer &nbsp;·&nbsp; on a phone, use the on-screen pad</li>
+                            <li>Arrow keys or <b>W A S D</b> &mdash; pick either in the menu. Left&#8209;handers
+                                and anyone who would rather keep a hand on the mouse can swap.</li>
                             <li><b>P</b> or <b>Esc</b> pause &mdash; or the Pause button in the corner. Works
                                 any time: on the grid, mid&#8209;race, in qualifying. The clock stops with
                                 you, so a pause costs you nothing.</li>
+                        </ul>
+
+                        <h3>Two players, one keyboard</h3>
+                        <p>Set <b>Players</b> to 2 and a second car joins the field. One of you drives on
+                            the arrow keys, the other on <b>W A S D</b> &mdash; whichever scheme Player&nbsp;1
+                            takes, Player&nbsp;2 automatically gets the other, so you can never fight over
+                            a key. The whole circuit is on screen at once, so there is no split screen and
+                            no camera to lose you.</p>
+                        <ul>
+                            <li>Each driver picks their <b>own compound</b>, before qualifying and again
+                                before the race. You do not have to agree.</li>
+                            <li>You <b>qualify together</b>, both on track at the same time, and the grid is
+                                set on the times you actually set. Whoever finishes their laps first parks
+                                and waits.</li>
+                            <li>Both cars score championship points, so a season is a straight
+                                head&#8209;to&#8209;head with the AI in between.</li>
+                            <li>Your own lap, position, speed, lap time and tyres are on your own card at
+                                the bottom of the screen, colour&#8209;keyed to your car.</li>
+                            <li>You each get your own engine note, pitched differently and panned to
+                                opposite sides &mdash; your car is the one on your side of the sound.</li>
                         </ul>
 
                         <h3>Driving the car</h3>
@@ -174,7 +228,9 @@
                             <li><b>Lights.</b> Move before they go out and you take a <b>5&nbsp;second penalty</b>
                                 and the grid is reset. The delay before the green is random &mdash; do not anticipate.</li>
                             <li><b>Slipstream.</b> Tuck in behind a car and you get a tow: more power, less drag.
-                                It builds the closer you get, so use it down the straight and pull out late.</li>
+                                It builds the closer you get, so use it down the straight and pull out late.
+                                The car ahead has to be <i>moving</i> to leave a hole in the air &mdash; one that
+                                is stopped, crawling or spun gives you nothing.</li>
                             <li><b>Blue flags.</b> A small blue flag over a car means it is about to be lapped
                                 and must let the leader through. If it appears over <i>you</i>, you are a lap down.</li>
                             <li><b>Qualifying.</b> You qualify before every race. The session is three laps:
@@ -227,6 +283,9 @@
                                 the grid, up to five, on top of the usual score. It is listed separately
                                 everywhere so you can see what you earned by overtaking rather than by
                                 qualifying.</li>
+                            <li><b>Virtual Safety Car.</b> While the VSC is out the order is frozen:
+                                each car meets an invisible wall that travels with the one in front and
+                                cannot get past it. Recover the places when the track goes green.</li>
                             <li><b>Grand Chelem.</b> Pole, the win, the fastest lap and leading every
                                 single lap of the race &mdash; all four in one Grand Prix. It is marked with
                                 a gold <span style="color:#FFD700;">&#9733;</span> beside your name in the
@@ -330,7 +389,7 @@
                 </table>
                 <div id="champ-recap-section" style="display: none; margin-top: 20px; border-top: 2px solid #555; padding-top: 10px;">
                     <h2>Current Standings</h2>
-                    <table id="champ-recap-table" style="width: 100%; border-collapse: collapse;">
+                    <table id="champ-recap-table" style="width: 100%; border-collapse: collapse; margin-bottom: 6px;">
                         <thead>
                             <tr style="border-bottom: 1px solid #fff;">
                                 <th>Pos</th>

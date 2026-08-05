@@ -107,6 +107,106 @@ button:hover {
     pointer-events: none;
 }
 
+/* --- two-player HUD ---------------------------------------------------
+   With two people on one keyboard the top bar can only ever describe one of
+   them, so in two-player mode the per-driver readouts move down here: one
+   card each, side by side, colour-keyed to the car. */
+#hud2 {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+}
+
+#hud2 .p-card {
+    background: rgba(0, 0, 0, 0.62);
+    border: 1px solid #444;
+    border-left-width: 5px;
+    border-radius: 5px;
+    padding: 5px 10px 6px;
+    min-width: 208px;
+    font-size: 13px;
+    line-height: 1.45;
+    text-shadow: none;
+}
+
+#hud2 .p-card.p-right {
+    text-align: right;
+    border-left-width: 1px;
+    border-right-width: 5px;
+}
+
+#hud2 .p-who {
+    font-weight: 900;
+    letter-spacing: 2px;
+    font-size: 12px;
+}
+
+#hud2 .p-keys {
+    opacity: 0.5;
+    font-weight: normal;
+    letter-spacing: 1px;
+    font-size: 11px;
+}
+
+#hud2 .p-line {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    white-space: nowrap;
+}
+
+#hud2 .p-card.p-right .p-line {
+    justify-content: flex-end;
+}
+
+#hud2 .p-speed {
+    font-weight: bold;
+    font-size: 17px;
+}
+
+#hud2 .p-bar {
+    display: inline-block;
+    width: 46px;
+    height: 7px;
+    border-radius: 3px;
+    background: #111;
+    border: 1px solid #000;
+    overflow: hidden;
+    vertical-align: middle;
+}
+
+#hud2 .p-bar > span {
+    display: block;
+    height: 100%;
+}
+
+#hud2 .p-pip {
+    display: inline-block;
+    width: 8px;
+    height: 11px;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    vertical-align: middle;
+}
+
+#hud2 .p-dead {
+    color: #ff5252;
+    font-weight: bold;
+}
+
+#controls-hint {
+    font-size: 11px;
+    opacity: 0.6;
+    margin-top: 6px;
+    line-height: 1.4;
+}
+
 #stats-table {
     width: 100%;
     border-collapse: collapse;
@@ -411,8 +511,9 @@ button.tyre-opt:hover {
 .pts-legend {
     font-size: 11px;
     opacity: 0.6;
-    margin: -12px 0 6px;
+    margin: 4px 0 14px;
     text-align: left;
+    line-height: 1.4;
 }
 
 .pts-legend b { color: #4CAF50; opacity: 0.9; }
@@ -643,7 +744,7 @@ button.tyre-opt:hover {
 #champ-legend {
     font-size: 11px;
     opacity: 0.7;
-    margin: -8px 0 4px;
+    margin: 2px 0 10px;
 }
 
 /* superscript markers beside a result: P = pole, F = fastest lap */
