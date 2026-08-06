@@ -1,0 +1,107 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+    height: 100%;
+}
+
+body {
+    background: radial-gradient(circle at 50% 20%, #2b3a52 0%, #131a26 65%, #0b0f16 100%);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    font-family: 'Nunito', system-ui, sans-serif;
+    touch-action: manipulation;
+}
+
+.game-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
+.game-container {
+    width: min(97vw, calc(94dvh * 960 / 560));
+    aspect-ratio: 960 / 560;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 4px 18px rgba(0, 0, 0, 0.4);
+    outline: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: #7db6d9;
+    cursor: default;
+    touch-action: none;
+}
+
+/* ---- comandi touch: compaiono solo sui dispositivi touch, SOTTO lo schermo ---- */
+#touchControls {
+    display: none;
+}
+
+body.touch .game-container {
+    width: min(97vw, calc((97dvh - 118px) * 960 / 560));
+}
+
+body.touch #touchControls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(97vw, 720px);
+    padding: 0 4px;
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
+}
+
+.tc-group {
+    display: flex;
+    gap: 14px;
+}
+
+.tc {
+    width: clamp(58px, 16vw, 78px);
+    height: clamp(54px, 14vw, 72px);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(247, 240, 220, 0.1);
+    color: #f2ede0;
+    font-size: clamp(20px, 5vw, 26px);
+    font-family: inherit;
+    touch-action: none;
+    cursor: pointer;
+    transition: background 0.08s ease, transform 0.08s ease;
+}
+
+.tc.on, .tc:active {
+    background: rgba(247, 240, 220, 0.32);
+    transform: scale(0.96);
+}
+
+.tc-jump {
+    background: rgba(201, 95, 78, 0.5);
+    border-color: rgba(255, 170, 140, 0.45);
+}
+
+.tc-jump.on, .tc-jump:active {
+    background: rgba(226, 118, 98, 0.85);
+}
+
+.tc-small {
+    width: 46px;
+    height: 40px;
+    font-size: 13px;
+    border-radius: 13px;
+    opacity: 0.75;
+}
