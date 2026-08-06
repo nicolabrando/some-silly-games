@@ -52,7 +52,7 @@ try {
     }
 } catch (e) { storageOK = false; }
 
-const DEFAULT_SAVE = { unlocked: 1, best: {}, sound: true, finished: false };
+const DEFAULT_SAVE = { unlocked: 1, best: {}, sound: true, music: true, finished: false };
 let save = Object.assign({}, DEFAULT_SAVE);
 try {
     if (storageOK) {
@@ -94,6 +94,7 @@ function ensureAudio() {
             masterGain.connect(audioCtx.destination);
         }
         if (audioCtx.state === 'suspended') audioCtx.resume();
+        startMusic();
     } catch (e) { audioCtx = null; }
 }
 
@@ -146,8 +147,132 @@ const sfx = {
         [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.18, { type: 'triangle', vol: 0.12, delay: i * 0.12 }));
         tone(1319, 0.4, { type: 'triangle', vol: 0.1, delay: 0.5 });
     },
+    life() {
+        [659, 831, 988].forEach((f, i) => tone(f, 0.14, { type: 'triangle', vol: 0.11, delay: i * 0.07 }));
+    },
     drop()   { tone(240, 0.08, { type: 'triangle', vol: 0.05, slide: 140 }); }
 };
+
+/* ---------- musichetta di sottofondo (rilassante, sintetizzata) ----------
+   Un piccolo "lungomare sonoro": pad di accordi caldi, una melodia
+   pentatonica pigra con un'eco morbida e, ogni tanto, il fruscio di
+   un'onda. Nessun file audio: tutto generato con WebAudio.            */
+const music = { started: false, gain: null, delay: null, timer: null, nextChord: 0, chordIdx: 0, nextMel: 0, melIdx: 3, chordsScheduled: 0 };
+const MFREQ = (m) => 440 * Math.pow(2, (m - 69) / 12);
+const M_CHORDS = [
+    [48, 55, 59, 64],    // Cmaj7
+    [45, 52, 57, 64],    // Am7
+    [41, 48, 55, 60],    // Fmaj7
+    [43, 50, 55, 59]     // G
+];
+const M_PENTA = [60, 62, 64, 67, 69, 72, 74, 76, 79];
+const M_CHORD_LEN = 4.2, M_MEL_STEP = 0.525;
+
+function musicVolTarget() {
+    if (!save.sound || !save.music) return 0;
+    return (state === 'pause') ? 0.05 : 0.12;
+}
+
+function startMusic() {
+    if (!audioCtx || music.started) return;
+    try {
+        music.started = true;
+        music.gain = audioCtx.createGain();
+        music.gain.gain.value = 0;
+        music.gain.connect(masterGain);
+        // eco per la melodia
+        music.delay = audioCtx.createDelay(1.2);
+        music.delay.delayTime.value = 0.42;
+        const fb = audioCtx.createGain();
+        fb.gain.value = 0.32;
+        music.delay.connect(fb);
+        fb.connect(music.delay);
+        const wet = audioCtx.createGain();
+        wet.gain.value = 0.5;
+        music.delay.connect(wet);
+        wet.connect(music.gain);
+        music.nextChord = audioCtx.currentTime + 0.2;
+        music.nextMel = audioCtx.currentTime + 0.7;
+        music.timer = setInterval(musicTick, 200);
+    } catch (e) { /* niente musica, pazienza */ }
+}
+
+function padNote(freq, t0, dur, vol) {
+    const o1 = audioCtx.createOscillator();
+    o1.type = 'triangle'; o1.frequency.value = freq;
+    const o2 = audioCtx.createOscillator();
+    o2.type = 'sine'; o2.frequency.value = freq * 1.004;
+    const f = audioCtx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 820; f.Q.value = 0.3;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(vol, t0 + 1.2);
+    g.gain.setValueAtTime(vol, t0 + dur - 1.4);
+    g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+    o1.connect(f); o2.connect(f); f.connect(g); g.connect(music.gain);
+    o1.start(t0); o2.start(t0);
+    o1.stop(t0 + dur + 0.1); o2.stop(t0 + dur + 0.1);
+}
+
+function melodyNote(freq, t0, dur) {
+    const o = audioCtx.createOscillator();
+    o.type = 'triangle'; o.frequency.value = freq;
+    const f = audioCtx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 2100;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(0.05, t0 + 0.035);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(f); f.connect(g);
+    g.connect(music.gain);
+    g.connect(music.delay);
+    o.start(t0); o.stop(t0 + dur + 0.1);
+}
+
+function waveWash(t0) {
+    try {
+        const dur = 3.4;
+        const len = Math.floor(audioCtx.sampleRate * dur);
+        const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) {
+            const t = i / len;
+            d[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * t);
+        }
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        const f = audioCtx.createBiquadFilter();
+        f.type = 'lowpass'; f.frequency.value = 440;
+        const g = audioCtx.createGain();
+        g.gain.value = 0.05;
+        src.connect(f); f.connect(g); g.connect(music.gain);
+        src.start(t0);
+    } catch (e) { /* ok */ }
+}
+
+function musicTick() {
+    if (!audioCtx || !music.gain) return;
+    try {
+        music.gain.gain.setTargetAtTime(musicVolTarget(), audioCtx.currentTime, 0.4);
+        const ahead = audioCtx.currentTime + 0.7;
+        while (music.nextChord < ahead) {
+            const ch = M_CHORDS[music.chordIdx % M_CHORDS.length];
+            for (const m of ch) padNote(MFREQ(m), music.nextChord, M_CHORD_LEN + 1.3, 0.055);
+            if (music.chordIdx % 2 === 1) waveWash(music.nextChord + 0.8);
+            music.chordIdx++;
+            music.chordsScheduled++;
+            music.nextChord += M_CHORD_LEN;
+        }
+        while (music.nextMel < ahead) {
+            if (Math.random() < 0.42) {
+                music.melIdx = clamp(music.melIdx + (((Math.random() * 3) | 0) - 1), 0, M_PENTA.length - 1);
+                const dur = M_MEL_STEP * (1 + ((Math.random() * 2) | 0)) + 0.35;
+                melodyNote(MFREQ(M_PENTA[music.melIdx]), music.nextMel, dur);
+            }
+            music.nextMel += M_MEL_STEP * (Math.random() < 0.25 ? 2 : 1);
+        }
+    } catch (e) { /* ok */ }
+}
 
 /* ---------- input ---------- */
 const keys = { left: false, right: false, up: false, down: false };
@@ -167,7 +292,7 @@ function bindInput(canvas) {
         ensureAudio();
         const k = codeMap[e.code];
         if (k) {
-            if (k === 'up' && !e.repeat && !keys.up) { jumpBufferT = 0.12; jumpHeld = true; }
+            if (k === 'up' && !e.repeat && !keys.up) { jumpBufferT = 0.14; jumpHeld = true; }
             keys[k] = true;
         }
         if (!e.repeat) {
@@ -285,7 +410,7 @@ function LevelBuilder(width) {
     const oneway = new Uint8Array(width * ROWS);    // passerelle attraversabili
     const b = {
         width, grid, oneway,
-        coins: [], crabs: [], urchins: [], decor: [], hints: [],
+        coins: [], crabs: [], urchins: [], decor: [], hints: [], hearts: [],
         startPos: null, flagPos: null,
 
         idx(x, y) { return y * width + x; },
@@ -328,12 +453,15 @@ function LevelBuilder(width) {
         coinRow(x0, x1, y) { for (let x = x0; x <= x1; x++) b.coin(x, y); return b; },
         coinArc(x0, x1, yTop) {
             const n = x1 - x0;
+            // gli archi stretti restano piatti: i bordi non devono scendere sul varco
+            const amp = n >= 4 ? 1.4 : 0.4;
             for (let x = x0; x <= x1; x++) {
                 const t = n === 0 ? 0.5 : (x - x0) / n;
-                b.coin(x, yTop + Math.round((1 - Math.sin(Math.PI * t)) * 1.4));
+                b.coin(x, yTop + Math.round((1 - Math.sin(Math.PI * t)) * amp));
             }
             return b;
         },
+        heart(x, y) { b.hearts.push({ tx: x, ty: y }); return b; },
         urchin(x) { b.urchins.push({ tx: x, ty: b.topAt(x) - 1 }); return b; },
         crab(x) { b.crabs.push({ tx: x, ty: b.topAt(x) - 1 }); return b; },
         umbrella(x, c = 0) { b.decor.push({ type: 'umbrella', tx: x, ty: b.topAt(x), c }); return b; },
@@ -356,13 +484,14 @@ const LEVELS = [
             b.plank(14, 17, 10).plank(46, 49, 10);
             b.coinRow(6, 9, 11);
             b.coinRow(14, 17, 9);
-            b.coinArc(19, 22, 10);
+            b.coinArc(19, 22, 9);
             b.coinRow(25, 28, 11);
             b.coinRow(30, 33, 10);
-            b.coinArc(37, 41, 10);
+            b.coinArc(37, 41, 9);
             b.coinRow(46, 49, 9);
             b.coinRow(55, 58, 11);
             b.umbrella(4, 0).umbrella(43, 1).towel(10, 0).towel(60, 2);
+            b.heart(5, 10);
             b.startAt(2).flagAt(64);
             b.hint(1.6, 8.1, '←  →   muoviti');
             b.hint(11.5, 6.4, '↑  salta\n(tieni premuto = salto più alto)');
@@ -384,13 +513,14 @@ const LEVELS = [
             b.coinRow(4, 6, 11);
             b.coinRow(16, 20, 7).coinRow(22, 26, 7);
             b.coinRow(25, 28, 9);
-            b.coinArc(12, 15, 10);
+            b.coinArc(12, 15, 9);
             b.coinRow(36, 39, 11);
-            b.coinArc(45, 48, 10);
+            b.coinArc(45, 48, 9);
             b.coinRow(55, 58, 8).coinRow(60, 63, 8);
             b.coinRow(68, 71, 11).coinRow(74, 76, 10);
             b.umbrella(4, 1).umbrella(38, 2).umbrella(70, 0);
             b.cabin(33, 0).cabin(75, 1).towel(20, 1).towel(56, 3);
+            b.heart(44, 10);
             b.startAt(2).flagAt(80);
             b.hint(23, 6.2, 'sopra… o sotto:\nscegli tu la strada');
         }
@@ -414,13 +544,14 @@ const LEVELS = [
             b.coinRow(15, 18, 7);
             b.coinRow(39, 43, 11);                       // dentro il cunicolo
             b.coinRow(39, 43, 9);                        // sul tetto del cunicolo
-            b.coinArc(29, 33, 10);
+            b.coinArc(29, 33, 9);
             b.coinRow(46, 48, 11);
-            b.coinArc(57, 61, 10);
+            b.coinArc(57, 61, 9);
             b.coinRow(69, 72, 11);
             b.coinRow(77, 80, 8);
             b.cabin(4, 0).cabin(20, 1).cabin(28, 2).cabin(52, 3).cabin(82, 1);
             b.umbrella(46, 2).towel(63, 0);
+            b.heart(44, 9);
             b.startAt(2).flagAt(84);
             b.hint(34.6, 7.3, '↓ a terra = accucciati');
             b.hint(38.5, 8.6, 'striscia nel cunicolo →');
@@ -449,6 +580,7 @@ const LEVELS = [
             b.coinRow(65, 69, 8);
             b.coinRow(80, 83, 10);
             b.umbrella(5, 3).umbrella(60, 1).cabin(88, 2).towel(42, 2);
+            b.heart(47, 9);
             b.startAt(2).flagAt(89);
             b.hint(54.5, 7.2, 'salta SOPRA i granchi…\no giraci alla larga');
         }
@@ -469,14 +601,15 @@ const LEVELS = [
             b.coinRow(12, 15, 10);
             b.coinRow(19, 22, 9);
             b.coinRow(25, 28, 7).coinRow(30, 33, 6).coinRow(35, 38, 6);
-            b.coinArc(35, 39, 10);
+            b.coinArc(35, 39, 9);
             b.coinRow(48, 52, 10);
             b.coinRow(55, 58, 9);
-            b.coinArc(66, 69, 10);
+            b.coinArc(66, 69, 9);
             b.coin(43, 10).coin(44, 10);
             b.coinRow(75, 77, 10).coinRow(79, 81, 10);
             b.coinRow(88, 91, 11);
             b.umbrella(5, 2).umbrella(62, 0).towel(50, 1).cabin(70, 3);
+            b.heart(23, 8);
             b.startAt(2).flagAt(92);
             b.hint(24.5, 5.6, 'lassù pagano di più…');
         }
@@ -500,7 +633,7 @@ const LEVELS = [
             b.coinRow(15, 20, 7).coinRow(22, 27, 7).coinRow(29, 32, 6).coinRow(34, 39, 7).coinRow(42, 46, 7);
             b.coinRow(5, 8, 11);
             b.coinRow(28, 31, 11);
-            b.coinArc(44, 48, 10);
+            b.coinArc(44, 48, 9);
             b.coinRow(50, 53, 11);
             b.coinRow(63, 66, 11);          // nel cunicolo
             b.coinRow(63, 66, 9);           // sopra il cunicolo
@@ -508,6 +641,7 @@ const LEVELS = [
             b.coinRow(87, 89, 11);
             b.cabin(18, 0).cabin(23, 1).cabin(52, 2).cabin(57, 0).cabin(93, 3);
             b.umbrella(8, 1).umbrella(40, 3).umbrella(64, 2).towel(33, 0);
+            b.heart(10, 10);
             b.startAt(2).flagAt(96);
             b.hint(12.5, 6.8, 'di sopra si vola,\ndi sotto si striscia');
         }
@@ -534,6 +668,7 @@ const LEVELS = [
             b.coinRow(69, 74, 10);
             b.coinRow(85, 87, 10);
             b.umbrella(3, 2).cabin(92, 1).towel(24, 3);
+            b.heart(48, 9);
             b.startAt(2).flagAt(89);
             b.hint(7.5, 6.4, 'salti precisi:\nprendi la rincorsa giusta');
         }
@@ -561,12 +696,13 @@ const LEVELS = [
             b.coinRow(20, 21, 8);
             b.coinRow(25, 26, 8);
             b.coinRow(33, 37, 11).coinRow(33, 37, 9);
-            b.coinArc(49, 53, 10);
+            b.coinArc(49, 53, 9);
             b.coinRow(62, 68, 8);
             b.coinRow(63, 67, 11);
             b.coinRow(75, 78, 11).coinRow(75, 78, 9);
             b.coinRow(88, 91, 11);
             b.towel(11, 2).cabin(89, 0);
+            b.heart(44, 10);
             b.startAt(2).flagAt(96);
             b.hint(15.5, 6.9, 'il deposito del lido:\ncerca i passaggi');
         }
@@ -587,19 +723,20 @@ const LEVELS = [
             b.crab(33).crab(55).crab(82).crab(101);
             b.urchin(21).urchin(71).urchin(85).urchin(105);
             b.coinRow(5, 8, 11);
-            b.coinArc(16, 18, 10);
+            b.coinArc(16, 18, 9);
             b.coinRow(22, 25, 10);
-            b.coinArc(27, 29, 10);
+            b.coinArc(27, 29, 8);
             b.coinRow(34, 37, 10);
             b.coinRow(41, 42, 8).coinRow(45, 46, 7).coinRow(48, 49, 8);
             b.coinRow(52, 57, 9);
             b.coinRow(66, 68, 7);
             b.coinRow(66, 68, 10);
-            b.coinArc(75, 77, 10);
+            b.coinArc(75, 77, 8);
             b.coinRow(80, 83, 10);
             b.coinRow(89, 90, 9).coinRow(93, 94, 8);
             b.coinRow(99, 103, 10);
             b.umbrella(8, 0).cabin(12, 2).towel(52, 1).cabin(98, 1);
+            b.heart(73, 9);
             b.startAt(2).flagAt(106);
             b.hint(17, 7.2, 'il molo si allunga\nnella sera…');
         }
@@ -622,19 +759,20 @@ const LEVELS = [
             b.crab(41).crab(63).crab(91);
             b.urchin(27).urchin(31).urchin(59).urchin(81);
             b.coinRow(5, 8, 11);
-            b.coinArc(19, 23, 10);
+            b.coinArc(19, 23, 9);
             b.coinRow(25, 30, 10);
-            b.coinArc(35, 37, 10);
+            b.coinArc(35, 37, 9);
             b.coinRow(40, 43, 10);
             b.coinRow(47, 48, 8).coinRow(51, 52, 7).coinRow(54, 55, 8);
             b.coinRow(58, 62, 10);
-            b.coinArc(66, 68, 10);
+            b.coinArc(66, 68, 8);
             b.coinRow(75, 78, 11).coinRow(75, 78, 9);
-            b.coinArc(85, 87, 10);
+            b.coinArc(85, 87, 9);
             b.coinRow(90, 93, 10);
             b.coinRow(94, 95, 9).coinRow(97, 98, 8);
             b.coinRow(99, 102, 7);
             b.towel(10, 3).cabin(15, 1).umbrella(70, 2);
+            b.heart(91, 9);
             b.startAt(2).flagAt(103);
             b.hint(89, 6.6, 'ultima salita:\nil faro ti aspetta');
         }
@@ -677,6 +815,7 @@ function buildWorld(levelIndex) {
         grid: b.grid,
         oneway: b.oneway,
         coins: b.coins.map(c => ({ x: c.tx * TILE + TILE / 2, y: c.ty * TILE + TILE / 2, taken: false, phase: (c.tx * 7 + c.ty * 13) % 100 })),
+        hearts: b.hearts.map(h => ({ x: h.tx * TILE + TILE / 2, y: h.ty * TILE + TILE / 2, taken: false, phase: (h.tx * 11) % 100 })),
         crabs: b.crabs.map(c => ({ x: c.tx * TILE + 4, y: (c.ty + 1) * TILE - 24, w: 32, h: 24, vx: 44, dead: 0, phase: c.tx % 10 })),
         urchins: b.urchins.map(u => ({ x: u.tx * TILE + 6, y: (u.ty + 1) * TILE - 24, w: 28, h: 24 })),
         decor: b.decor,
@@ -694,18 +833,21 @@ if (typeof module !== 'undefined' && module.exports) {
    MONDO DI GIOCO — fisica, collisioni, entità, stati
    ============================================================ */
 
-const GRAVITY = 2300;
-const JUMP_VEL = -520;          // tenendo premuto si sale fino a ~3 tile
-const JUMP_CUT = -170;          // rilascio anticipato = salto corto
+const GRAVITY = 2400;
+const JUMP_VEL = -560;          // tenendo premuto si sale fino a ~2,8 tile
+const JUMP_CUT = -170;          // verso cui decade il salto se rilasci presto
+const HOLD_MULT = 0.58;         // gravità ridotta in salita tenendo premuto
+const APEX_BAND = 120;          // vicino all'apice…
+const APEX_MULT = 0.62;         // …la gravità si ammorbidisce: piccolo "hang time"
 const RUN_MAX = 280;
 const CROUCH_MAX = 112;
 const ACCEL_GROUND = 1700;
-const ACCEL_AIR = 1150;
+const ACCEL_AIR = 1250;
 const FRICTION_GROUND = 1900;
 const FRICTION_AIR = 260;
 const FALL_MAX = 800;
 const FALL_MAX_FAST = 1000;
-const COYOTE = 0.09;
+const COYOTE = 0.1;
 
 const P_W = 30, P_H_STAND = 56, P_H_CROUCH = 30;
 
@@ -812,6 +954,7 @@ function startLevel(i, keepLives) {
 function respawn() {
     runCoins = 0;
     for (const c of world.coins) c.taken = false;
+    for (const h of world.hearts) h.taken = false;
     for (const cr of world.crabs) { cr.dead = 0; cr.squashT = 0; cr.x = cr.spawnX !== undefined ? cr.spawnX : (cr.spawnX = cr.x); cr.vx = Math.abs(cr.vx); }
     player.x = world.start.x;
     player.y = world.start.feetY - P_H_STAND;
@@ -943,12 +1086,14 @@ function updatePlayer(dt) {
         jumpBufferT = -1;
     }
 
-    /* --- gravità (variabile per il salto modulato) --- */
+    /* --- gravità (salto modulato, con apice ammorbidito) --- */
     let g = GRAVITY;
-    if (p.vy < 0 && jumpHeld) g = GRAVITY * 0.5;
-    else if (keys.down && !p.grounded) g = GRAVITY * 1.9;
+    if (keys.down && !p.grounded) g = GRAVITY * 1.9;                          // picchiata
+    else if (!p.grounded && Math.abs(p.vy) < APEX_BAND) g = GRAVITY * APEX_MULT; // hang all'apice
+    else if (p.vy < 0 && jumpHeld) g = GRAVITY * HOLD_MULT;                   // salita col tasto premuto
     p.vy += g * dt;
-    if (!jumpHeld && p.vy < JUMP_CUT) p.vy = JUMP_CUT;
+    // rilascio anticipato: il salto si spegne dolcemente invece di troncarsi
+    if (!jumpHeld && p.vy < JUMP_CUT) p.vy = lerp(p.vy, JUMP_CUT, Math.min(1, dt * 14));
     const fallCap = (keys.down && !p.grounded) ? FALL_MAX_FAST : FALL_MAX;
     if (p.vy > fallCap) p.vy = fallCap;
 
@@ -1050,6 +1195,23 @@ function updatePlayer(dt) {
             sfx.coin();
             spawnSparkle(c.x, c.y);
             addFloater(c.x, c.y - 14, '+1', '#ffd75e');
+        }
+    }
+
+    /* --- cuori bonus: +1 vita (max 10) --- */
+    for (const hp of world.hearts) {
+        if (hp.taken) continue;
+        const hdx = hp.x - pcx, hdy = hp.y - pcy;
+        if (hdx * hdx + hdy * hdy < 36 * 36) {
+            hp.taken = true;
+            sfx.life();
+            spawnSparkle(hp.x, hp.y, '#ff8a96');
+            if (lives < MAX_LIVES) {
+                lives++;
+                addFloater(hp.x, hp.y - 16, '+1 ♥', '#ff7a86');
+            } else {
+                addFloater(hp.x, hp.y - 16, 'vite piene!', '#ff9aa4');
+            }
         }
     }
 
@@ -1979,6 +2141,19 @@ function drawFlag(f) {
     ctx.restore();
 }
 
+function drawHeartPickup(hp) {
+    const bobY = hp.y + Math.sin(elapsed * 2.1 + hp.phase) * 3.6;
+    const pulse = 2.0 + Math.sin(elapsed * 3.4 + hp.phase) * 0.18;
+    const gl = ctx.createRadialGradient(hp.x, bobY, 2, hp.x, bobY, 26);
+    gl.addColorStop(0, 'rgba(255,120,140,0.34)');
+    gl.addColorStop(1, 'rgba(255,120,140,0)');
+    ctx.fillStyle = gl;
+    ctx.beginPath();
+    ctx.arc(hp.x, bobY, 26, 0, 7);
+    ctx.fill();
+    drawHeart(hp.x, bobY, pulse, true);
+}
+
 /* ---------- l'omino ---------- */
 const SKIN = '#e8b28a', SKIN_D = '#d09a72', CAP = '#d6493a', SHIRT = '#f2ede0', SHORTS = '#3f6a9e', SHOE = '#7a5230';
 
@@ -2352,6 +2527,11 @@ function renderWorld() {
         if (c.x + 30 < camX || c.x - 30 > camX + VIEW_W) continue;
         drawCoin(c);
     }
+    for (const hp of world.hearts) {
+        if (hp.taken) continue;
+        if (hp.x + 40 < camX || hp.x - 40 > camX + VIEW_W) continue;
+        drawHeartPickup(hp);
+    }
     for (const u of world.urchins) {
         if (u.x + 60 < camX || u.x - 60 > camX + VIEW_W) continue;
         drawUrchin(u);
@@ -2563,12 +2743,17 @@ function renderMenu(dt) {
         size: 14, weight: 700, color: 'rgba(60,42,24,0.78)', align: 'center'
     });
 
-    // audio
+    // audio + musica
     const audioBtn = { x: VIEW_W - 150, y: VIEW_H - 38, w: 136, h: 28 };
     const hotA = inRect(mouseX, mouseY, audioBtn);
     ctx.fillStyle = hotA ? 'rgba(50,38,22,0.35)' : 'rgba(50,38,22,0.22)';
     rr(audioBtn.x, audioBtn.y, audioBtn.w, audioBtn.h, 14); ctx.fill();
     txt(`audio: ${save.sound ? 'sì' : 'no'}  (M)`, audioBtn.x + audioBtn.w / 2, audioBtn.y + 19, { size: 13, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
+    const musicBtn = { x: VIEW_W - 296, y: VIEW_H - 38, w: 136, h: 28 };
+    const hotMu = inRect(mouseX, mouseY, musicBtn);
+    ctx.fillStyle = hotMu ? 'rgba(50,38,22,0.35)' : 'rgba(50,38,22,0.22)';
+    rr(musicBtn.x, musicBtn.y, musicBtn.w, musicBtn.h, 14); ctx.fill();
+    txt(`musica: ${save.music ? 'sì' : 'no'}`, musicBtn.x + musicBtn.w / 2, musicBtn.y + 19, { size: 13, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
 
     // azzera progressi
     const resetBtn = { x: 14, y: VIEW_H - 38, w: 190, h: 28 };
@@ -2590,6 +2775,7 @@ function renderMenu(dt) {
             }
         }
         if (inRect(c.x, c.y, audioBtn)) { save.sound = !save.sound; persistSave(); sfx.click(); }
+        if (inRect(c.x, c.y, musicBtn)) { save.music = !save.music; persistSave(); sfx.click(); }
         if (inRect(c.x, c.y, resetBtn)) {
             if (resetArmT > 0) { wipeSave(); resetArmT = -1; sfx.stomp(); }
             else { resetArmT = 2.5; sfx.click(); }
@@ -2800,7 +2986,7 @@ function bindTouchControls() {
     if (j) {
         j.addEventListener('pointerdown', (e) => {
             e.preventDefault(); ensureAudio();
-            jumpBufferT = 0.12; jumpHeld = true; keys.up = true;
+            jumpBufferT = 0.14; jumpHeld = true; keys.up = true;
             j.classList.add('on');
         });
         const jOff = (e) => { e.preventDefault(); jumpHeld = false; keys.up = false; j.classList.remove('on'); };
@@ -2832,6 +3018,7 @@ window.LR = {
     get save() { return save; },
     get lives() { return lives; },
     set lives(v) { lives = v; },
+    get music() { return { started: music.started, chords: music.chordsScheduled, target: musicVolTarget() }; },
     startLevel, retryLevel, toMenu, wipeSave,
     keys
 };
