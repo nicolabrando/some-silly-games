@@ -63,7 +63,7 @@ Il danno è **proporzionale all'impatto reale**, non al tempo di contatto.
 ### 2.4bis Superfici: asfalto, cordolo, erba
 `getClosestPoint()` restituisce anche il **segmento** più vicino, e `getSurface()` lo usa per due test: la fascia oltre `trackWidth` è **cordolo** solo se (a) il pezzo di geometria più vicino è un `arc` e (b) il punto sta dalla parte del *centro* dell'arco, cioè all'**interno** della curva. Fuori curva e sui rettilinei resta erba. Nessuna annotazione manuale dei tracciati.
 
-`kerbWidthFor(seg)` adatta la larghezza allo spazio disponibile (`seg.r - trackWidth - 2`): su un tornante il cui raggio è appena maggiore della semi-larghezza il cordolo si assottiglia, e dove non c'è proprio spazio non viene disegnato. Con la geometria attuale: 9 tracciati su 10 hanno cordoli; Triangle no, perché i suoi archi hanno raggio esattamente pari a `trackWidth` e quindi zero via di fuga interna.
+`kerbWidthFor(seg)` adatta la larghezza allo spazio disponibile (`seg.r - trackWidth - 2`): su un tornante il cui raggio è appena maggiore della semi-larghezza il cordolo si assottiglia, e dove non c'è proprio spazio non viene disegnato. Con la geometria attuale tutti gli 11 tracciati hanno cordoli. Triangle era l'eccezione: i suoi archi avevano raggio 70, esattamente pari a `trackWidth`, quindi zero via di fuga interna e cordolo di larghezza negativa. Aprendo le tre curve a `r = 98` (e alzando il triangolo di 8px per farlo restare nel canvas) restano 26px di spazio, sufficienti per la fascia intera.
 
 - **Cordolo**: grip ×0.80, attrito ×1.30, più una vibrazione laterale casuale proporzionale alla velocità. È fatto per essere usato: prendere un cordolo per raddrizzare una curva conviene.
 - **Erba**: grip ×0.30, attrito ×2.50. Non conviene mai.
@@ -78,6 +78,10 @@ Il danno è **proporzionale all'impatto reale**, non al tempo di contatto.
 ## 3. Gestione del Tracciato (`track.js`)
 
 I tracciati non sono tilemap, ma curve parametriche vettoriali per permettere fluidità assoluta ad alte velocità.
+
+**Crown** è l'unico tracciato in cui la strada torna indietro su se stessa: fra le due punte c'è una esse, cioè un arco con `ccw` opposto a tutti gli altri. È stato costruito con un raccordo di vertici (fillet) che gestisce anche i vertici concavi, e verificato numericamente prima di entrare nel gioco: giunzioni a gap zero, ingombro con barriere dentro il canvas, e distanza minima fra due tratti non adiacenti di 151px contro i 116px di larghezza pista, così `getClosestPoint` non può agganciare una vettura al tratto sbagliato.
+
+**Calendario del campionato**: i tracciati vengono mescolati (Fisher-Yates) all'inizio di ogni stagione, e il meteo viene tirato *dopo* la mescolata, così `weather[i]` appartiene al round `i`. Un calendario fisso faceva imparare la stagione invece dei tracciati.
 
 ### 3.1 Geometria e Analitica
 Ogni classe di tracciato (es. `CircoMassimoTrack`, `F1Track`) definisce un array `this.segments` contenente primitive geometriche:
@@ -265,6 +269,12 @@ Il rottame è escluso dalle collisioni fra vetture da quando è distrutto, e `Ca
 ## 4ter. Modalità e log
 
 - **Free Practice** (`raceMode === 'practice'`): circuito e meteo scelti, nessun avversario, `TOTAL_LAPS` a 9999, niente qualifiche né bandiera. Ogni giro finisce in `car.lapTimes`; il pulsante **Stop Session** chiude e mostra la tabella dei tempi con il migliore evidenziato.
+### Frame stall (scheda in secondo piano)
+
+`requestAnimationFrame` si ferma quando la scheda non è visibile, ma `performance.now()` no. Al ritorno arriva un frame con `dt` di decine di secondi: `updatePhysics` lo tronca a 50ms, quindi non si corre praticamente nulla, ma `raceStartTime`, `firstFinisherTime` e `vscEndsAt` sono ancore su orologio a muro e quindi credono che la gara sia andata avanti. In un log reale questo ha squalificato dieci vetture su undici per "outside the time limit" mentre erano tutte al quarto giro su cinque e a sei secondi dalla bandiera, senza che nessuna avesse percorso un metro.
+
+`gameLoop` tratta quindi un frame più lungo di `STALL_S` (0.25s) esattamente come una pausa: sposta avanti le ancore del tempo perso e forza `dt` a 1/60. Sotto la soglia resta un frame lento normale, e il tempo scorre.
+
 - **`racelog.js`** registra ogni sessione come lista di eventi tipizzati (`SESSION`, `LAP`, `BLUE`, `CONTACT`, `WRECK`, `VSC`, `RECOVERY`, `PENALTY`, `DNF`, `FINISH`) più la classifica finale. Consultabile dal menu, scaricabile come `.txt`, e replicato su `console.log` per la lettura dal vivo. `RaceLog.dump()` dalla console stampa tutto.
 
 ## 5. Audio Dinamico (Procedurale Web Audio)

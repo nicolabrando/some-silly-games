@@ -166,6 +166,10 @@ function stableTowerOrder(sorted) {
 let isPaused = false;
 let pauseStartedAt = 0;
 
+// A frame longer than this did not happen: the loop was not running (hidden
+// tab, a sleeping machine, a long stall). See the guard in gameLoop.
+const STALL_S = 0.25;
+
 // --- Skipped Grand Prix -------------------------------------------------
 // You sit the round out; the AI still races it for points. The real race
 // loop runs with the drawing skipped, driven by skipClock instead of the wall
@@ -610,6 +614,7 @@ function makeTrack(trackType) {
         case 'triangle':     return new TriangleTrack();
         case 'pettine':      return new PettineTrack();
         case 'thunder':      return new ThunderTrack();
+        case 'crown':        return new CrownTrack();
         default:             return new OvalTrack();
     }
 }
@@ -1172,7 +1177,7 @@ function measureTrackStats(qTrack, raining) {
 const TRACK_LABELS = {
     oval: 'Oval', peanut: 'Peanut', f1: 'F1 Circuit', circomassimo: 'Circus Maximus',
     circle: 'Circle', serpent: 'Serpent', quadrato: 'Square', triangle: 'Triangle',
-    pettine: 'Comb', thunder: 'Thunder'
+    pettine: 'Comb', thunder: 'Thunder', crown: 'Crown'
 };
 
 function showGpPreview(trackType) {
@@ -3322,9 +3327,33 @@ function gameLoop(timestamp) {
     // canvas. setPaused(false) restarts the loop.
     if (isPaused) return;
 
-    const dt = (timestamp - lastTime) / 1000;
+    const framePrev = lastTime;
+    let dt = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
-    
+
+    // A hidden tab stops requestAnimationFrame; it does not stop the clock.
+    // Come back after half a minute in another window and the next frame
+    // arrives with dt = 36. updatePhysics clamps that to 50ms, so almost no
+    // racing happens - but raceStartTime, firstFinisherTime and vscEndsAt are
+    // wall-clock anchors, so as far as they are concerned 36 seconds of race
+    // went by. In one frame the whole DNF window was gone and ten cars, all
+    // within six seconds of the flag, were classified "outside the time limit"
+    // without turning a wheel.
+    //
+    // So a lost frame is treated exactly like a pause: the anchors are shifted
+    // forward by the time nobody raced through. Anything under a quarter of a
+    // second is a slow frame, not a stall, and is left alone.
+    if (dt > STALL_S) {
+        const lost = (timestamp - framePrev) - 1000 / 60;
+        if (lost > 0) {
+            raceStartTime += lost;
+            if (firstFinisherTime) firstFinisherTime += lost;
+            if (vscEndsAt !== null) vscEndsAt += lost;
+        }
+        dt = 1 / 60;
+    }
+
+
     // ---- skipped Grand Prix: fast-forward the real race -----------------
     // The AI still races for real. Rather than reimplement the race headlessly
     // (and risk it diverging from the one you actually drive), the genuine
@@ -3727,12 +3756,21 @@ function startChampionship() {
     // races the same drivers.
     twoPlayer = twoPlayerEnabled() && color !== 'spectator';
 
-    const tracks = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent', 'quadrato', 'triangle', 'pettine', 'thunder'];
+    // Every circuit, in a different order every season. A fixed calendar meant
+    // you learned the season rather than the tracks: the same opener, the same
+    // decider, every time.
+    const tracks = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent',
+                    'quadrato', 'triangle', 'pettine', 'thunder', 'crown'];
+    for (let i = tracks.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
+    }
 
     // The season's weather is rolled once, up front, at the same 20% per race
     // as before - but a season with no wet race at all is rerolled. At 20% a
     // ten-race season came out completely dry about one time in nine, which is
     // how you can play a whole championship and never see the rain.
+    // Rolled AFTER the shuffle, so weather[i] belongs to round i.
     const weather = tracks.map(() => Math.random() < 0.20);
     if (!weather.some(Boolean)) weather[Math.floor(Math.random() * weather.length)] = true;
 

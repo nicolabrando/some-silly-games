@@ -1108,19 +1108,61 @@ class TriangleTrack extends SegmentedTrack {
         super();
         this.trackWidth = 70;
         this.grassWidth = 90;
-        
+
+        // The corners used to have r = 70, exactly the track width. Kerbs are
+        // laid on whatever inside run-off is left over - kerbWidthFor() returns
+        // r - trackWidth - 2 - so at r = 70 there was room for -2px of kerb and
+        // the three corners came out bare. Opening them to r = 98 leaves 26px,
+        // enough for the full band, and the triangle is shifted 8px up so the
+        // wider shape still sits inside the canvas.
         this.segments = [
-            { type: 'line', x1: 250.00, y1: 570.00, x2: 750.00, y2: 570.00 },
-            { type: 'arc', cx: 750.00, cy: 500.00, r: 70, start: 1.5708, end: -0.7289, ccw: true },
-            { type: 'line', x1: 802.22, y1: 453.38, x2: 552.22, y2: 173.38 },
-            { type: 'arc', cx: 500.00, cy: 220.00, r: 70, start: -0.7289, end: -2.4127, ccw: true },
-            { type: 'line', x1: 447.78, y1: 173.38, x2: 197.78, y2: 453.38 },
-            { type: 'arc', cx: 250.00, cy: 500.00, r: 70, start: -2.4127, end: 1.5708, ccw: true }
+            { type: 'line', x1: 250.00, y1: 590.00, x2: 750.00, y2: 590.00 },
+            { type: 'arc', cx: 750.00, cy: 492.00, r: 98, start: 1.5708, end: -0.7289, ccw: true },
+            { type: 'line', x1: 823.10, y1: 426.73, x2: 573.10, y2: 146.73 },
+            { type: 'arc', cx: 500.00, cy: 212.00, r: 98, start: -0.7289, end: -2.4127, ccw: true },
+            { type: 'line', x1: 426.90, y1: 146.73, x2: 176.90, y2: 426.73 },
+            { type: 'arc', cx: 250.00, cy: 492.00, r: 98, start: -2.4127, end: 1.5708, ccw: true }
         ];
-        
+
+        this.startX = 500;
+        this.startY = 590;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+// --- Crown -----------------------------------------------------------------
+// A long main straight along the bottom, a slow corner at the end of it (the
+// overtaking spot), a fast right-hand sweeper, and then an esse that dips back
+// down between two peaks before a long constant-radius left brings you home.
+// The esse is the point of it: every other circuit here bulges outwards only,
+// so this is the one place the road actually doubles back on itself.
+class CrownTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 58;
+        this.grassWidth = 68;   // the two legs of the esse are 148px apart
+
+        this.segments = [
+            { type: 'arc', cx: 282.81, cy: 480.00, r: 90.00, start: 3.0585, end: 1.5708, ccw: true },
+            { type: 'line', x1: 282.81, y1: 570.00, x2: 765.03, y2: 570.00 },
+            { type: 'arc', cx: 765.03, cy: 495.00, r: 75.00, start: 1.5708, end: 0.3059, ccw: true },
+            { type: 'line', x1: 836.55, y1: 517.58, x2: 856.07, y2: 455.77 },
+            { type: 'arc', cx: 751.18, cy: 422.65, r: 110.00, start: 0.3059, end: -0.9453, ccw: true },
+            { type: 'line', x1: 815.58, y1: 333.48, x2: 757.19, y2: 291.30 },
+            { type: 'arc', cx: 710.35, cy: 356.16, r: 80.00, start: -0.9453, end: -2.3907, ccw: true },
+            { type: 'line', x1: 651.87, y1: 301.57, x2: 607.87, y2: 348.71 },
+            { type: 'arc', cx: 556.69, cy: 300.95, r: 70.00, start: 0.7509, end: 2.3239, ccw: false },
+            { type: 'line', x1: 508.82, y1: 352.02, x2: 433.62, y2: 281.52 },
+            { type: 'arc', cx: 382.32, cy: 336.23, r: 75.00, start: -0.8176, end: -1.9196, ccw: true },
+            { type: 'line', x1: 356.69, y1: 265.75, x2: 266.19, y2: 298.66 },
+            { type: 'arc', cx: 307.20, cy: 411.43, r: 120.00, start: -1.9196, end: 3.0585, ccw: true },
+            { type: 'line', x1: 187.62, y1: 421.40, x2: 193.12, y2: 487.47 }
+        ];
+
         this.startX = 500;
         this.startY = 570;
-        
+
         this.waypoints = this.generateWaypoints();
     }
 }
