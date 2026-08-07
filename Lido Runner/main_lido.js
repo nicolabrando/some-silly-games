@@ -12,7 +12,7 @@ const VIEW_W = 960;
 const VIEW_H = 560;
 const ROWS = 14;
 const WATER_Y = 13 * TILE + 18;          // pelo dell'acqua nei varchi
-const N_LEVELS = 10;
+const N_LEVELS = 20;
 
 // Codici tile
 const T_EMPTY = 0, T_SAND = 1, T_CRATE = 2, T_STONE = 3;
@@ -52,7 +52,7 @@ try {
     }
 } catch (e) { storageOK = false; }
 
-const DEFAULT_SAVE = { unlocked: 1, best: {}, sound: true, music: true, finished: false };
+const DEFAULT_SAVE = { unlocked: 1, best: {}, bestTime: {}, sound: true, music: true, finished: false };
 let save = Object.assign({}, DEFAULT_SAVE);
 try {
     if (storageOK) {
@@ -61,6 +61,7 @@ try {
             const parsed = JSON.parse(raw);
             save = Object.assign({}, DEFAULT_SAVE, parsed);
             save.best = parsed.best || {};
+            save.bestTime = parsed.bestTime || {};
             save.unlocked = clamp(parseInt(parsed.unlocked, 10) || 1, 1, N_LEVELS);
         }
     }
@@ -170,7 +171,7 @@ const M_CHORD_LEN = 4.2, M_MEL_STEP = 0.525;
 
 function musicVolTarget() {
     if (!save.sound || !save.music) return 0;
-    return (state === 'pause') ? 0.05 : 0.12;
+    return (state === 'pause') ? 0.08 : 0.2;
 }
 
 function startMusic() {
@@ -221,7 +222,7 @@ function melodyNote(freq, t0, dur) {
     f.type = 'lowpass'; f.frequency.value = 2100;
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.linearRampToValueAtTime(0.05, t0 + 0.035);
+    g.gain.linearRampToValueAtTime(0.065, t0 + 0.035);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     o.connect(f); f.connect(g);
     g.connect(music.gain);
@@ -257,7 +258,7 @@ function musicTick() {
         const ahead = audioCtx.currentTime + 0.7;
         while (music.nextChord < ahead) {
             const ch = M_CHORDS[music.chordIdx % M_CHORDS.length];
-            for (const m of ch) padNote(MFREQ(m), music.nextChord, M_CHORD_LEN + 1.3, 0.055);
+            for (const m of ch) padNote(MFREQ(m), music.nextChord, M_CHORD_LEN + 1.3, 0.07);
             if (music.chordIdx % 2 === 1) waveWash(music.nextChord + 0.8);
             music.chordIdx++;
             music.chordsScheduled++;
@@ -297,7 +298,8 @@ function bindInput(canvas) {
         }
         if (!e.repeat) {
             if (e.code === 'Enter' || e.code === 'NumpadEnter') uiPresses.push('enter');
-            else if (e.code === 'Escape') uiPresses.push('esc');
+            // P equivale a Esc: serve perché Esc esce anche dallo schermo intero
+            else if (e.code === 'Escape' || e.code === 'KeyP') uiPresses.push('esc');
             else if (e.code === 'KeyM') uiPresses.push('mute');
             else if (e.code === 'KeyR') uiPresses.push('restart');
             else if (e.code === 'KeyQ') uiPresses.push('quit');
@@ -662,10 +664,10 @@ const LEVELS = [
             b.coinRow(2, 5, 10);
             b.coinRow(9, 10, 8).coinRow(13, 14, 7).coinRow(17, 18, 8);
             b.coinRow(29, 30, 8).coinRow(33, 34, 7).coinRow(37, 38, 7).coinRow(41, 42, 8);
-            b.coinRow(21, 26, 10);
+            b.coinRow(21, 22, 10).coinRow(24, 26, 10);
             b.coinRow(53, 54, 9).coinRow(57, 58, 8).coinRow(61, 62, 7).coinRow(65, 66, 8);
             b.coinRow(77, 78, 8).coinRow(81, 82, 9);
-            b.coinRow(69, 74, 10);
+            b.coinRow(69, 70, 10).coinRow(72, 74, 10);
             b.coinRow(85, 87, 10);
             b.umbrella(3, 2).cabin(92, 1).towel(24, 3);
             b.heart(48, 9);
@@ -686,9 +688,9 @@ const LEVELS = [
             b.box(30, 11);
             b.tunnel(32, 38, 10);
             b.crab(43).crab(55).crab(85);
-            b.urchin(28).urchin(47).urchin(69).urchin(93);
-            // scala + arco dopo il buco
-            b.box(56, 11, 2, 1).box(58, 10, 2, 2).box(60, 9, 2, 3);
+            b.urchin(28).urchin(47).urchin(84).urchin(93);
+            // impalcatura di legno: si sale sulla tettoia SENZA chiudere la via bassa
+            b.plank(56, 57, 11).plank(58, 59, 10).plank(60, 61, 9);
             b.stone(62, 68, 9, 9);                       // tettoia: sopra si cammina, sotto si passa in piedi
             b.tunnel(74, 79, 10);
             b.box(72, 11);
@@ -760,11 +762,11 @@ const LEVELS = [
             b.urchin(27).urchin(31).urchin(59).urchin(81);
             b.coinRow(5, 8, 11);
             b.coinArc(19, 23, 9);
-            b.coinRow(25, 30, 10);
+            b.coinRow(24, 26, 10).coinRow(28, 30, 10);
             b.coinArc(35, 37, 9);
             b.coinRow(40, 43, 10);
             b.coinRow(47, 48, 8).coinRow(51, 52, 7).coinRow(54, 55, 8);
-            b.coinRow(58, 62, 10);
+            b.coinRow(60, 62, 10);
             b.coinArc(66, 68, 8);
             b.coinRow(75, 78, 11).coinRow(75, 78, 9);
             b.coinArc(85, 87, 9);
@@ -776,13 +778,355 @@ const LEVELS = [
             b.startAt(2).flagAt(103);
             b.hint(89, 6.6, 'ultima salita:\nil faro ti aspetta');
         }
+    },
+
+    /* ---------- 11 · LA MAREGGIATA (nuvolo) — passerelle sul mare grosso ---------- */
+    {
+        name: 'La mareggiata', theme: 'nuvole', backdrop: 'water',
+        build(b) {
+            b.stone(0, 7, 11, 13).stone(20, 28, 11, 13).stone(41, 49, 11, 13);
+            b.stone(62, 70, 11, 13).stone(79, 103, 11, 13);
+            b.plank(9, 10, 9).plank(13, 14, 8).plank(17, 18, 9);
+            b.plank(30, 31, 10).plank(34, 35, 8).plank(38, 39, 9);
+            b.plank(51, 52, 9).plank(55, 56, 7).plank(59, 60, 9);
+            b.plank(72, 73, 10).plank(76, 77, 8);
+            b.crab(24).crab(66).crab(90);
+            b.urchin(45).urchin(83).urchin(96);
+            b.coinRow(2, 5, 10);
+            b.coinRow(9, 10, 8).coinRow(13, 14, 7).coinRow(17, 18, 8);
+            b.coinRow(21, 27, 10);
+            b.coinRow(30, 31, 9).coinRow(34, 35, 7).coinRow(38, 39, 8);
+            b.coinRow(42, 44, 10).coinRow(47, 48, 10);
+            b.coinRow(51, 52, 8).coinRow(55, 56, 6).coinRow(59, 60, 8);
+            b.coinRow(63, 65, 10).coinRow(68, 69, 10);
+            b.coinRow(72, 73, 9).coinRow(76, 77, 7);
+            b.coinRow(85, 88, 10).coinRow(92, 94, 10);
+            b.heart(56, 5);
+            b.umbrella(4, 1).cabin(99, 2).towel(21, 0);
+            b.startAt(2).flagAt(97);
+            b.hint(8, 6.2, 'il mare è grosso:\nnon guardare giù');
+        }
+    },
+
+    /* ---------- 12 · IL MATTINO DOPO (alba) — dune ripide ---------- */
+    {
+        name: 'Il mattino dopo', theme: 'alba', backdrop: 'beach',
+        build(b) {
+            b.ground(0, 13, 12).ground(14, 19, 11).ground(20, 25, 10).ground(26, 31, 11);
+            b.ground(35, 44, 12).ground(45, 52, 11).ground(56, 67, 12);
+            b.ground(68, 75, 11).ground(76, 83, 10).ground(87, 107, 12);
+            b.plank(27, 30, 8).plank(32, 35, 7);
+            b.plank(48, 51, 9).plank(53, 56, 8);
+            b.plank(78, 87, 8);
+            b.crab(8).crab(60).crab(100);
+            b.urchin(18).urchin(38).urchin(41).urchin(64).urchin(91).urchin(95);
+            b.coinRow(4, 7, 11);
+            b.coinRow(15, 17, 10);
+            b.coinRow(21, 24, 9);
+            b.coinRow(27, 30, 7).coinRow(32, 35, 6);
+            b.coinRow(36, 37, 11).coinRow(43, 44, 11);
+            b.coinRow(48, 51, 8).coinRow(53, 56, 7);
+            b.coinRow(57, 59, 11).coinRow(66, 67, 11);
+            b.coinRow(70, 73, 10);
+            b.coinRow(79, 86, 7);
+            b.coinRow(88, 89, 11).coinRow(97, 99, 11).coinRow(103, 105, 11);
+            b.heart(33, 4);
+            b.umbrella(5, 0).towel(48, 2).cabin(103, 1);
+            b.startAt(2).flagAt(105);
+            b.hint(14, 7.4, 'su per le dune,\nancora mezzi addormentati');
+        }
+    },
+
+    /* ---------- 13 · GLI STABILIMENTI (giorno) — tre piani di lido ---------- */
+    {
+        name: 'Gli stabilimenti', theme: 'giorno', backdrop: 'beach',
+        build(b) {
+            b.ground(0, 111, 12);
+            b.clear(30, 32, 0, 13);
+            b.clear(62, 64, 0, 13);
+            b.clear(90, 92, 0, 13);
+            // stabilimento a tre piani: cunicolo, tetto, terrazza
+            b.box(17, 11).box(18, 10, 2, 2);
+            b.tunnel(20, 26, 10);
+            b.plank(18, 26, 8);
+            b.box(38, 11, 2, 1);
+            b.tunnel(40, 46, 10);
+            b.box(68, 11, 2, 1);
+            b.tunnel(70, 77, 10);
+            b.plank(89, 93, 10);
+            b.crab(12).crab(54).crab(82).crab(105);
+            b.urchin(35).urchin(50).urchin(56).urchin(86).urchin(100);
+            b.coinRow(4, 8, 11);
+            b.coinRow(19, 25, 7);
+            b.coinRow(21, 25, 11);
+            b.coinRow(21, 25, 9);
+            b.coinArc(30, 32, 9);
+            b.coinRow(41, 45, 11).coinRow(41, 45, 9);
+            b.coinRow(58, 60, 11);
+            b.coinArc(62, 64, 9);
+            b.coinRow(71, 76, 11).coinRow(71, 76, 9);
+            b.coinRow(89, 93, 9);
+            b.coinRow(95, 97, 11).coinRow(102, 104, 11);
+            b.heart(22, 6);
+            b.cabin(5, 0).cabin(10, 2).umbrella(29, 1).cabin(48, 3).umbrella(59, 2).cabin(66, 1).umbrella(80, 0).cabin(95, 2).towel(88, 1);
+            b.startAt(2).flagAt(108);
+            b.hint(16.5, 6.3, 'tre piani di lido:\ncunicolo, tetto, terrazza');
+        }
+    },
+
+    /* ---------- 14 · IL PONTILE STORTO (pomeriggio) — moli sghembi ---------- */
+    {
+        name: 'Il pontile storto', theme: 'pomeriggio', backdrop: 'water',
+        build(b) {
+            b.stone(0, 8, 11, 13).stone(12, 19, 10, 13).stone(23, 29, 11, 13);
+            b.stone(33, 40, 10, 13).stone(44, 50, 12, 13).stone(54, 61, 10, 13);
+            b.stone(66, 73, 11, 13).stone(82, 89, 10, 13).stone(93, 107, 11, 13);
+            b.plank(51, 53, 11);
+            b.plank(63, 64, 8);
+            b.plank(75, 76, 9).plank(79, 80, 8);
+            b.plank(90, 92, 8);
+            b.crab(16).crab(57).crab(102);
+            b.urchin(26).urchin(37).urchin(69).urchin(97);
+            b.coinRow(2, 6, 10);
+            b.coinArc(9, 11, 8);
+            b.coinRow(13, 15, 9).coinRow(17, 18, 9);
+            b.coinArc(20, 22, 9);
+            b.coinRow(24, 25, 10).coinRow(28, 29, 10);
+            b.coinArc(30, 32, 8);
+            b.coinRow(34, 36, 9).coinRow(39, 40, 9);
+            b.coinRow(45, 49, 11);
+            b.coinRow(51, 53, 10);
+            b.coinRow(55, 56, 9).coinRow(59, 61, 9);
+            b.coinRow(63, 64, 7);
+            b.coinRow(67, 68, 10).coinRow(71, 72, 10);
+            b.coinRow(75, 76, 8).coinRow(79, 80, 7);
+            b.coinRow(83, 88, 9);
+            b.coinRow(90, 92, 7);
+            b.coinRow(95, 96, 10).coinRow(100, 101, 10).coinRow(102, 103, 10);
+            b.heart(64, 5);
+            b.umbrella(4, 3).cabin(85, 0).towel(46, 1);
+            b.startAt(2).flagAt(104);
+            b.hint(42, 8.2, 'il pontile scende…\nfin quasi in acqua');
+        }
+    },
+
+    /* ---------- 15 · LA PINETA (giorno) — la via degli alberi ---------- */
+    {
+        name: 'La pineta', theme: 'giorno', backdrop: 'beach',
+        build(b) {
+            b.ground(0, 111, 12);
+            b.clear(25, 27, 0, 13);
+            b.clear(55, 58, 0, 13);
+            b.clear(85, 87, 0, 13);
+            b.box(8, 11);
+            b.plank(10, 13, 9).plank(15, 19, 8).plank(21, 26, 8).plank(28, 32, 7).plank(34, 38, 8);
+            b.plank(54, 59, 10);
+            b.box(66, 11);
+            b.plank(68, 71, 9).plank(73, 77, 8).plank(79, 84, 8).plank(86, 89, 9);
+            b.crab(17).crab(50).crab(75).crab(98);
+            b.urchin(41).urchin(46).urchin(62).urchin(93).urchin(103);
+            b.coinRow(3, 6, 11);
+            b.coinRow(10, 13, 8).coinRow(15, 19, 7).coinRow(21, 26, 7).coinRow(28, 32, 6).coinRow(34, 38, 7);
+            b.coinRow(20, 23, 11);
+            b.coinRow(35, 38, 11);
+            b.coinRow(48, 52, 11);
+            b.coinRow(54, 59, 9);
+            b.coinRow(68, 71, 8).coinRow(73, 77, 7).coinRow(79, 84, 7);
+            b.coinRow(88, 89, 8);
+            b.coinRow(95, 97, 11).coinRow(106, 108, 11);
+            b.heart(30, 5);
+            b.umbrella(44, 2).towel(60, 3).cabin(100, 3);
+            b.startAt(2).flagAt(109);
+            b.hint(7, 6.6, 'di sopra tira brezza:\nla via alta paga');
+        }
+    },
+
+    /* ---------- 16 · SABBIA BOLLENTE (pomeriggio) — campi di ricci ---------- */
+    {
+        name: 'Sabbia bollente', theme: 'pomeriggio', backdrop: 'beach',
+        build(b) {
+            b.ground(0, 15, 12).ground(16, 23, 11).ground(27, 42, 12).ground(46, 59, 12);
+            b.ground(60, 67, 10).ground(68, 75, 11).ground(79, 109, 12);
+            b.box(27, 11).box(28, 10);
+            b.plank(30, 41, 8);
+            b.plank(75, 79, 9);
+            b.crab(8).crab(50).crab(55).crab(95).crab(103);
+            b.urchin(19).urchin(31).urchin(34).urchin(37).urchin(40);
+            b.urchin(62).urchin(65).urchin(82).urchin(86).urchin(90);
+            b.coinRow(3, 6, 11);
+            b.coinRow(17, 18, 10).coinRow(21, 22, 10);
+            b.coinArc(24, 26, 9);
+            b.coinRow(30, 41, 7);
+            b.coinRow(32, 33, 11).coinRow(38, 39, 11);
+            b.coinArc(43, 45, 9);
+            b.coinRow(47, 49, 11).coinRow(52, 53, 11).coinRow(57, 58, 11);
+            b.coinRow(63, 64, 9);
+            b.coinRow(69, 73, 10);
+            b.coinRow(75, 79, 8);
+            b.coinRow(83, 85, 11).coinRow(88, 89, 11).coinRow(93, 94, 11);
+            b.coinRow(98, 101, 11).coinRow(105, 107, 11);
+            b.heart(35, 6);
+            b.umbrella(10, 0).umbrella(48, 3).towel(70, 2).cabin(105, 0);
+            b.startAt(2).flagAt(107);
+            b.hint(28, 6.2, 'la sabbia scotta\ne i ricci pungono');
+        }
+    },
+
+    /* ---------- 17 · IL TEMPORALE (nuvolo) — ritmo sulle passerelle ---------- */
+    {
+        name: 'Il temporale', theme: 'nuvole', backdrop: 'water',
+        build(b) {
+            b.stone(0, 6, 11, 13).stone(23, 29, 11, 13).stone(46, 52, 11, 13);
+            b.stone(69, 76, 11, 13).stone(93, 111, 11, 13);
+            b.plank(8, 9, 9).plank(12, 13, 8).plank(16, 17, 9).plank(20, 21, 8);
+            b.plank(31, 32, 10).plank(35, 36, 8).plank(39, 40, 7).plank(43, 44, 9);
+            b.plank(54, 55, 9).plank(58, 59, 8).plank(62, 63, 9).plank(66, 67, 8);
+            b.plank(78, 79, 10).plank(82, 83, 8).plank(86, 87, 7).plank(90, 91, 9);
+            b.crab(26).crab(72).crab(104);
+            b.urchin(49).urchin(98);
+            b.coinRow(1, 4, 10);
+            b.coinRow(8, 9, 8).coinRow(12, 13, 7).coinRow(16, 17, 8).coinRow(20, 21, 7);
+            b.coinRow(24, 28, 10);
+            b.coinRow(31, 32, 9).coinRow(35, 36, 7).coinRow(39, 40, 6).coinRow(43, 44, 8);
+            b.coinRow(47, 48, 10).coinRow(51, 52, 10);
+            b.coinRow(54, 55, 8).coinRow(58, 59, 7).coinRow(62, 63, 8).coinRow(66, 67, 7);
+            b.coinRow(70, 71, 10).coinRow(74, 75, 10);
+            b.coinRow(78, 79, 9).coinRow(82, 83, 7).coinRow(86, 87, 6).coinRow(90, 91, 8);
+            b.coinRow(95, 97, 10).coinRow(101, 104, 10);
+            b.heart(87, 4);
+            b.cabin(107, 1).towel(25, 3);
+            b.startAt(2).flagAt(105);
+            b.hint(7, 6, 'senti il tuono?\nnon perdere il ritmo');
+        }
+    },
+
+    /* ---------- 18 · CONTROLUCE (tramonto) — il grande deposito ---------- */
+    {
+        name: 'Controluce', theme: 'tramonto', backdrop: 'beach',
+        build(b) {
+            b.ground(0, 115, 12);
+            b.clear(40, 42, 0, 13);
+            b.clear(78, 80, 0, 13);
+            b.box(10, 11);
+            b.box(12, 10, 1, 2).box(14, 9, 2, 3);
+            b.box(16, 11);
+            b.tunnel(18, 24, 10);
+            b.box(20, 8, 2, 1);
+            b.tunnel(28, 34, 10);
+            b.box(34, 11).box(35, 10, 1, 2).box(36, 9, 2, 2);
+            b.plank(37, 43, 8);
+            b.tunnel(46, 53, 10);
+            b.box(60, 9, 2, 2);
+            b.box(64, 8, 2, 1);
+            b.tunnel(68, 75, 10);
+            b.box(76, 11);
+            b.plank(77, 81, 9);
+            b.box(84, 11, 2, 1).box(86, 10, 2, 2).box(88, 9, 2, 3);
+            b.stone(90, 96, 9, 9);
+            b.tunnel(100, 106, 10);
+            b.crab(6).crab(44).crab(58).crab(98).crab(109);
+            b.urchin(26).urchin(56).urchin(83).urchin(108);
+            b.coinRow(3, 5, 11);
+            b.coinRow(14, 15, 7);
+            b.coinRow(19, 23, 11);
+            b.coinRow(20, 21, 6);
+            b.coinRow(29, 33, 11).coinRow(29, 33, 9);
+            b.coinRow(37, 43, 7);
+            b.coinRow(47, 52, 11).coinRow(47, 52, 9);
+            b.coinRow(60, 61, 7);
+            b.coinRow(64, 65, 6);
+            b.coinRow(69, 74, 11).coinRow(69, 74, 9);
+            b.coinRow(77, 81, 8);
+            b.coinRow(90, 96, 8);
+            b.coinRow(91, 95, 11);
+            b.coinRow(101, 105, 11);
+            b.coinRow(110, 112, 11);
+            b.heart(21, 5);
+            b.towel(8, 1).cabin(112, 2);
+            b.startAt(2).flagAt(113);
+            b.hint(9, 6.4, 'controluce:\nil deposito è un labirinto');
+        }
+    },
+
+    /* ---------- 19 · L'ULTIMA SERA (sera) — un po' di tutto, al crepuscolo ---------- */
+    {
+        name: "L'ultima sera", theme: 'sera', backdrop: 'water',
+        build(b) {
+            b.ground(0, 13, 12);
+            b.stone(17, 24, 11, 13).stone(37, 45, 11, 13).stone(46, 57, 11, 13);
+            b.stone(62, 71, 10, 13).stone(76, 85, 11, 13).stone(98, 119, 11, 13);
+            b.plank(26, 27, 9).plank(30, 31, 8).plank(34, 35, 9);
+            b.box(47, 10);
+            b.box(50, 8, 3, 2);
+            b.plank(57, 61, 9);
+            b.plank(72, 75, 8);
+            b.plank(87, 88, 9).plank(91, 92, 8).plank(95, 96, 9);
+            b.crab(10).crab(41).crab(66).crab(108);
+            b.urchin(6).urchin(56).urchin(80).urchin(103).urchin(113);
+            b.coinRow(3, 4, 11).coinRow(8, 9, 11);
+            b.coinArc(14, 16, 9);
+            b.coinRow(18, 23, 10);
+            b.coinRow(26, 27, 8).coinRow(30, 31, 7).coinRow(34, 35, 8);
+            b.coinRow(38, 40, 10).coinRow(43, 44, 10);
+            b.coinRow(50, 52, 6);
+            b.coinRow(51, 55, 10);
+            b.coinRow(57, 61, 8);
+            b.coinRow(63, 65, 9).coinRow(68, 70, 9);
+            b.coinRow(72, 75, 7);
+            b.coinRow(77, 78, 10).coinRow(82, 84, 10);
+            b.coinRow(87, 88, 8).coinRow(91, 92, 7).coinRow(95, 96, 8);
+            b.coinRow(99, 101, 10).coinRow(105, 107, 10).coinRow(110, 111, 10);
+            b.heart(51, 5);
+            b.umbrella(4, 2).cabin(116, 1).towel(19, 0);
+            b.startAt(2).flagAt(116);
+            b.hint(15, 6.8, "l'ultima sera d'estate:\ngoditela tutta");
+        }
+    },
+
+    /* ---------- 20 · RITORNO AL FARO (notte) — gran finale, davvero ---------- */
+    {
+        name: 'Ritorno al faro', theme: 'notte', backdrop: 'water',
+        build(b) {
+            b.ground(0, 15, 12);
+            b.stone(19, 28, 11, 13).stone(41, 50, 11, 13).stone(51, 62, 11, 13);
+            b.stone(67, 78, 11, 13).stone(91, 100, 11, 13).stone(104, 123, 11, 13);
+            b.plank(30, 31, 9).plank(34, 35, 8).plank(38, 39, 9);
+            b.box(52, 10);
+            b.box(54, 8, 4, 2);
+            b.plank(62, 66, 9);
+            b.plank(80, 81, 9).plank(84, 85, 8).plank(88, 89, 8);
+            b.box(108, 10, 2, 1).box(111, 9, 2, 2);
+            b.stone(114, 120, 8, 13);
+            b.crab(8).crab(45).crab(71).crab(95).crab(119);
+            b.urchin(23).urchin(61).urchin(75).urchin(97);
+            b.coinRow(4, 6, 11).coinRow(10, 12, 11);
+            b.coinArc(16, 18, 9);
+            b.coinRow(20, 22, 10).coinRow(25, 27, 10);
+            b.coinRow(30, 31, 8).coinRow(34, 35, 7).coinRow(38, 39, 8);
+            b.coinRow(42, 44, 10).coinRow(47, 49, 10);
+            b.coinRow(54, 57, 6);
+            b.coinRow(54, 57, 10);
+            b.coinRow(58, 60, 10);
+            b.coinRow(62, 66, 8);
+            b.coinRow(68, 70, 10).coinRow(73, 74, 10).coinRow(77, 78, 10);
+            b.coinRow(80, 81, 8).coinRow(84, 85, 7).coinRow(88, 89, 7);
+            b.coinRow(92, 94, 10).coinRow(98, 99, 10);
+            b.coinArc(101, 103, 9);
+            b.coinRow(105, 107, 10);
+            b.coinRow(108, 109, 9).coinRow(111, 112, 8);
+            b.coinRow(114, 116, 7);
+            b.heart(112, 7);
+            b.towel(11, 3).cabin(6, 1);
+            b.startAt(2).flagAt(117);
+            b.hint(105, 5.8, 'eccolo di nuovo:\nil faro ti dà il bentornato');
+        }
     }
 ];
 
 function buildWorld(levelIndex) {
     const def = LEVELS[levelIndex];
     // larghezze scelte per livello
-    const widths = [68, 84, 88, 92, 96, 100, 96, 100, 110, 112];
+    const widths = [68, 84, 88, 92, 96, 100, 96, 100, 110, 112, 104, 108, 112, 108, 112, 110, 112, 116, 120, 124];
     const b = LevelBuilder(widths[levelIndex]);
     def.build(b);
 
@@ -837,12 +1181,12 @@ const GRAVITY = 2400;
 const JUMP_VEL = -560;          // tenendo premuto si sale fino a ~2,8 tile
 const JUMP_CUT = -170;          // verso cui decade il salto se rilasci presto
 const HOLD_MULT = 0.58;         // gravità ridotta in salita tenendo premuto
-const APEX_BAND = 120;          // vicino all'apice…
-const APEX_MULT = 0.62;         // …la gravità si ammorbidisce: piccolo "hang time"
+const APEX_BAND = 150;          // vicino all'apice…
+const APEX_MULT = 0.55;         // …la gravità si ammorbidisce: piccolo "hang time"
 const RUN_MAX = 280;
 const CROUCH_MAX = 112;
 const ACCEL_GROUND = 1700;
-const ACCEL_AIR = 1250;
+const ACCEL_AIR = 1350;
 const FRICTION_GROUND = 1900;
 const FRICTION_AIR = 260;
 const FALL_MAX = 800;
@@ -863,7 +1207,9 @@ let deathKind = '';
 let camX = 0;
 let camShake = 0;
 let elapsed = 0;                // orologio globale per le animazioni
+let levelTime = 0;              // cronometro del livello (le morti NON lo azzerano)
 let winNewBest = false;
+let winNewTime = false;
 let justFinishedAll = false;
 
 const player = {
@@ -951,10 +1297,14 @@ function startLevel(i, keepLives) {
     stateT = 0;
     introT = 2.1;
 }
-function respawn() {
-    runCoins = 0;
-    for (const c of world.coins) c.taken = false;
-    for (const h of world.hearts) h.taken = false;
+function respawn(soft) {
+    // soft = dopo una morte: monete e cuori raccolti restano presi, il cronometro continua
+    if (!soft) {
+        runCoins = 0;
+        levelTime = 0;
+        for (const c of world.coins) c.taken = false;
+        for (const h of world.hearts) h.taken = false;
+    }
     for (const cr of world.crabs) { cr.dead = 0; cr.squashT = 0; cr.x = cr.spawnX !== undefined ? cr.spawnX : (cr.spawnX = cr.x); cr.vx = Math.abs(cr.vx); }
     player.x = world.start.x;
     player.y = world.start.feetY - P_H_STAND;
@@ -996,6 +1346,9 @@ function winLevel() {
     const prev = save.best[idx] | 0;
     winNewBest = runCoins > prev && prev > 0;
     if (runCoins > prev) save.best[idx] = runCoins;
+    const tPrev = save.bestTime[idx];
+    winNewTime = tPrev !== undefined && levelTime < tPrev;
+    if (tPrev === undefined || levelTime < tPrev) save.bestTime[idx] = Math.round(levelTime * 10) / 10;
     if (curLevel + 1 < N_LEVELS) {
         save.unlocked = Math.max(save.unlocked, curLevel + 2);
     } else {
@@ -1043,8 +1396,8 @@ function updatePlayer(dt) {
     if (dir !== 0) {
         const acc = p.grounded ? ACCEL_GROUND : ACCEL_AIR;
         p.vx += dir * acc * dt;
-        // inversione più reattiva a terra
-        if (p.grounded && Math.sign(p.vx) !== dir && Math.abs(p.vx) > 40) p.vx += dir * acc * dt * 0.8;
+        // inversione più reattiva, a terra e in volo
+        if (Math.sign(p.vx) !== dir && Math.abs(p.vx) > 40) p.vx += dir * acc * dt * (p.grounded ? 0.8 : 0.7);
         p.vx = clamp(p.vx, -maxV, maxV);
         p.facing = dir;
     } else {
@@ -1093,7 +1446,7 @@ function updatePlayer(dt) {
     else if (p.vy < 0 && jumpHeld) g = GRAVITY * HOLD_MULT;                   // salita col tasto premuto
     p.vy += g * dt;
     // rilascio anticipato: il salto si spegne dolcemente invece di troncarsi
-    if (!jumpHeld && p.vy < JUMP_CUT) p.vy = lerp(p.vy, JUMP_CUT, Math.min(1, dt * 14));
+    if (!jumpHeld && p.vy < JUMP_CUT) p.vy = lerp(p.vy, JUMP_CUT, Math.min(1, dt * 10));
     const fallCap = (keys.down && !p.grounded) ? FALL_MAX_FAST : FALL_MAX;
     if (p.vy > fallCap) p.vy = fallCap;
 
@@ -1247,9 +1600,9 @@ function updatePlayer(dt) {
         return;
     }
 
-    /* --- camera: avanza e non torna indietro --- */
-    const target = pcx - VIEW_W * 0.42;
-    camX = clamp(Math.max(camX, target), 0, world.widthPx - VIEW_W);
+    /* --- camera: avanza con dolcezza e non torna indietro --- */
+    const target = clamp(pcx - VIEW_W * 0.42, 0, world.widthPx - VIEW_W);
+    if (target > camX) camX = Math.min(target, camX + (target - camX) * Math.min(1, dt * 8) + 30 * dt);
 }
 
 /* ---------- granchi ---------- */
@@ -1298,6 +1651,7 @@ function updateParticles(dt) {
 function updateGame(dt) {
     elapsed += dt;
     stateT += dt;
+    if (state === 'play' || state === 'dying') levelTime += dt;
     if (camShake > 0) camShake = Math.max(0, camShake - dt * 18);
     if (introT > 0) introT -= dt;
 
@@ -1320,8 +1674,12 @@ function updateGame(dt) {
         updateCrabs(dt);
         updateParticles(dt);
         if (stateT > 1.15) {
-            if (lives > 0) retryLevel();
-            else { state = 'gameover'; stateT = 0; }
+            if (lives > 0) {
+                respawn(true);          // morte: si riparte dall'inizio ma monete e tempo restano
+                state = 'play';
+                stateT = 0;
+                introT = 0.6;
+            } else { state = 'gameover'; stateT = 0; }
         }
     } else if (state === 'gameover') {
         updateParticles(dt);
@@ -1372,6 +1730,18 @@ function txt(s, x, y, o) {
 function rr(x, y, w, h, r) {
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, r);
+}
+
+// scrive rimpicciolendo il corpo finché il testo non sta nella larghezza data
+function txtFit(s, x, y, maxW, o) {
+    o = o || {};
+    let size = o.size || 16;
+    ctx.font = `${o.italic ? 'italic ' : ''}${o.weight || 700} ${size}px ${FONT}`;
+    while (size > 7 && ctx.measureText(s).width > maxW) {
+        size -= 0.5;
+        ctx.font = `${o.italic ? 'italic ' : ''}${o.weight || 700} ${size}px ${FONT}`;
+    }
+    txt(s, x, y, Object.assign({}, o, { size }));
 }
 
 /* ---------- texture dei tile (pre-renderizzate per tema) ---------- */
@@ -1654,8 +2024,8 @@ function drawSea(theme, levelIdx) {
         ctx.restore();
     }
 
-    // faro lontano all'orizzonte (in tutti i livelli tranne l'ultimo, dove è vicino)
-    if (world && world.index < 9) {
+    // faro lontano all'orizzonte (tranne dove il faro è vicino)
+    if (world && world.index !== 9 && world.index !== N_LEVELS - 1) {
         const fx = VIEW_W - 90 - camX * 0.015;
         drawLighthouse(fx, HORIZON_Y + 2, 0.32, false);
     }
@@ -2014,30 +2384,48 @@ function drawCoin(c) {
 }
 
 function drawUrchin(u) {
+    const dark = world && (world.themeName === 'sera' || world.themeName === 'notte' || world.themeName === 'tramonto');
     const cx = u.x + u.w / 2, cy = u.y + u.h;
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.strokeStyle = '#241c30';
-    ctx.lineWidth = 1.8;
+    // nei livelli scuri un alone tenue li fa notare da lontano
+    if (dark) {
+        const gl = ctx.createRadialGradient(0, -6, 2, 0, -6, 24);
+        gl.addColorStop(0, 'rgba(205,185,255,0.30)');
+        gl.addColorStop(1, 'rgba(205,185,255,0)');
+        ctx.fillStyle = gl;
+        ctx.beginPath(); ctx.arc(0, -6, 24, 0, 7); ctx.fill();
+    }
     ctx.lineCap = 'round';
     for (let i = 0; i < 13; i++) {
         const a = Math.PI + (i / 12) * Math.PI;
         const wig = Math.sin(elapsed * 2 + i) * 0.04;
+        const dx = Math.cos(a + wig), dy = Math.sin(a + wig);
+        // aculeo scuro…
+        ctx.strokeStyle = dark ? '#3c3054' : '#241c30';
+        ctx.lineWidth = 1.9;
         ctx.beginPath();
-        ctx.moveTo(Math.cos(a + wig) * 6, Math.sin(a + wig) * 6 - 2);
-        ctx.lineTo(Math.cos(a + wig) * 17, Math.sin(a + wig) * 17 - 2);
+        ctx.moveTo(dx * 6, dy * 6 - 2);
+        ctx.lineTo(dx * 17, dy * 17 - 2);
+        ctx.stroke();
+        // …con la punta chiara, ben visibile
+        ctx.strokeStyle = dark ? '#d8cdf2' : '#a390c4';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(dx * 12.5, dy * 12.5 - 2);
+        ctx.lineTo(dx * 17.5, dy * 17.5 - 2);
         ctx.stroke();
     }
     const g = ctx.createRadialGradient(-3, -8, 1, 0, -4, 13);
-    g.addColorStop(0, '#4a3a5e');
-    g.addColorStop(1, '#1d1728');
+    g.addColorStop(0, dark ? '#6a558c' : '#4a3a5e');
+    g.addColorStop(1, dark ? '#2e2444' : '#1d1728');
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(0, -2, 11, Math.PI, 0);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = 'rgba(190,170,220,0.5)';
-    ctx.beginPath(); ctx.arc(-4, -7, 2, 0, 7); ctx.fill();
+    ctx.fillStyle = dark ? 'rgba(225,210,250,0.75)' : 'rgba(190,170,220,0.5)';
+    ctx.beginPath(); ctx.arc(-4, -7, 2.2, 0, 7); ctx.fill();
     ctx.restore();
 }
 
@@ -2189,6 +2577,10 @@ function drawPlayer() {
     if (p.landT > 0) {
         const s = p.landT / 0.14;
         ctx.scale(1 + 0.12 * s, 1 - 0.14 * s);
+    } else if (!p.grounded) {
+        // leggero stretch lungo la velocità: il volo sembra più elastico
+        const sy = 1 + clamp(Math.abs(p.vy) * 0.00009, 0, 0.075);
+        ctx.scale(1 - (sy - 1) * 0.55, sy);
     }
 
     const run = p.runPhase;
@@ -2454,6 +2846,82 @@ function drawHearts() {
     }
 }
 
+function fmtTime(t, decimals) {
+    const m = Math.floor(t / 60);
+    const s = t - m * 60;
+    if (decimals) return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+    return `${m}:${String(Math.floor(s)).padStart(2, '0')}`;
+}
+
+function drawClockIcon(x, y, r, color) {
+    ctx.strokeStyle = color || '#e8e2d2';
+    ctx.lineWidth = r < 7 ? 1.5 : 1.8;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x, y - r * 0.62);
+    ctx.moveTo(x, y); ctx.lineTo(x + r * 0.5, y + r * 0.18);
+    ctx.stroke();
+}
+
+/* colori a fasce per la percentuale di monete:
+   rosso sotto il 75%, arancio fino al 95%, verde oltre.
+   Lo zero resta neutro: vuol dire "mai giocato", non "andato male". */
+function pctPalette(pct) {
+    if (pct <= 0) return { from: '#cfc4ae', to: '#b6a992', text: 'rgba(110,90,64,0.55)' };
+    if (pct >= 95) return { from: '#8ac894', to: '#45864f', text: '#3d7a48' };
+    if (pct >= 75) return { from: '#f7c274', to: '#e08a26', text: '#a86c1e' };
+    return { from: '#ea8477', to: '#c4402f', text: '#b23b2a' };
+}
+
+// barretta di riempimento (percentuale monete)
+function drawFillBar(x, y, w, h, pct) {
+    ctx.fillStyle = 'rgba(90,70,45,0.17)';
+    rr(x, y, w, h, h / 2); ctx.fill();
+    if (pct > 0) {
+        const pal = pctPalette(pct);
+        const fw = Math.max(h, w * Math.min(pct, 100) / 100);
+        const g = ctx.createLinearGradient(x, 0, x + fw, 0);
+        g.addColorStop(0, pal.from);
+        g.addColorStop(1, pal.to);
+        ctx.fillStyle = g;
+        rr(x, y, fw, h, h / 2); ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(90,70,45,0.22)';
+    ctx.lineWidth = 1;
+    rr(x + 0.5, y + 0.5, w - 1, h - 1, (h - 1) / 2); ctx.stroke();
+}
+
+// stellina d'oro: tutte le monete del livello
+function drawStar(x, y, r) {
+    ctx.save();
+    ctx.translate(x, y);
+    const gl = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2.3);
+    gl.addColorStop(0, 'rgba(255,205,80,0.45)');
+    gl.addColorStop(1, 'rgba(255,205,80,0)');
+    ctx.fillStyle = gl;
+    ctx.beginPath(); ctx.arc(0, 0, r * 2.3, 0, 7); ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const rad = i % 2 ? r * 0.45 : r;
+        ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+    }
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, -r, 0, r);
+    g.addColorStop(0, '#fff0b4');
+    g.addColorStop(0.55, '#ffc94a');
+    g.addColorStop(1, '#e09a1e');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(150,98,16,0.8)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+}
+
+// pulsante pausa cliccabile, in gioco
+const HUD_PAUSE = { x: VIEW_W - 50, y: 54, w: 36, h: 30 };
+
 function drawHUD() {
     // monete
     ctx.save();
@@ -2461,6 +2929,11 @@ function drawHUD() {
     rr(14, 12, 118, 36, 18); ctx.fill();
     drawCoinIcon(35, 30, 11);
     txt(`${runCoins} / ${world.totalCoins}`, 52, 36, { size: 17, weight: 900, color: '#fff' });
+    // cronometro
+    ctx.fillStyle = 'rgba(18,24,32,0.42)';
+    rr(14, 54, 96, 30, 15); ctx.fill();
+    drawClockIcon(32, 69, 8);
+    txt(fmtTime(levelTime), 46, 75, { size: 15, weight: 900, color: '#fff' });
     // vite
     drawHearts();
     // livello
@@ -2470,7 +2943,19 @@ function drawHUD() {
     ctx.fillStyle = 'rgba(18,24,32,0.42)';
     rr(VIEW_W - 14 - w, 12, w, 36, 18); ctx.fill();
     txt(label, VIEW_W - 14 - w / 2, 35, { size: 16, weight: 900, color: '#fff', align: 'center' });
-    if (!IS_TOUCH) txt('Esc = pausa', VIEW_W - 16, VIEW_H - 10, { size: 12, weight: 700, color: 'rgba(255,255,255,0.45)', align: 'right' });
+
+    // pulsante pausa (cliccabile) sotto il nome del livello
+    const hotP = inRect(mouseX, mouseY, HUD_PAUSE);
+    ctx.fillStyle = hotP ? 'rgba(18,24,32,0.7)' : 'rgba(18,24,32,0.42)';
+    rr(HUD_PAUSE.x, HUD_PAUSE.y, HUD_PAUSE.w, HUD_PAUSE.h, 15); ctx.fill();
+    ctx.fillStyle = hotP ? '#fff' : 'rgba(255,255,255,0.82)';
+    ctx.fillRect(HUD_PAUSE.x + 13, HUD_PAUSE.y + 9, 3.4, 12);
+    ctx.fillRect(HUD_PAUSE.x + 19.6, HUD_PAUSE.y + 9, 3.4, 12);
+
+    if (!IS_TOUCH) txt('P o Esc = pausa  ·  Q = menu', VIEW_W - 16, VIEW_H - 10, {
+        size: 12, weight: 700, color: 'rgba(255,255,255,0.62)', align: 'right',
+        shadow: 'rgba(0,0,0,0.6)', shadowBlur: 5, shadowY: 1
+    });
     ctx.restore();
 }
 
@@ -2502,8 +2987,8 @@ function renderWorld() {
     ctx.save();
     ctx.translate(-Math.round(camX - shakeX), Math.round(shakeY));
 
-    // faro vicino nel livello finale (dietro ai tile)
-    if (world.index === 9) {
+    // faro vicino nei livelli del faro (dietro ai tile)
+    if (world.index === 9 || world.index === N_LEVELS - 1) {
         drawLighthouse(world.widthPx - 130, 11 * TILE + 2, 0.9, true);
     }
 
@@ -2588,6 +3073,7 @@ const ctx = canvas.getContext('2d');
 // monete totali per livello (per il menu)
 const LEVEL_META = [];
 for (let i = 0; i < N_LEVELS; i++) LEVEL_META.push(buildWorld(i).totalCoins);
+const ALL_COINS = LEVEL_META.reduce((a, b) => a + b, 0);
 
 let menuSel = 0;
 let resetArmT = -1;
@@ -2613,9 +3099,9 @@ function inRect(px, py, r) {
 
 /* ---------- menu principale ---------- */
 function menuCards() {
-    const cw = 150, ch = 102, gx = 18, gy = 22;
+    const cw = 150, ch = 84, gx = 16, gy = 13;
     const x0 = (VIEW_W - (5 * cw + 4 * gx)) / 2;
-    const y0 = 248;
+    const y0 = 148;
     const cards = [];
     for (let i = 0; i < N_LEVELS; i++) {
         const r = Math.floor(i / 5), c = i % 5;
@@ -2658,27 +3144,29 @@ function renderMenu(dt) {
 
     // titolo
     ctx.save();
-    ctx.translate(VIEW_W / 2, 118);
+    ctx.translate(VIEW_W / 2, 84);
     ctx.rotate(-0.012);
     txt('LIDO RUNNER', 0, 0, {
-        size: 64, weight: 900, italic: true, color: '#fff', align: 'center',
-        shadow: 'rgba(30,50,80,0.55)', shadowBlur: 14, shadowY: 5
+        size: 48, weight: 900, italic: true, color: '#fff', align: 'center',
+        shadow: 'rgba(30,50,80,0.55)', shadowBlur: 12, shadowY: 4
     });
     ctx.restore();
-    txt('una corsa in riva al mare', VIEW_W / 2, 152, {
-        size: 19, weight: 700, italic: true, color: 'rgba(255,255,255,0.92)', align: 'center',
+    txt('una corsa in riva al mare · 20 livelli', VIEW_W / 2, 112, {
+        size: 16, weight: 700, italic: true, color: 'rgba(255,255,255,0.92)', align: 'center',
         shadow: 'rgba(30,50,80,0.4)', shadowBlur: 8, shadowY: 2
     });
 
-    // monete totali
+    // monete totali, con percentuale complessiva
     const tot = totalBestCoins();
+    const totPct = ALL_COINS ? Math.round(tot / ALL_COINS * 100) : 0;
     ctx.fillStyle = 'rgba(18,24,32,0.4)';
-    rr(VIEW_W - 148, 14, 134, 34, 17); ctx.fill();
-    drawCoinIcon(VIEW_W - 128, 31, 10);
-    txt(`${tot}`, VIEW_W - 112, 37, { size: 16, weight: 900, color: '#fff' });
-    txt('raccolte', VIEW_W - 24, 37, { size: 12.5, weight: 700, color: 'rgba(255,255,255,0.7)', align: 'right' });
+    rr(VIEW_W - 214, 12, 200, 40, 20); ctx.fill();
+    drawCoinIcon(VIEW_W - 194, 27, 9.5);
+    txt(`${tot} / ${ALL_COINS}`, VIEW_W - 180, 32, { size: 14.5, weight: 900, color: '#fff' });
+    txt(`${totPct}%`, VIEW_W - 24, 32, { size: 14.5, weight: 900, color: '#ffd75e', align: 'right' });
+    drawFillBar(VIEW_W - 202, 38, 176, 6, totPct);
 
-    txt('scegli il livello', VIEW_W / 2, 232, { size: 16, weight: 900, color: 'rgba(60,42,24,0.75)', align: 'center' });
+    txt('scegli il livello', VIEW_W / 2, 138, { size: 13, weight: 900, color: 'rgba(255,255,255,0.85)', align: 'center', shadow: 'rgba(30,50,80,0.4)', shadowBlur: 6 });
 
     // schede dei livelli
     const cards = menuCards();
@@ -2703,66 +3191,89 @@ function renderMenu(dt) {
             rr(-cd.w / 2 + 1, -cd.h / 2 + 1, cd.w - 2, cd.h - 2, 13); ctx.stroke();
         }
         if (unlocked) {
-            const done = (save.best[String(cd.i)] || 0) > 0 || cd.i + 1 < save.unlocked || (cd.i === N_LEVELS - 1 && save.finished);
-            txt(String(cd.i + 1), -cd.w / 2 + 16, -cd.h / 2 + 34, { size: 27, weight: 900, color: '#c95f4e' });
-            txt(LEVELS[cd.i].name, 0, -cd.h / 2 + 58, { size: 14.5, weight: 900, color: '#4a3826', align: 'center' });
-            drawCoinIcon(-26, cd.h / 2 - 21, 8);
-            txt(`${save.best[String(cd.i)] || 0} / ${LEVEL_META[cd.i]}`, -14, cd.h / 2 - 15, { size: 13.5, weight: 700, color: '#6e5a40' });
+            const got = save.best[String(cd.i)] || 0;
+            const tot = LEVEL_META[cd.i];
+            const pct = tot ? Math.round(got / tot * 100) : 0;
+            const done = got > 0 || cd.i + 1 < save.unlocked || (cd.i === N_LEVELS - 1 && save.finished);
+            const L = -cd.w / 2, R = cd.w / 2;
+
+            // riga 1 — il numero ha una colonna tutta sua, il nome comincia dopo il separatore
+            txt(String(cd.i + 1), L + 23, -cd.h / 2 + 26, { size: 19, weight: 900, color: '#c95f4e', align: 'center' });
+            ctx.fillStyle = 'rgba(120,95,60,0.22)';
+            ctx.fillRect(L + 37, -cd.h / 2 + 11, 1, 20);
+            txtFit(LEVELS[cd.i].name, L + 44, -cd.h / 2 + 24, cd.w - 54, { size: 12, weight: 900, color: '#4a3826' });
+
+            // riga 2 — monete, percentuale a colori e (se tutte) la stellina
+            const perfect = got >= tot && tot > 0;
+            drawCoinIcon(L + 18, cd.h / 2 - 44, 6.5);
+            txt(`${got}/${tot}`, L + 28, cd.h / 2 - 40, { size: 11.5, weight: 700, color: '#6e5a40' });
+            txt(`${pct}%`, R - (perfect ? 29 : 11), cd.h / 2 - 40, {
+                size: 12.5, weight: 900, align: 'right', color: pctPalette(pct).text
+            });
+            if (perfect) drawStar(R - 16, cd.h / 2 - 44, 8);
+
+            // riga 3 — barra di riempimento
+            drawFillBar(L + 11, cd.h / 2 - 32, cd.w - 22, 6, pct);
+
+            // riga 4 — miglior tempo (e la spunta di livello superato)
+            const bt = save.bestTime[String(cd.i)];
+            drawClockIcon(L + 18, cd.h / 2 - 14, 6, '#8a7458');
+            txt(bt !== undefined ? fmtTime(bt, true) : '—', L + 28, cd.h / 2 - 10, { size: 11.5, weight: 700, color: '#6e5a40' });
             if (done) {
                 ctx.strokeStyle = '#68a06e';
-                ctx.lineWidth = 3.4;
+                ctx.lineWidth = 3;
                 ctx.lineCap = 'round';
                 ctx.beginPath();
-                ctx.moveTo(cd.w / 2 - 30, -cd.h / 2 + 22);
-                ctx.lineTo(cd.w / 2 - 24, -cd.h / 2 + 29);
-                ctx.lineTo(cd.w / 2 - 13, -cd.h / 2 + 15);
+                ctx.moveTo(R - 26, cd.h / 2 - 16);
+                ctx.lineTo(R - 21, cd.h / 2 - 10);
+                ctx.lineTo(R - 11, cd.h / 2 - 23);
                 ctx.stroke();
             }
         } else {
-            txt(String(cd.i + 1), -cd.w / 2 + 16, -cd.h / 2 + 34, { size: 27, weight: 900, color: 'rgba(235,240,245,0.5)' });
+            txt(String(cd.i + 1), -cd.w / 2 + 23, -cd.h / 2 + 26, { size: 19, weight: 900, color: 'rgba(235,240,245,0.5)', align: 'center' });
             // lucchetto
             ctx.fillStyle = 'rgba(230,236,242,0.85)';
-            rr(-11, -6, 22, 18, 4); ctx.fill();
+            rr(-9, -3, 18, 15, 3.5); ctx.fill();
             ctx.strokeStyle = 'rgba(230,236,242,0.85)';
-            ctx.lineWidth = 3.4;
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(0, -7, 7, Math.PI, 0);
+            ctx.arc(0, -4, 5.8, Math.PI, 0);
             ctx.stroke();
             ctx.fillStyle = 'rgba(70,80,90,0.9)';
-            ctx.beginPath(); ctx.arc(0, 2, 2.6, 0, 7); ctx.fill();
-            txt('completa il precedente', 0, cd.h / 2 - 12, { size: 11, weight: 700, color: 'rgba(235,240,245,0.75)', align: 'center' });
+            ctx.beginPath(); ctx.arc(0, 4, 2.2, 0, 7); ctx.fill();
         }
         ctx.restore();
     }
 
     // piè di pagina
     const footerTxt = IS_TOUCH
-        ? 'tocca un livello per giocare  ·  usa le frecce sotto lo schermo  ·  ▲ tienilo premuto per saltare più in alto'
-        : '←  →  muoviti      ↑  salta (tieni premuto = più in alto)      ↓  accucciati / picchiata      Invio  conferma';
-    txt(footerTxt, VIEW_W / 2, 518, {
-        size: 14, weight: 700, color: 'rgba(60,42,24,0.78)', align: 'center'
+        ? 'tocca un livello · ▲ tieni premuto = salto più alto'
+        : '← → muoviti · ↑ salta (tieni premuto) · ↓ accucciati · P pausa · Q menu';
+    // il testo sta fra il pulsante "azzera" e quelli dell'audio: lo restringo se serve
+    txtFit(footerTxt, 442, 546, 500, {
+        size: 12.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center'
     });
 
     // audio + musica
-    const audioBtn = { x: VIEW_W - 150, y: VIEW_H - 38, w: 136, h: 28 };
+    const audioBtn = { x: VIEW_W - 130, y: VIEW_H - 32, w: 118, h: 24 };
     const hotA = inRect(mouseX, mouseY, audioBtn);
     ctx.fillStyle = hotA ? 'rgba(50,38,22,0.35)' : 'rgba(50,38,22,0.22)';
-    rr(audioBtn.x, audioBtn.y, audioBtn.w, audioBtn.h, 14); ctx.fill();
-    txt(`audio: ${save.sound ? 'sì' : 'no'}  (M)`, audioBtn.x + audioBtn.w / 2, audioBtn.y + 19, { size: 13, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
-    const musicBtn = { x: VIEW_W - 296, y: VIEW_H - 38, w: 136, h: 28 };
+    rr(audioBtn.x, audioBtn.y, audioBtn.w, audioBtn.h, 12); ctx.fill();
+    txt(`audio: ${save.sound ? 'sì' : 'no'} (M)`, audioBtn.x + audioBtn.w / 2, audioBtn.y + 16.5, { size: 11.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
+    const musicBtn = { x: VIEW_W - 256, y: VIEW_H - 32, w: 118, h: 24 };
     const hotMu = inRect(mouseX, mouseY, musicBtn);
     ctx.fillStyle = hotMu ? 'rgba(50,38,22,0.35)' : 'rgba(50,38,22,0.22)';
-    rr(musicBtn.x, musicBtn.y, musicBtn.w, musicBtn.h, 14); ctx.fill();
-    txt(`musica: ${save.music ? 'sì' : 'no'}`, musicBtn.x + musicBtn.w / 2, musicBtn.y + 19, { size: 13, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
+    rr(musicBtn.x, musicBtn.y, musicBtn.w, musicBtn.h, 12); ctx.fill();
+    txt(`musica: ${save.music ? 'sì' : 'no'}`, musicBtn.x + musicBtn.w / 2, musicBtn.y + 16.5, { size: 11.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
 
     // azzera progressi
-    const resetBtn = { x: 14, y: VIEW_H - 38, w: 190, h: 28 };
+    const resetBtn = { x: 12, y: VIEW_H - 32, w: 168, h: 24 };
     const hotR = inRect(mouseX, mouseY, resetBtn);
     if (resetArmT > 0) resetArmT -= dt;
     ctx.fillStyle = hotR ? 'rgba(50,38,22,0.3)' : 'rgba(50,38,22,0.16)';
-    rr(resetBtn.x, resetBtn.y, resetBtn.w, resetBtn.h, 14); ctx.fill();
-    txt(resetArmT > 0 ? 'sicuro? clicca di nuovo' : 'azzera i progressi', resetBtn.x + resetBtn.w / 2, resetBtn.y + 19, {
-        size: 13, weight: 700, color: resetArmT > 0 ? '#a8402e' : 'rgba(60,42,24,0.7)', align: 'center'
+    rr(resetBtn.x, resetBtn.y, resetBtn.w, resetBtn.h, 12); ctx.fill();
+    txt(resetArmT > 0 ? 'sicuro? clicca di nuovo' : 'azzera i progressi', resetBtn.x + resetBtn.w / 2, resetBtn.y + 16.5, {
+        size: 11.5, weight: 700, color: resetArmT > 0 ? '#a8402e' : 'rgba(60,42,24,0.7)', align: 'center'
     });
 
     // input del menu
@@ -2801,7 +3312,7 @@ function renderWonOverlay() {
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
     const isLast = world.index === N_LEVELS - 1;
-    const pw = 500, ph = isLast ? 320 : 292;
+    const pw = 500, ph = isLast ? 362 : 332;
     const px = (VIEW_W - pw) / 2, py = (VIEW_H - ph) / 2 - 10 + (1 - t) * 26;
 
     ctx.save();
@@ -2822,13 +3333,38 @@ function renderWonOverlay() {
     }
 
     const cy = py + (isLast ? 140 : 136);
-    drawCoinIcon(VIEW_W / 2 - 92, cy - 6, 12);
-    txt(`Monete:  ${runCoins} / ${world.totalCoins}`, VIEW_W / 2 - 72, cy, { size: 20, weight: 900, color: '#4a3826' });
-    if (winNewBest) {
-        txt('nuovo record!', VIEW_W / 2 + 148, cy, { size: 15, weight: 900, italic: true, color: '#68a06e', align: 'center' });
+    const pct = world.totalCoins ? Math.round(runCoins / world.totalCoins * 100) : 0;
+    const perfect = runCoins >= world.totalCoins && world.totalCoins > 0;
+    const label = `Monete:  ${runCoins} / ${world.totalCoins}  ·  `;
+    const slotX = px + pw - 46;                  // colonna di destra: stellina o "record!"
+    drawCoinIcon(VIEW_W / 2 - 120, cy - 6, 12);
+    txt(label, VIEW_W / 2 - 100, cy, { size: 19, weight: 900, color: '#4a3826' });
+    ctx.font = `900 19px ${FONT}`;
+    txt(`${pct}%`, VIEW_W / 2 - 100 + ctx.measureText(label).width, cy, { size: 19, weight: 900, color: pctPalette(pct).text });
+    // barra a colori sotto la riga delle monete
+    drawFillBar(VIEW_W / 2 - 100, cy + 9, 210, 7, pct);
+    if (perfect) {
+        drawStar(slotX, cy - 7, 13);
+        txt('tutte le monete!', px + pw - 24, cy + 20, { size: 10.5, weight: 900, italic: true, color: '#a86c1e', align: 'right' });
+    } else if (winNewBest) {
+        txt('record!', slotX, cy, { size: 14, weight: 900, italic: true, color: '#68a06e', align: 'center' });
+    }
+    const ty2 = cy + 46;
+    ctx.save();
+    ctx.strokeStyle = '#4a3826';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(VIEW_W / 2 - 120, ty2 - 6, 9, 0, 7); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(VIEW_W / 2 - 120, ty2 - 6); ctx.lineTo(VIEW_W / 2 - 120, ty2 - 12.5);
+    ctx.moveTo(VIEW_W / 2 - 120, ty2 - 6); ctx.lineTo(VIEW_W / 2 - 115, ty2 - 4.5);
+    ctx.stroke();
+    ctx.restore();
+    txt(`Tempo:  ${fmtTime(levelTime, true)}`, VIEW_W / 2 - 100, ty2, { size: 19, weight: 900, color: '#4a3826' });
+    if (winNewTime) {
+        txt('miglior tempo!', slotX, ty2, { size: 13, weight: 900, italic: true, color: '#68a06e', align: 'center' });
     }
     if (isLast) {
-        txt(`Totale sui 10 livelli: ${totalBestCoins()} monete`, VIEW_W / 2, cy + 32, { size: 15.5, weight: 700, color: '#6e5a40', align: 'center' });
+        txt(`Totale sui ${N_LEVELS} livelli: ${totalBestCoins()} monete`, VIEW_W / 2, ty2 + 30, { size: 15, weight: 700, color: '#6e5a40', align: 'center' });
     }
 
     const by = py + ph - 64;
@@ -2918,7 +3454,7 @@ function renderPauseOverlay() {
     txt('Pausa', VIEW_W / 2, py + 52, { size: 30, weight: 900, color: '#4a3826', align: 'center' });
 
     const buttons = [
-        { x: px + 40, y: py + 78, w: pw - 80, h: 42, label: 'Riprendi  (Esc)', act: 'resume', primary: true },
+        { x: px + 40, y: py + 78, w: pw - 80, h: 42, label: 'Riprendi  (P o Esc)', act: 'resume', primary: true },
         { x: px + 40, y: py + 128, w: pw - 80, h: 42, label: 'Ricomincia il livello  (R)', act: 'retry' },
         { x: px + 40, y: py + 178, w: pw - 80, h: 42, label: 'Torna al menu  (Q)', act: 'menu' }
     ];
@@ -2958,8 +3494,15 @@ function frame(now) {
             // input di gioco
             for (const k of uiPresses) {
                 if (k === 'esc' && state === 'play') { state = 'pause'; sfx.click(); }
+                else if (k === 'quit' && state === 'play') { sfx.click(); toMenu(); }
                 else if (k === 'restart' && state === 'play') retryLevel();
                 else if (k === 'mute') { save.sound = !save.sound; persistSave(); }
+            }
+            // pulsante pausa nell'interfaccia di gioco
+            if (state === 'play') {
+                for (const c of clicks) {
+                    if (inRect(c.x, c.y, HUD_PAUSE)) { state = 'pause'; sfx.click(); }
+                }
             }
         }
     }
@@ -3019,6 +3562,10 @@ window.LR = {
     get lives() { return lives; },
     set lives(v) { lives = v; },
     get music() { return { started: music.started, chords: music.chordsScheduled, target: musicVolTarget() }; },
+    get levelTime() { return levelTime; },
+    levelName: (i) => LEVELS[i].name,
+    levelCoins: (i) => LEVEL_META[i],
+    setCoins: (n) => { runCoins = n; },
     startLevel, retryLevel, toMenu, wipeSave,
     keys
 };
