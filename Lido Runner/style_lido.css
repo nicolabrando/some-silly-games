@@ -25,13 +25,26 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     width: 100%;
 }
 
+/* su telefono lo spazio verticale avanza: i comandi scendono verso i pollici */
+body.touch {
+    align-items: stretch;
+}
+
+body.touch .game-shell {
+    height: 100dvh;
+    justify-content: space-evenly;
+    gap: 0;
+    padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+}
+
+/* la misura viene calcolata da JS in base allo schermo: qui solo l'aspetto */
 .game-container {
-    width: min(97vw, calc(94dvh * 960 / 560));
-    aspect-ratio: 960 / 560;
+    width: 960px;
+    height: 560px;
     border-radius: 14px;
     overflow: hidden;
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 4px 18px rgba(0, 0, 0, 0.4);
@@ -52,32 +65,28 @@ canvas {
     display: none;
 }
 
-body.touch .game-container {
-    width: min(97vw, calc((97dvh - 118px) * 960 / 560));
-}
-
 body.touch #touchControls {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    width: min(97vw, 720px);
-    padding: 0 4px;
-    padding-bottom: max(4px, env(safe-area-inset-bottom));
+    width: min(98vw, 760px);
+    padding: 0 2px;
+    padding-bottom: max(2px, env(safe-area-inset-bottom));
 }
 
 .tc-group {
     display: flex;
-    gap: 14px;
+    gap: 12px;
 }
 
 .tc {
-    width: clamp(58px, 16vw, 78px);
-    height: clamp(54px, 14vw, 72px);
-    border-radius: 18px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(247, 240, 220, 0.1);
+    width: clamp(64px, 17vw, 86px);
+    height: clamp(58px, 15vw, 78px);
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(247, 240, 220, 0.12);
     color: #f2ede0;
-    font-size: clamp(20px, 5vw, 26px);
+    font-size: clamp(22px, 5.5vw, 28px);
     font-family: inherit;
     touch-action: none;
     cursor: pointer;
@@ -85,12 +94,12 @@ body.touch #touchControls {
 }
 
 .tc.on, .tc:active {
-    background: rgba(247, 240, 220, 0.32);
+    background: rgba(247, 240, 220, 0.34);
     transform: scale(0.96);
 }
 
 .tc-jump {
-    background: rgba(201, 95, 78, 0.5);
+    background: rgba(201, 95, 78, 0.52);
     border-color: rgba(255, 170, 140, 0.45);
 }
 
@@ -99,9 +108,21 @@ body.touch #touchControls {
 }
 
 .tc-small {
-    width: 46px;
-    height: 40px;
+    width: 48px;
+    height: 42px;
     font-size: 13px;
-    border-radius: 13px;
+    border-radius: 14px;
     opacity: 0.75;
+}
+
+/* schermo basso e largo (telefono coricato): comandi più contenuti */
+@media (orientation: landscape) and (max-height: 520px) {
+    .tc {
+        width: clamp(54px, 8vw, 70px);
+        height: clamp(44px, 7vh, 58px);
+        font-size: 20px;
+        border-radius: 16px;
+    }
+    .tc-small { width: 42px; height: 34px; font-size: 11px; }
+    .game-shell { gap: 6px; }
 }

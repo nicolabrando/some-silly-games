@@ -8,8 +8,19 @@ const IS_TOUCH = IS_BROWSER && (('ontouchstart' in window) || (navigator.maxTouc
     (window.matchMedia && matchMedia('(pointer: coarse)').matches));
 
 const TILE = 40;
-const VIEW_W = 960;
+// Larghezza della vista: quanto mondo si vede in orizzontale.
+// Su schermi stretti (telefoni) si restringe, così tutto viene disegnato
+// più grande. L'altezza è fissa: 14 righe di tile.
+let VIEW_W = 960;
+const VIEW_W_MAX = 960;
+const VIEW_W_MIN_TOUCH = 600;    // sotto questa soglia si vedrebbe troppo poco davanti
+const VIEW_W_MIN_DESK = 800;
+let VIEW_DPR = 1;                // densità di pixel: il canvas disegna più fitto sui telefoni
 const VIEW_H = 560;
+// vista stretta: menu e interfaccia passano alla disposizione compatta
+function isNarrow() { return VIEW_W < 780; }
+// il giocatore sta più a sinistra quando la vista è stretta, per vedere avanti
+function camFrac() { return isNarrow() ? 0.34 : 0.42; }
 const ROWS = 14;
 const WATER_Y = 13 * TILE + 18;          // pelo dell'acqua nei varchi
 const N_LEVELS = 20;
@@ -273,6 +284,58 @@ function musicTick() {
             music.nextMel += M_MEL_STEP * (Math.random() < 0.25 ? 2 : 1);
         }
     } catch (e) { /* ok */ }
+}
+
+/* ---------- adattamento allo schermo ----------
+   Sceglie la larghezza della vista e dimensiona il riquadro di gioco.
+   Su un telefono in verticale la vista si restringe fino a 600 px di mondo:
+   il canvas riempie la larghezza dello schermo e tutto risulta molto più
+   grande, al prezzo di un po' di visuale a destra.                       */
+let onViewportChange = null;     // richiamata quando la vista cambia misura
+
+function layoutViewport(canvas) {
+    if (!IS_BROWSER || !canvas) return;
+    const shell = canvas.parentElement;
+    const controls = document.getElementById('touchControls');
+    const showControls = IS_TOUCH && controls && getComputedStyle(controls).display !== 'none';
+    const controlsH = showControls ? controls.offsetHeight + 14 : 0;
+
+    const availW = Math.max(240, window.innerWidth - (IS_TOUCH ? 8 : 26));
+    const availH = Math.max(200, window.innerHeight - controlsH - (IS_TOUCH ? 34 : 26));
+
+    // la vista più stretta che riempie la larghezza senza sforare in altezza
+    const floor = IS_TOUCH ? VIEW_W_MIN_TOUCH : VIEW_W_MIN_DESK;
+    const fit = Math.ceil(availW * VIEW_H / availH);
+    const next = Math.round(clamp(fit, floor, VIEW_W_MAX) / 8) * 8;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const changed = next !== VIEW_W || dpr !== VIEW_DPR;
+    VIEW_W = next;
+    VIEW_DPR = dpr;
+
+    // il canvas ha più pixel veri della vista logica: su telefono si vede nitido
+    const bw = Math.round(VIEW_W * dpr), bh = Math.round(VIEW_H * dpr);
+    if (canvas.width !== bw) canvas.width = bw;
+    if (canvas.height !== bh) canvas.height = bh;
+
+    const scale = Math.min(availW / VIEW_W, availH / VIEW_H);
+    shell.style.width = Math.floor(VIEW_W * scale) + 'px';
+    shell.style.height = Math.floor(VIEW_H * scale) + 'px';
+
+    if (changed && onViewportChange) onViewportChange();
+}
+
+function bindViewport(canvas) {
+    if (!IS_BROWSER) return;
+    layoutViewport(canvas);
+    let t = null;
+    const relayout = () => {
+        clearTimeout(t);
+        t = setTimeout(() => layoutViewport(canvas), 60);
+    };
+    window.addEventListener('resize', relayout);
+    window.addEventListener('orientationchange', relayout);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', relayout);
 }
 
 /* ---------- input ---------- */
@@ -845,13 +908,14 @@ const LEVELS = [
             b.clear(30, 32, 0, 13);
             b.clear(62, 64, 0, 13);
             b.clear(90, 92, 0, 13);
-            // stabilimento a tre piani: cunicolo, tetto, terrazza
-            b.box(17, 11).box(18, 10, 2, 2);
+            // stabilimento a tre piani: cunicolo, tetto, terrazza.
+            // Le scalette sono passerelle: si sale senza chiudere l'ingresso ai cunicoli.
+            b.plank(17, 19, 10);
             b.tunnel(20, 26, 10);
             b.plank(18, 26, 8);
-            b.box(38, 11, 2, 1);
+            b.plank(37, 39, 10);
             b.tunnel(40, 46, 10);
-            b.box(68, 11, 2, 1);
+            b.plank(67, 69, 10);
             b.tunnel(70, 77, 10);
             b.plank(89, 93, 10);
             b.crab(12).crab(54).crab(82).crab(105);
@@ -1016,12 +1080,14 @@ const LEVELS = [
             b.box(34, 11).box(35, 10, 1, 2).box(36, 9, 2, 2);
             b.plank(37, 43, 8);
             b.tunnel(46, 53, 10);
+            b.plank(57, 59, 10);                         // scaletta per il ripiano di casse
             b.box(60, 9, 2, 2);
             b.box(64, 8, 2, 1);
             b.tunnel(68, 75, 10);
             b.box(76, 11);
             b.plank(77, 81, 9);
-            b.box(84, 11, 2, 1).box(86, 10, 2, 2).box(88, 9, 2, 3);
+            // impalcatura per la tettoia: lascia libero il passaggio a terra
+            b.plank(84, 85, 11).plank(86, 87, 10).plank(88, 89, 9);
             b.stone(90, 96, 9, 9);
             b.tunnel(100, 106, 10);
             b.crab(6).crab(44).crab(58).crab(98).crab(109);
@@ -1601,7 +1667,7 @@ function updatePlayer(dt) {
     }
 
     /* --- camera: avanza con dolcezza e non torna indietro --- */
-    const target = clamp(pcx - VIEW_W * 0.42, 0, world.widthPx - VIEW_W);
+    const target = clamp(pcx - VIEW_W * camFrac(), 0, world.widthPx - VIEW_W);
     if (target > camX) camX = Math.min(target, camX + (target - camX) * Math.min(1, dt * 8) + 30 * dt);
 }
 
@@ -2831,18 +2897,20 @@ function drawHeart(x, y, s, filled, alpha) {
 }
 
 function drawHearts() {
-    const n = MAX_LIVES, gap = 22;
+    const narrow = isNarrow();
+    const n = MAX_LIVES, gap = narrow ? 17 : 22;
+    const sc = narrow ? 1.1 : 1.35;
+    const cy = narrow ? 26 : 30;
     const x0 = VIEW_W / 2 - (n - 1) * gap / 2;
     ctx.fillStyle = 'rgba(18,24,32,0.42)';
-    rr(x0 - 24, 12, (n - 1) * gap + 48, 36, 18); ctx.fill();
+    rr(x0 - (narrow ? 16 : 24), narrow ? 11 : 12, (n - 1) * gap + (narrow ? 32 : 48), narrow ? 30 : 36, 15); ctx.fill();
     for (let i = 0; i < n; i++) {
-        let a = 1;
         // il cuoricino appena perso lampeggia durante l'animazione di morte
         if (state === 'dying' && i === lives) {
-            drawHeart(x0 + i * gap, 30, 1.35, Math.sin(elapsed * 16) > 0, 0.9);
+            drawHeart(x0 + i * gap, cy, sc, Math.sin(elapsed * 16) > 0, 0.9);
             continue;
         }
-        drawHeart(x0 + i * gap, 30, 1.35, i < lives, a);
+        drawHeart(x0 + i * gap, cy, sc, i < lives, 1);
     }
 }
 
@@ -2919,40 +2987,55 @@ function drawStar(x, y, r) {
     ctx.restore();
 }
 
-// pulsante pausa cliccabile, in gioco
-const HUD_PAUSE = { x: VIEW_W - 50, y: 54, w: 36, h: 30 };
+// pulsante pausa cliccabile, in gioco (posizione ricalcolata a ogni disegno)
+const HUD_PAUSE = { x: 0, y: 11, w: 36, h: 30 };
 
 function drawHUD() {
-    // monete
+    const narrow = isNarrow();
     ctx.save();
+
+    // monete
+    const cw = narrow ? 96 : 118, chh = narrow ? 30 : 36;
     ctx.fillStyle = 'rgba(18,24,32,0.42)';
-    rr(14, 12, 118, 36, 18); ctx.fill();
-    drawCoinIcon(35, 30, 11);
-    txt(`${runCoins} / ${world.totalCoins}`, 52, 36, { size: 17, weight: 900, color: '#fff' });
+    rr(12, 11, cw, chh, 15); ctx.fill();
+    drawCoinIcon(narrow ? 29 : 35, 11 + chh / 2, narrow ? 9 : 11);
+    txt(`${runCoins}/${world.totalCoins}`, narrow ? 41 : 51, 11 + chh / 2 + 6, { size: narrow ? 14 : 17, weight: 900, color: '#fff' });
+
     // cronometro
+    const ty = 11 + chh + 5;
     ctx.fillStyle = 'rgba(18,24,32,0.42)';
-    rr(14, 54, 96, 30, 15); ctx.fill();
-    drawClockIcon(32, 69, 8);
-    txt(fmtTime(levelTime), 46, 75, { size: 15, weight: 900, color: '#fff' });
+    rr(12, ty, narrow ? 78 : 96, narrow ? 26 : 30, 13); ctx.fill();
+    drawClockIcon(narrow ? 27 : 32, ty + (narrow ? 13 : 15), narrow ? 7 : 8);
+    txt(fmtTime(levelTime), narrow ? 38 : 46, ty + (narrow ? 17.5 : 21), { size: narrow ? 13 : 15, weight: 900, color: '#fff' });
+
     // vite
     drawHearts();
-    // livello
-    const label = `${world.index + 1} · ${world.name}`;
-    ctx.font = `900 16px ${FONT}`;
-    const w = ctx.measureText(label).width + 30;
-    ctx.fillStyle = 'rgba(18,24,32,0.42)';
-    rr(VIEW_W - 14 - w, 12, w, 36, 18); ctx.fill();
-    txt(label, VIEW_W - 14 - w / 2, 35, { size: 16, weight: 900, color: '#fff', align: 'center' });
 
-    // pulsante pausa (cliccabile) sotto il nome del livello
+    // pulsante pausa, in alto a destra
+    HUD_PAUSE.w = narrow ? 32 : 36;
+    HUD_PAUSE.h = narrow ? 28 : 30;
+    HUD_PAUSE.x = VIEW_W - 12 - HUD_PAUSE.w;
+    HUD_PAUSE.y = 11;
     const hotP = inRect(mouseX, mouseY, HUD_PAUSE);
     ctx.fillStyle = hotP ? 'rgba(18,24,32,0.7)' : 'rgba(18,24,32,0.42)';
-    rr(HUD_PAUSE.x, HUD_PAUSE.y, HUD_PAUSE.w, HUD_PAUSE.h, 15); ctx.fill();
-    ctx.fillStyle = hotP ? '#fff' : 'rgba(255,255,255,0.82)';
-    ctx.fillRect(HUD_PAUSE.x + 13, HUD_PAUSE.y + 9, 3.4, 12);
-    ctx.fillRect(HUD_PAUSE.x + 19.6, HUD_PAUSE.y + 9, 3.4, 12);
+    rr(HUD_PAUSE.x, HUD_PAUSE.y, HUD_PAUSE.w, HUD_PAUSE.h, 14); ctx.fill();
+    ctx.fillStyle = hotP ? '#fff' : 'rgba(255,255,255,0.85)';
+    const pbx = HUD_PAUSE.x + HUD_PAUSE.w / 2, pby = HUD_PAUSE.y + HUD_PAUSE.h / 2;
+    ctx.fillRect(pbx - 5, pby - 6, 3.2, 12);
+    ctx.fillRect(pbx + 1.8, pby - 6, 3.2, 12);
 
-    if (!IS_TOUCH) txt('P o Esc = pausa  ·  Q = menu', VIEW_W - 16, VIEW_H - 10, {
+    // nome del livello: sotto il pulsante, rimpicciolito se serve
+    const label = `${world.index + 1} · ${world.name}`;
+    const maxLab = narrow ? 148 : 260;
+    const fsz = narrow ? 13 : 16;
+    ctx.font = `900 ${fsz}px ${FONT}`;
+    const w = Math.min(ctx.measureText(label).width, maxLab) + 24;
+    const ly = HUD_PAUSE.y + HUD_PAUSE.h + 5;
+    ctx.fillStyle = 'rgba(18,24,32,0.42)';
+    rr(VIEW_W - 12 - w, ly, w, narrow ? 24 : 28, 12); ctx.fill();
+    txtFit(label, VIEW_W - 12 - w / 2, ly + (narrow ? 16.5 : 19), maxLab, { size: fsz, weight: 900, color: '#fff', align: 'center' });
+
+    if (!IS_TOUCH) txt('P o Esc = pausa  ·  Q = menu', VIEW_W - 14, VIEW_H - 10, {
         size: 12, weight: 700, color: 'rgba(255,255,255,0.62)', align: 'right',
         shadow: 'rgba(0,0,0,0.6)', shadowBlur: 5, shadowY: 1
     });
@@ -3054,12 +3137,13 @@ function renderWorld() {
     // titolo del livello in apertura
     if (introT > 0 && (state === 'play' || state === 'pause')) {
         const a = clamp(introT > 1.6 ? (2.1 - introT) * 2 : introT / 0.8, 0, 1);
+        const bw = Math.min(380, VIEW_W - 60);
         ctx.save();
         ctx.globalAlpha = a;
         ctx.fillStyle = 'rgba(16,22,30,0.4)';
-        rr(VIEW_W / 2 - 190, 84, 380, 86, 16); ctx.fill();
-        txt(`Livello ${world.index + 1}`, VIEW_W / 2, 120, { size: 19, weight: 700, color: 'rgba(255,255,255,0.75)', align: 'center' });
-        txt(world.name, VIEW_W / 2, 152, { size: 29, weight: 900, color: '#fff', align: 'center' });
+        rr(VIEW_W / 2 - bw / 2, 96, bw, 86, 16); ctx.fill();
+        txt(`Livello ${world.index + 1}`, VIEW_W / 2, 132, { size: 19, weight: 700, color: 'rgba(255,255,255,0.75)', align: 'center' });
+        txtFit(world.name, VIEW_W / 2, 164, bw - 24, { size: 29, weight: 900, color: '#fff', align: 'center' });
         ctx.restore();
     }
 }
@@ -3090,7 +3174,7 @@ function drawButton(b, hot, primary) {
     rr(-b.w / 2, -b.h / 2, b.w, b.h, 12); ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.16)';
     rr(-b.w / 2, -b.h / 2, b.w, b.h / 2.4, 12); ctx.fill();
-    txt(b.label, 0, 6, { size: 17, weight: 900, color: '#fff7ec', align: 'center' });
+    txtFit(b.label, 0, 6, b.w - 16, { size: 17, weight: 900, color: '#fff7ec', align: 'center' });
     ctx.restore();
 }
 function inRect(px, py, r) {
@@ -3098,14 +3182,28 @@ function inRect(px, py, r) {
 }
 
 /* ---------- menu principale ---------- */
+/* La griglia dei livelli si adatta alla larghezza della vista:
+   5 colonne quando c'è spazio, 4 su schermo stretto (telefono). */
+function menuLayout() {
+    const narrow = isNarrow();
+    const cols = narrow ? 4 : 5;
+    const rows = Math.ceil(N_LEVELS / cols);
+    const gx = narrow ? 10 : 16, gy = narrow ? 8 : 13;
+    const margin = narrow ? 12 : 14;
+    const top = narrow ? 118 : 148;
+    const bottom = VIEW_H - (narrow ? 44 : 40);
+    const cw = Math.floor((VIEW_W - margin * 2 - gx * (cols - 1)) / cols);
+    const ch = Math.floor((bottom - top - gy * (rows - 1)) / rows);
+    const x0 = Math.round((VIEW_W - (cols * cw + (cols - 1) * gx)) / 2);
+    return { narrow, cols, rows, gx, gy, cw, ch, x0, y0: top };
+}
+
 function menuCards() {
-    const cw = 150, ch = 84, gx = 16, gy = 13;
-    const x0 = (VIEW_W - (5 * cw + 4 * gx)) / 2;
-    const y0 = 148;
+    const L = menuLayout();
     const cards = [];
     for (let i = 0; i < N_LEVELS; i++) {
-        const r = Math.floor(i / 5), c = i % 5;
-        cards.push({ i, x: x0 + c * (cw + gx), y: y0 + r * (ch + gy), w: cw, h: ch });
+        const r = Math.floor(i / L.cols), c = i % L.cols;
+        cards.push({ i, x: L.x0 + c * (L.cw + L.gx), y: L.y0 + r * (L.ch + L.gy), w: L.cw, h: L.ch });
     }
     return cards;
 }
@@ -3136,37 +3234,42 @@ function renderMenu(dt) {
     }
     ctx.stroke();
 
-    drawUmbrella(48, 520, 0);
-    drawTowel(150, 532, 2);
-    drawStarfish(860, 536, 1);
-    drawGrass(910, 528, 0);
-    drawShell(790, 542, 2);
+    const LAY = menuLayout();
+    const narrow = LAY.narrow;
+
+    drawUmbrella(narrow ? 30 : 48, 520, 0);
+    drawTowel(narrow ? 110 : 150, 532, 2);
+    drawStarfish(VIEW_W - 100, 536, 1);
+    drawGrass(VIEW_W - 50, 528, 0);
+    drawShell(VIEW_W - 170, 542, 2);
 
     // titolo
     ctx.save();
-    ctx.translate(VIEW_W / 2, 84);
+    ctx.translate(VIEW_W / 2, narrow ? 64 : 84);
     ctx.rotate(-0.012);
     txt('LIDO RUNNER', 0, 0, {
-        size: 48, weight: 900, italic: true, color: '#fff', align: 'center',
+        size: narrow ? 33 : 48, weight: 900, italic: true, color: '#fff', align: 'center',
         shadow: 'rgba(30,50,80,0.55)', shadowBlur: 12, shadowY: 4
     });
     ctx.restore();
-    txt('una corsa in riva al mare · 20 livelli', VIEW_W / 2, 112, {
-        size: 16, weight: 700, italic: true, color: 'rgba(255,255,255,0.92)', align: 'center',
+    txt(narrow ? '20 livelli in riva al mare' : 'una corsa in riva al mare · 20 livelli', VIEW_W / 2, narrow ? 86 : 112, {
+        size: narrow ? 13 : 16, weight: 700, italic: true, color: 'rgba(255,255,255,0.92)', align: 'center',
         shadow: 'rgba(30,50,80,0.4)', shadowBlur: 8, shadowY: 2
     });
 
     // monete totali, con percentuale complessiva
     const tot = totalBestCoins();
     const totPct = ALL_COINS ? Math.round(tot / ALL_COINS * 100) : 0;
-    ctx.fillStyle = 'rgba(18,24,32,0.4)';
-    rr(VIEW_W - 214, 12, 200, 40, 20); ctx.fill();
-    drawCoinIcon(VIEW_W - 194, 27, 9.5);
-    txt(`${tot} / ${ALL_COINS}`, VIEW_W - 180, 32, { size: 14.5, weight: 900, color: '#fff' });
-    txt(`${totPct}%`, VIEW_W - 24, 32, { size: 14.5, weight: 900, color: '#ffd75e', align: 'right' });
-    drawFillBar(VIEW_W - 202, 38, 176, 6, totPct);
+    const badgeW = narrow ? 118 : 200;
+    const badgeX = VIEW_W - 12 - badgeW;
+    ctx.fillStyle = 'rgba(18,24,32,0.42)';
+    rr(badgeX, 10, badgeW, narrow ? 36 : 40, 18); ctx.fill();
+    drawCoinIcon(badgeX + 18, narrow ? 24 : 27, narrow ? 8 : 9.5);
+    txtFit(narrow ? `${tot}` : `${tot} / ${ALL_COINS}`, badgeX + 30, narrow ? 28.5 : 32, badgeW - 76, { size: narrow ? 12.5 : 14.5, weight: 900, color: '#fff' });
+    txt(`${totPct}%`, badgeX + badgeW - 10, narrow ? 28.5 : 32, { size: narrow ? 12.5 : 14.5, weight: 900, color: '#ffd75e', align: 'right' });
+    drawFillBar(badgeX + 12, narrow ? 33 : 38, badgeW - 24, 6, totPct);
 
-    txt('scegli il livello', VIEW_W / 2, 138, { size: 13, weight: 900, color: 'rgba(255,255,255,0.85)', align: 'center', shadow: 'rgba(30,50,80,0.4)', shadowBlur: 6 });
+    if (!narrow) txt('scegli il livello', VIEW_W / 2, 138, { size: 13, weight: 900, color: 'rgba(255,255,255,0.85)', align: 'center', shadow: 'rgba(30,50,80,0.4)', shadowBlur: 6 });
 
     // schede dei livelli
     const cards = menuCards();
@@ -3190,91 +3293,112 @@ function renderMenu(dt) {
             ctx.lineWidth = 3.5;
             rr(-cd.w / 2 + 1, -cd.h / 2 + 1, cd.w - 2, cd.h - 2, 13); ctx.stroke();
         }
+        // misure interne: si stringono con la scheda
+        const L = -cd.w / 2, R = cd.w / 2;
+        const numX = L + (narrow ? 19 : 23);
+        const sepX = L + (narrow ? 32 : 37);
+        const nameX = L + (narrow ? 38 : 44);
+        const numSize = narrow ? 17 : 19;
+        const rowName = -cd.h / 2 + (narrow ? 21 : 26);
+        const rowCoins = cd.h / 2 - (narrow ? 36 : 40);
+        const rowBar = cd.h / 2 - (narrow ? 28 : 32);
+        const rowTime = cd.h / 2 - (narrow ? 9 : 10);
+        const fs = narrow ? 10.5 : 11.5;
+
         if (unlocked) {
             const got = save.best[String(cd.i)] || 0;
             const tot = LEVEL_META[cd.i];
             const pct = tot ? Math.round(got / tot * 100) : 0;
             const done = got > 0 || cd.i + 1 < save.unlocked || (cd.i === N_LEVELS - 1 && save.finished);
-            const L = -cd.w / 2, R = cd.w / 2;
+            const perfect = got >= tot && tot > 0;
 
             // riga 1 — il numero ha una colonna tutta sua, il nome comincia dopo il separatore
-            txt(String(cd.i + 1), L + 23, -cd.h / 2 + 26, { size: 19, weight: 900, color: '#c95f4e', align: 'center' });
+            txt(String(cd.i + 1), numX, rowName, { size: numSize, weight: 900, color: '#c95f4e', align: 'center' });
             ctx.fillStyle = 'rgba(120,95,60,0.22)';
-            ctx.fillRect(L + 37, -cd.h / 2 + 11, 1, 20);
-            txtFit(LEVELS[cd.i].name, L + 44, -cd.h / 2 + 24, cd.w - 54, { size: 12, weight: 900, color: '#4a3826' });
+            ctx.fillRect(sepX, -cd.h / 2 + 9, 1, narrow ? 17 : 20);
+            txtFit(LEVELS[cd.i].name, nameX, rowName - 2, R - nameX - 5, { size: narrow ? 11 : 12, weight: 900, color: '#4a3826' });
 
             // riga 2 — monete, percentuale a colori e (se tutte) la stellina
-            const perfect = got >= tot && tot > 0;
-            drawCoinIcon(L + 18, cd.h / 2 - 44, 6.5);
-            txt(`${got}/${tot}`, L + 28, cd.h / 2 - 40, { size: 11.5, weight: 700, color: '#6e5a40' });
-            txt(`${pct}%`, R - (perfect ? 29 : 11), cd.h / 2 - 40, {
-                size: 12.5, weight: 900, align: 'right', color: pctPalette(pct).text
+            drawCoinIcon(L + (narrow ? 15 : 18), rowCoins - 4, narrow ? 6 : 6.5);
+            txt(`${got}/${tot}`, L + (narrow ? 24 : 28), rowCoins, { size: fs, weight: 700, color: '#6e5a40' });
+            txt(`${pct}%`, R - (perfect ? (narrow ? 26 : 29) : (narrow ? 9 : 11)), rowCoins, {
+                size: narrow ? 11.5 : 12.5, weight: 900, align: 'right', color: pctPalette(pct).text
             });
-            if (perfect) drawStar(R - 16, cd.h / 2 - 44, 8);
+            if (perfect) drawStar(R - (narrow ? 14 : 16), rowCoins - 4, narrow ? 7 : 8);
 
             // riga 3 — barra di riempimento
-            drawFillBar(L + 11, cd.h / 2 - 32, cd.w - 22, 6, pct);
+            drawFillBar(L + (narrow ? 9 : 11), rowBar, cd.w - (narrow ? 18 : 22), narrow ? 5 : 6, pct);
 
             // riga 4 — miglior tempo (e la spunta di livello superato)
             const bt = save.bestTime[String(cd.i)];
-            drawClockIcon(L + 18, cd.h / 2 - 14, 6, '#8a7458');
-            txt(bt !== undefined ? fmtTime(bt, true) : '—', L + 28, cd.h / 2 - 10, { size: 11.5, weight: 700, color: '#6e5a40' });
+            drawClockIcon(L + (narrow ? 15 : 18), rowTime - 4, narrow ? 5.5 : 6, '#8a7458');
+            txt(bt !== undefined ? fmtTime(bt, true) : '—', L + (narrow ? 24 : 28), rowTime, { size: fs, weight: 700, color: '#6e5a40' });
             if (done) {
                 ctx.strokeStyle = '#68a06e';
-                ctx.lineWidth = 3;
+                ctx.lineWidth = narrow ? 2.6 : 3;
                 ctx.lineCap = 'round';
+                const cxk = R - (narrow ? 22 : 26), cyk = rowTime - (narrow ? 5 : 6);
                 ctx.beginPath();
-                ctx.moveTo(R - 26, cd.h / 2 - 16);
-                ctx.lineTo(R - 21, cd.h / 2 - 10);
-                ctx.lineTo(R - 11, cd.h / 2 - 23);
+                ctx.moveTo(cxk, cyk);
+                ctx.lineTo(cxk + (narrow ? 4.5 : 5), cyk + (narrow ? 5.5 : 6));
+                ctx.lineTo(cxk + (narrow ? 13 : 15), cyk - (narrow ? 6.5 : 7));
                 ctx.stroke();
             }
         } else {
-            txt(String(cd.i + 1), -cd.w / 2 + 23, -cd.h / 2 + 26, { size: 19, weight: 900, color: 'rgba(235,240,245,0.5)', align: 'center' });
+            txt(String(cd.i + 1), numX, rowName, { size: numSize, weight: 900, color: 'rgba(235,240,245,0.5)', align: 'center' });
             // lucchetto
+            const lk = narrow ? 0.85 : 1;
             ctx.fillStyle = 'rgba(230,236,242,0.85)';
-            rr(-9, -3, 18, 15, 3.5); ctx.fill();
+            rr(-9 * lk, -3 * lk + 4, 18 * lk, 15 * lk, 3.5); ctx.fill();
             ctx.strokeStyle = 'rgba(230,236,242,0.85)';
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 3 * lk;
             ctx.beginPath();
-            ctx.arc(0, -4, 5.8, Math.PI, 0);
+            ctx.arc(0, -4 * lk + 4, 5.8 * lk, Math.PI, 0);
             ctx.stroke();
             ctx.fillStyle = 'rgba(70,80,90,0.9)';
-            ctx.beginPath(); ctx.arc(0, 4, 2.2, 0, 7); ctx.fill();
+            ctx.beginPath(); ctx.arc(0, 4 * lk + 4, 2.2 * lk, 0, 7); ctx.fill();
         }
         ctx.restore();
     }
 
-    // piè di pagina
-    const footerTxt = IS_TOUCH
-        ? 'tocca un livello · ▲ tieni premuto = salto più alto'
-        : '← → muoviti · ↑ salta (tieni premuto) · ↓ accucciati · P pausa · Q menu';
-    // il testo sta fra il pulsante "azzera" e quelli dell'audio: lo restringo se serve
-    txtFit(footerTxt, 442, 546, 500, {
-        size: 12.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center'
-    });
+    // barra in fondo: azzera · suggerimento · musica · audio
+    const bw = narrow ? 92 : 118;
+    const by = VIEW_H - (narrow ? 28 : 32);
+    const bh = narrow ? 22 : 24;
 
-    // audio + musica
-    const audioBtn = { x: VIEW_W - 130, y: VIEW_H - 32, w: 118, h: 24 };
+    const audioBtn = { x: VIEW_W - 12 - bw, y: by, w: bw, h: bh };
     const hotA = inRect(mouseX, mouseY, audioBtn);
     ctx.fillStyle = hotA ? 'rgba(50,38,22,0.35)' : 'rgba(50,38,22,0.22)';
-    rr(audioBtn.x, audioBtn.y, audioBtn.w, audioBtn.h, 12); ctx.fill();
-    txt(`audio: ${save.sound ? 'sì' : 'no'} (M)`, audioBtn.x + audioBtn.w / 2, audioBtn.y + 16.5, { size: 11.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
-    const musicBtn = { x: VIEW_W - 256, y: VIEW_H - 32, w: 118, h: 24 };
+    rr(audioBtn.x, audioBtn.y, audioBtn.w, audioBtn.h, 11); ctx.fill();
+    txt(narrow ? `audio: ${save.sound ? 'sì' : 'no'}` : `audio: ${save.sound ? 'sì' : 'no'} (M)`,
+        audioBtn.x + bw / 2, audioBtn.y + bh / 2 + 4, { size: narrow ? 10.5 : 11.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
+
+    const musicBtn = { x: audioBtn.x - 8 - bw, y: by, w: bw, h: bh };
     const hotMu = inRect(mouseX, mouseY, musicBtn);
     ctx.fillStyle = hotMu ? 'rgba(50,38,22,0.35)' : 'rgba(50,38,22,0.22)';
-    rr(musicBtn.x, musicBtn.y, musicBtn.w, musicBtn.h, 12); ctx.fill();
-    txt(`musica: ${save.music ? 'sì' : 'no'}`, musicBtn.x + musicBtn.w / 2, musicBtn.y + 16.5, { size: 11.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
+    rr(musicBtn.x, musicBtn.y, musicBtn.w, musicBtn.h, 11); ctx.fill();
+    txt(`musica: ${save.music ? 'sì' : 'no'}`, musicBtn.x + bw / 2, musicBtn.y + bh / 2 + 4, { size: narrow ? 10.5 : 11.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center' });
 
     // azzera progressi
-    const resetBtn = { x: 12, y: VIEW_H - 32, w: 168, h: 24 };
+    const resetBtn = { x: 12, y: by, w: narrow ? 112 : 168, h: bh };
     const hotR = inRect(mouseX, mouseY, resetBtn);
     if (resetArmT > 0) resetArmT -= dt;
     ctx.fillStyle = hotR ? 'rgba(50,38,22,0.3)' : 'rgba(50,38,22,0.16)';
-    rr(resetBtn.x, resetBtn.y, resetBtn.w, resetBtn.h, 12); ctx.fill();
-    txt(resetArmT > 0 ? 'sicuro? clicca di nuovo' : 'azzera i progressi', resetBtn.x + resetBtn.w / 2, resetBtn.y + 16.5, {
-        size: 11.5, weight: 700, color: resetArmT > 0 ? '#a8402e' : 'rgba(60,42,24,0.7)', align: 'center'
+    rr(resetBtn.x, resetBtn.y, resetBtn.w, resetBtn.h, 11); ctx.fill();
+    txtFit(resetArmT > 0 ? 'sicuro? di nuovo' : 'azzera i progressi', resetBtn.x + resetBtn.w / 2, resetBtn.y + bh / 2 + 4, resetBtn.w - 10, {
+        size: narrow ? 10.5 : 11.5, weight: 700, color: resetArmT > 0 ? '#a8402e' : 'rgba(60,42,24,0.7)', align: 'center'
     });
+
+    // suggerimento sui comandi, nello spazio libero fra i pulsanti
+    const gapL = resetBtn.x + resetBtn.w + 8, gapR = musicBtn.x - 8;
+    const footerTxt = IS_TOUCH
+        ? 'tocca un livello per giocare'
+        : '← → muoviti · ↑ salta (tieni premuto) · ↓ accucciati · P pausa · Q menu';
+    if (gapR - gapL > 90) {
+        txtFit(footerTxt, (gapL + gapR) / 2, by + bh / 2 + 4, gapR - gapL, {
+            size: narrow ? 10.5 : 12.5, weight: 700, color: 'rgba(60,42,24,0.85)', align: 'center'
+        });
+    }
 
     // input del menu
     for (const c of clicks) {
@@ -3312,7 +3436,7 @@ function renderWonOverlay() {
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
     const isLast = world.index === N_LEVELS - 1;
-    const pw = 500, ph = isLast ? 362 : 332;
+    const pw = Math.min(500, VIEW_W - 40), ph = isLast ? 362 : 332;
     const px = (VIEW_W - pw) / 2, py = (VIEW_H - ph) / 2 - 10 + (1 - t) * 26;
 
     ctx.save();
@@ -3342,7 +3466,7 @@ function renderWonOverlay() {
     ctx.font = `900 19px ${FONT}`;
     txt(`${pct}%`, VIEW_W / 2 - 100 + ctx.measureText(label).width, cy, { size: 19, weight: 900, color: pctPalette(pct).text });
     // barra a colori sotto la riga delle monete
-    drawFillBar(VIEW_W / 2 - 100, cy + 9, 210, 7, pct);
+    drawFillBar(VIEW_W / 2 - 100, cy + 9, Math.min(210, pw - 190), 7, pct);
     if (perfect) {
         drawStar(slotX, cy - 7, 13);
         txt('tutte le monete!', px + pw - 24, cy + 20, { size: 10.5, weight: 900, italic: true, color: '#a86c1e', align: 'right' });
@@ -3370,12 +3494,14 @@ function renderWonOverlay() {
     const by = py + ph - 64;
     const buttons = [];
     if (!isLast) {
-        buttons.push({ x: px + 30, y: by, w: 120, h: 42, label: 'Menu', act: 'menu' });
-        buttons.push({ x: px + 164, y: by, w: 130, h: 42, label: 'Rigioca', act: 'retry' });
-        buttons.push({ x: px + 308, y: by, w: 162, h: 42, label: 'Avanti  →', act: 'next', primary: true });
+        const u = (pw - 60) / 412;      // fattore di scala rispetto al pannello pieno
+        buttons.push({ x: px + 30, y: by, w: 120 * u, h: 42, label: 'Menu', act: 'menu' });
+        buttons.push({ x: px + 30 + 134 * u, y: by, w: 130 * u, h: 42, label: 'Rigioca', act: 'retry' });
+        buttons.push({ x: px + 30 + 278 * u, y: by, w: 162 * u, h: 42, label: 'Avanti  →', act: 'next', primary: true });
     } else {
-        buttons.push({ x: px + 80, y: by, w: 150, h: 42, label: 'Menu', act: 'menu', primary: true });
-        buttons.push({ x: px + 270, y: by, w: 150, h: 42, label: 'Rigioca', act: 'retry' });
+        const u = (pw - 160) / 340;
+        buttons.push({ x: px + 80 * u, y: by, w: 150 * u, h: 42, label: 'Menu', act: 'menu', primary: true });
+        buttons.push({ x: px + pw - 80 * u - 150 * u, y: by, w: 150 * u, h: 42, label: 'Rigioca', act: 'retry' });
     }
     for (const b of buttons) drawButton(b, inRect(mouseX, mouseY, b), b.primary);
     txt(isLast ? 'Invio = menu' : 'Invio = livello successivo', VIEW_W / 2, py + ph - 10, { size: 12.5, weight: 700, color: 'rgba(110,90,64,0.7)', align: 'center' });
@@ -3403,7 +3529,7 @@ function renderGameOverOverlay() {
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     if (t <= 0) return;
 
-    const pw = 470, ph = 280;
+    const pw = Math.min(470, VIEW_W - 40), ph = 280;
     const px = (VIEW_W - pw) / 2, py = (VIEW_H - ph) / 2 - 8 + (1 - t) * 26;
     ctx.save();
     ctx.globalAlpha = t;
@@ -3421,8 +3547,8 @@ function renderGameOverOverlay() {
 
     const by = py + ph - 64;
     const buttons = [
-        { x: px + 32, y: by, w: 150, h: 42, label: 'Menu', act: 'menu' },
-        { x: px + 208, y: by, w: 230, h: 42, label: 'Dal livello 1  →', act: 'level1', primary: true }
+        { x: px + 32, y: by, w: (pw - 64) * 0.37, h: 42, label: 'Menu', act: 'menu' },
+        { x: px + 32 + (pw - 64) * 0.43, y: by, w: (pw - 64) * 0.57, h: 42, label: 'Dal livello 1  →', act: 'level1', primary: true }
     ];
     for (const b of buttons) drawButton(b, inRect(mouseX, mouseY, b), b.primary);
     txt('Invio = si riparte', VIEW_W / 2, py + ph - 10, { size: 12.5, weight: 700, color: 'rgba(110,90,64,0.7)', align: 'center' });
@@ -3445,7 +3571,7 @@ function renderGameOverOverlay() {
 function renderPauseOverlay() {
     ctx.fillStyle = 'rgba(12,16,22,0.55)';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    const pw = 380, ph = 250;
+    const pw = Math.min(380, VIEW_W - 60), ph = 250;
     const px = (VIEW_W - pw) / 2, py = (VIEW_H - ph) / 2;
     ctx.fillStyle = 'rgba(30,20,12,0.35)';
     rr(px + 3, py + 7, pw, ph, 20); ctx.fill();
@@ -3479,6 +3605,9 @@ let lastNow = performance.now();
 function frame(now) {
     const dt = clamp((now - lastNow) / 1000, 0, 1 / 30);
     lastNow = now;
+
+    // il canvas ha VIEW_DPR pixel veri per unità logica: riallineo a ogni fotogramma
+    ctx.setTransform(VIEW_DPR, 0, 0, VIEW_DPR, 0, 0);
 
     if (state !== 'pause') updateGame(dt);
     else elapsed += dt * 0.15; // in pausa il mare si muove appena
@@ -3549,6 +3678,9 @@ if (IS_TOUCH) {
     document.body.classList.add('touch');
     bindTouchControls();
 }
+// quando la vista cambia misura (rotazione, ridimensionamento) le cache vanno rifatte
+onViewportChange = () => { vignetteCv = null; };
+bindViewport(canvas);
 requestAnimationFrame(frame);
 
 /* maniglia di debug/test */
@@ -3563,9 +3695,14 @@ window.LR = {
     set lives(v) { lives = v; },
     get music() { return { started: music.started, chords: music.chordsScheduled, target: musicVolTarget() }; },
     get levelTime() { return levelTime; },
+    get viewW() { return VIEW_W; },
+    get narrow() { return isNarrow(); },
+    get dpr() { return VIEW_DPR; },
+    get pauseBtn() { return HUD_PAUSE; },
     levelName: (i) => LEVELS[i].name,
     levelCoins: (i) => LEVEL_META[i],
     setCoins: (n) => { runCoins = n; },
+    cards: () => menuCards(),
     startLevel, retryLevel, toMenu, wipeSave,
     keys
 };
