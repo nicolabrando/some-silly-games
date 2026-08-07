@@ -942,22 +942,60 @@ class CircoMassimoTrack extends SegmentedTrack {
     draw(ctx) {
         super.draw(ctx);
         
-        // Draw the "spina" (central separation barrier)
-        ctx.beginPath();
-        ctx.moveTo(195, 350);
-        ctx.lineTo(805, 350);
-        ctx.lineWidth = 15;
+        // The "spina", the central barrier of the Circus. It used to be a
+        // 15px grey line with a 10px sand line painted ON TOP of it, which
+        // left 2.5px of visible wall per side - effectively invisible. Now
+        // the sand is the bed and the wall stands on it.
+        const x1 = 195, x2 = 805, y = 350;
         ctx.lineCap = 'round';
-        ctx.strokeStyle = '#cccccc'; // Stone grey color for the barrier
-        ctx.stroke();
-        
-        // Draw sand/dirt inside the spina area
+
+        // sand bed, wider than the wall
         ctx.beginPath();
-        ctx.moveTo(195, 350);
-        ctx.lineTo(805, 350);
-        ctx.lineWidth = 10;
-        ctx.strokeStyle = '#e0c090'; // Sand color
+        ctx.moveTo(x1, y);
+        ctx.lineTo(x2, y);
+        ctx.lineWidth = 28;
+        ctx.strokeStyle = '#d9bd88';
         ctx.stroke();
+
+        // wall shadow
+        ctx.beginPath();
+        ctx.moveTo(x1, y + 3);
+        ctx.lineTo(x2, y + 3);
+        ctx.lineWidth = 11;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.30)';
+        ctx.stroke();
+
+        // the wall itself: white with red blocks, like every other barrier
+        // a driver is meant to keep away from
+        ctx.beginPath();
+        ctx.moveTo(x1, y);
+        ctx.lineTo(x2, y);
+        ctx.lineWidth = 11;
+        ctx.strokeStyle = '#f5f5f5';
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x1 + 8, y);
+        ctx.lineTo(x2 - 8, y);
+        ctx.lineWidth = 11;
+        ctx.setLineDash([26, 26]);
+        ctx.strokeStyle = '#d32f2f';
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // the metae: the gilded turning posts at either end of the spina
+        for (const mx of [x1, x2]) {
+            ctx.beginPath();
+            ctx.arc(mx, y, 10, 0, Math.PI * 2);
+            ctx.fillStyle = '#c9a227';
+            ctx.fill();
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = '#6d4c00';
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(mx - 2.5, y - 2.5, 3.5, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+            ctx.fill();
+        }
     }
 }
 

@@ -292,45 +292,64 @@ button:hover {
     position: absolute;
     top: 50px;
     right: 0;
-    width: 168px;
-    background: rgba(0, 0, 0, 0.62);
-    border: 1px solid #444;
+    width: 196px;
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid #555;
     border-radius: 5px;
-    padding: 10px 13px 11px;
+    padding: 11px 14px 12px;
     text-align: left;
     text-shadow: none;
     font-variant-numeric: tabular-nums;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
     box-sizing: border-box;
 }
 
 #side-hud #position-counter {
-    font-size: 21px;
+    font-size: 24px;
     letter-spacing: 0.5px;
 }
 
+/* the lap number is one of the two things you check most: big and white */
 #side-hud #lap-counter {
-    font-size: 14px;
-    font-weight: normal;
-    color: #cfd8dc;
+    font-size: 21px;
+    font-weight: bold;
+    color: #fff;
 }
 
 #side-hud #speedometer {
-    font-size: 27px;
+    font-size: 28px;
     line-height: 1.1;
-    margin: 4px 0 2px;
+    margin: 3px 0 2px;
+    color: #ffd54f;
 }
 
 #side-hud #lap-timer {
-    font-size: 15px;
     font-weight: normal;
-    line-height: 1.5;
+    line-height: 1.35;
+    margin-top: 2px;
+}
+
+/* the live lap, at half a glance */
+#side-hud .lt-cur {
+    font-size: 25px;
+    font-weight: 900;
+}
+
+#side-hud .lt-sub {
+    font-size: 16px;
+    font-weight: bold;
+    color: #b0bec5;
+}
+
+/* best lap in purple, as on any real timing screen */
+#side-hud .lt-best {
+    color: #ce93d8;
 }
 
 #side-hud #tyre-indicator {
-    margin-top: 5px;
+    margin-top: 6px;
 }
 
 /* empty readouts leave no gap */

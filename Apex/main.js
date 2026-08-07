@@ -2739,12 +2739,13 @@ function updateHUD() {
                 ? `${fmt(playerCar.lastLapTime)}${playerCar.lastLapTime === playerCar.bestLapTime ? ' ★' : ''}`
                 : '--.---';
 
-            // Two lines: the live lap big, last and best beneath it. On one
-            // line it wrapped mid-number in the side panel.
+            // Three lines, biggest first: the live lap, then last, then best.
+            // In a race you get half a glance at this - it has to land at
+            // half a glance.
             lapTimerDiv.innerHTML =
-                `<span style="color:${colour};font-weight:bold;">${fmt(current)}</span><br>` +
-                `<span style="opacity:0.6;font-size:0.8em;">L ${lastStr}` +
-                ` &nbsp;B ${fmt(playerCar.bestLapTime)}</span>`;
+                `<div class="lt-cur" style="color:${colour};">${fmt(current)}</div>` +
+                `<div class="lt-sub">L&nbsp; ${lastStr}</div>` +
+                `<div class="lt-sub lt-best">B&nbsp; ${fmt(playerCar.bestLapTime)}</div>`;
         }
     }
     
