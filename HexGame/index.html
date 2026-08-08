@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hex Game - Multiplayer</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- AUDIO -->
+        <audio id="bg-music" loop>
+            <source src="https://cdn.pixabay.com/audio/2022/05/27/audio_1808fbf07a.mp3" type="audio/mpeg">
+        </audio>
+        
+        <button id="music-toggle" class="btn secondary music-btn">🎵 Usa Audio</button>
+
+        <!-- START MENU VIEW -->
+        <div id="start-menu-view" class="menu-container">
+            <h1 class="main-title">HEX</h1>
+            <div class="menu-card glass-panel">
+                
+                <div class="form-group">
+                    <label>Numero di Giocatori</label>
+                    <div class="toggle-group" id="num-players-toggle">
+                        <button class="toggle-btn active" data-num="2">2 Giocatori (Rombo)</button>
+                        <button class="toggle-btn" data-num="3">3 Giocatori (Esagono)</button>
+                        <button class="toggle-btn" data-num="4">4 Giocatori (Ottagono)</button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="grid-size">Dimensione Griglia: <span id="grid-size-val" class="highlight-val">11</span></label>
+                    <input type="range" id="grid-size" min="5" max="19" step="1" value="11" class="slider">
+                </div>
+                
+                <!-- PLAYERS CONFIG (Dynamic) -->
+                <div id="players-config-container">
+                    <!-- Injected by JS -->
+                </div>
+
+                <button id="start-game-btn" class="btn primary full-width">Inizia Partita</button>
+            </div>
+        </div>
+
+        <!-- GAME VIEW -->
+        <div id="game-view" class="view-hidden">
+        <div class="top-bar">
+            <button id="menu-btn" class="btn secondary">Torna al Menu</button>
+            <div id="turn-indicator" class="current-player p1">Turno: Giocatore 1</div>
+            <button id="music-toggle" class="btn secondary">🎵 Usa Audio</button>
+            <button id="restart-btn" class="btn secondary">Ricomincia</button>
+        </div>
+        <div class="game-layout">
+            <div class="game-container" id="game-container">
+                <svg id="hex-board" xmlns="http://www.w3.org/2000/svg">
+                    <g id="hex-grid"></g>
+                </svg>
+            </div>
+            <div class="side-panel">
+                <h3>Stato Giocatori</h3>
+                <div id="players-status"></div>
+            </div>
+        </div>
+    </div>
+        
+        <!-- WINNER MODAL -->
+        <div id="winner-modal" class="modal-overlay modal-hidden">
+            <div class="modal-content glass-panel">
+                <h2 id="winner-text">Vittoria Giocatore 1!</h2>
+                <div class="modal-buttons">
+                <button id="modal-restart-btn" class="btn primary">Gioca Ancora</button>
+                <button id="modal-contemplate-btn" class="btn secondary">Contemplate board</button>
+                <button id="modal-menu-btn" class="btn secondary">Menu Principale</button>
+            </div>
+            </div>
+        </div>
+
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
+<script id='test-script'>
+setTimeout(() => {
+  document.getElementById('start-game-btn').click();
+  setTimeout(() => {
+    const hex = document.querySelector('.hexagon');
+    if(hex) hex.dispatchEvent(new Event('click'));
+  }, 1000);
+}, 1000);
+</script>
