@@ -1063,20 +1063,20 @@ class ThunderTrack extends SegmentedTrack {
         this.grassWidth = 80;
         
         this.segments = [
-            { type: 'line', x1: 387.8, y1: 593.25, x2: 1096.8, y2: 593.55 },
-            { type: 'arc', cx: 1096.8, cy: 496.35, r: 97.2, start: 1.5708, end: -1.5708, ccw: true },
-            { type: 'line', x1: 1096.8, y1: 399.15, x2: 963.87, y2: 409.71 },
-            { type: 'arc', cx: 963.87, cy: 280.11, r: 129.6, start: 1.5708, end: 3.14159, ccw: false },
-            { type: 'line', x1: 834.27, y1: 280.11, x2: 867.57, y2: 223.65 },
-            { type: 'arc', cx: 770.37, cy: 223.65, r: 97.2, start: 0, end: -3.14159, ccw: true },
-            { type: 'line', x1: 673.17, y1: 223.65, x2: 691.96, y2: 332.08 },
-            { type: 'arc', cx: 605.56, cy: 332.08, r: 86.4, start: 0, end: 1.5708, ccw: false },
-            { type: 'line', x1: 605.56, y1: 418.48, x2: 387.8, y2: 409.65 },
-            { type: 'arc', cx: 387.8, cy: 501.45, r: 91.8, start: -1.5708, end: -4.71239, ccw: true }
+            { type: 'line', x1: 413.89, y1: 608.75, x2: 1070.49, y2: 609.04 },
+            { type: 'arc', cx: 1070.49, cy: 490.79, r: 118.25, start: 1.5708, end: -1.5708, ccw: true },
+            { type: 'line', x1: 1070.49, y1: 372.53, x2: 904.31, y2: 385.72 },
+            { type: 'arc', cx: 904.31, cy: 256.3, r: 129.42, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: 774.9, y1: 256.3, x2: 788.54, y2: 233.17 },
+            { type: 'arc', cx: 666.33, cy: 233.17, r: 122.21, start: 0, end: -3.14159, ccw: true },
+            { type: 'line', x1: 544.12, y1: 233.17, x2: 555.69, y2: 299.93 },
+            { type: 'arc', cx: 469.94, cy: 299.93, r: 85.75, start: 0, end: 1.5708, ccw: false },
+            { type: 'line', x1: 469.94, y1: 385.68, x2: 413.89, y2: 383.41 },
+            { type: 'arc', cx: 413.89, cy: 496.08, r: 112.67, start: -1.5708, end: -4.71239, ccw: true }
         ];
         
-        this.startX = 704.4;
-        this.startY = 593.38;
+        this.startX = 707.09;
+        this.startY = 608.88;
         
         this.waypoints = this.generateWaypoints();
     }
