@@ -33,6 +33,10 @@ const VSC_POWER = 0.28;    // engine power while the VSC is out
 const VSC_ENDING_MS = 3000;
 let vscEndsAt = null;      // wall-clock (raceNow) moment the VSC will end
 let recoveries = [];       // { car, phase, t, from, to, crane }
+// A crane is a machine parked on the circuit, not a decal: cars bounce off it,
+// and two of them never occupy the same patch of ground.
+const CRANE_RADIUS = 20;      // solid body a car has to go round
+const CRANE_CLEARANCE = 54;   // how far apart two cranes are kept
 let raceFinished = false;
 let isFalseStartResetting = false;
 // v7 Globals
@@ -505,6 +509,7 @@ quitBtn.addEventListener('click', () => {
     pauseOverlay.style.display = 'none';
     hud.style.display = 'none';
     hideSplitHud();
+    showVscBanner(false);   // never leave it lying over a menu
     timingTower.style.display = 'none';
     stopSessionBtn.style.display = 'none';
     stopSessionBtn.innerText = 'Stop Session';
@@ -837,7 +842,7 @@ function startQualifying(forceTrackType) {
     vscEndsAt = null;
     vscPowerFactor = 1;
     recoveries = [];
-    vscBanner.style.display = 'none';
+    showVscBanner(false);
     stopSessionBtn.style.display = 'inline-block';
     stopSessionBtn.innerText = 'End Qualifying';
     timingTower.style.display = 'block';
@@ -1064,6 +1069,7 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
     document.getElementById('gp-preview').style.display = 'none';
     hud.style.display = 'none';
     hideSplitHud();
+    showVscBanner(false);   // never leave it lying over a menu
     gameState = 'menu';
 
     tyreTitle.innerText = title;
@@ -1186,6 +1192,7 @@ function showGpPreview(trackType) {
     qualiScreen.style.display = 'none';
     hud.style.display = 'none';
     hideSplitHud();
+    showVscBanner(false);   // never leave it lying over a menu
     gameState = 'menu';               // nothing is running while this is up
 
     const round = championshipState.currentTrackIndex + 1;
@@ -1262,6 +1269,7 @@ function endQualifying() {
     raceFinished = true;
     hud.style.display = 'none';
     hideSplitHud();
+    showVscBanner(false);   // never leave it lying over a menu
     timingTower.style.display = 'none';
     stopSessionBtn.style.display = 'none';
     stopSessionBtn.innerText = 'Stop Session';
@@ -1377,7 +1385,7 @@ function startGame(forceTrackType = null) {
     vscEndsAt = null;
     vscPowerFactor = 1;
     recoveries = [];
-    vscBanner.style.display = 'none';
+    showVscBanner(false);
     const trackType = forceTrackType || document.getElementById('track-select').value;
     const color = document.getElementById('color-select').value;
     const difficulty = document.getElementById('difficulty-select').value;
@@ -1782,28 +1790,36 @@ function updatePhysics(dt) {
             const roadGap = (((otherCar.lapS || 0) - (car.lapS || 0)) % lapL + lapL) % lapL;
             if (roadGap <= 0 || roadGap >= 250) continue;
 
-            // How well are we lined up behind them?
-            const angleToOther = Math.atan2(dy, dx);
-            let angleDiff = Math.abs(car.angle - angleToOther);
-            if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+            // Where is it in MY frame: how far up the road, and how far off
+            // the line I am travelling on?
+            const hx = Math.cos(car.angle), hy = Math.sin(car.angle);
+            const along = dx * hx + dy * hy;
+            const side = Math.abs(dx * -hy + dy * hx);
+            if (along <= 20 || along >= DRAFT_RANGE) continue;
+
+            // A wake is a CORRIDOR behind a car, not a wedge. The old test was
+            // an angular cone of +/- 0.40 rad, which is 16px wide at 40px back
+            // but 74px wide at the far end - wider than the road on some
+            // circuits. Measured over 64,000 tows: a third went to a car more
+            // than 20px off line (a car is only 14px wide, so no overlap at
+            // all) and a sixth to one more than 30px off - alongside, not
+            // behind. The corridor starts a little wider than a car and
+            // spreads gently, so a tow now means what it looks like.
+            const halfWidth = WAKE_HALF + WAKE_SPREAD * along;
+            if (side >= halfWidth) continue;
 
             let headingDiff = Math.abs(car.angle - otherCar.angle);
             if (headingDiff > Math.PI) headingDiff = 2 * Math.PI - headingDiff;
+            if (headingDiff > 0.7) continue;
 
-            if (angleDiff > 0.40 || headingDiff > 0.7) continue;
-
-            // Three independent falloffs, multiplied together.
-            // The cone is deliberately UNCHANGED from v7. Widening it was
-            // measured: it bought 0.15 places of extra movement per race and
-            // cost 30% more contact and double the retirements, because a
-            // wider cone also tows the car being overtaken. All of the gain
-            // came from the force multipliers and from letting the AI spend
-            // the tow (see ai.js), not from catching it more often.
-            const distFactor = 1 - Math.max(0, (dist - 45) / 145);   // full strength up to 45px
-            const coneFactor = 1 - (angleDiff / 0.40);
+            // Falloffs, multiplied together: distance up the road, position
+            // across the corridor, and how nearly the two cars point the
+            // same way.
+            const distFactor = 1 - Math.max(0, (along - 45) / (DRAFT_RANGE - 45));
+            const laneFactor = 1 - (side / halfWidth);
             const alignFactor = 1 - (headingDiff / 0.7);
 
-            const strength = Math.max(0, Math.min(1, distFactor * coneFactor * alignFactor * wake));
+            const strength = Math.max(0, Math.min(1, distFactor * laneFactor * alignFactor * wake));
             if (strength > best) best = strength;
         }
 
@@ -1824,6 +1840,7 @@ function updatePhysics(dt) {
     
     // --- Wrecks, Virtual Safety Car and recovery --------------------------
     updateRecovery(dt);
+    applyCraneCollisions();
     applyVscHold();
 
     // --- Blue flags -------------------------------------------------------
@@ -2062,6 +2079,12 @@ const VSC_PUSH_MAX = 1.2;     // px/frame the wall gives back: a nudge, not a ju
 const DRAFT_MIN_SPEED = 15;   // stopped or crawling: no wake at all
 const DRAFT_FULL_SPEED = 45;  // at or above this: a full wake
 
+// The wake itself: a corridor directly behind the car, a little wider than the
+// car at its tail and spreading gently with distance. A car is 24 x 14.
+const DRAFT_RANGE = 190;      // how far back the tow reaches, along the road
+const WAKE_HALF = 11;         // half-width right behind the gearbox
+const WAKE_SPREAD = 0.085;    // how much wider per pixel of distance
+
 // The running order at the moment the VSC came out. Positions are held
 // against THIS, not against a fresh sort every frame: re-sorting each frame
 // let a pass that completed inside a single frame stick, because by the time
@@ -2099,12 +2122,22 @@ function applyVscHold() {
     // them separate in the wrong direction. The frozen list governs the
     // CLASSIFICATION instead - which is what the player actually sees, and is
     // guaranteed rather than merely very likely.
-    const held = running.slice()
-        .sort((a, b) => (b.trackProgress || 0) - (a.trackProgress || 0));
+    //
+    // Ordered by position ROUND THE LAP, not by total distance covered. Under
+    // a VSC nobody may be passed at all, and that includes a backmarker you
+    // are about to lap: on total distance he sorts a whole lap adrift, so he
+    // was never anybody's "car ahead" and the leader drove straight past him.
+    // On lap position the pairs are the cars that are actually nose to tail.
+    const lapLen = (track && typeof track.getRacingLine === 'function')
+        ? track.getRacingLine('standard').length : 1e9;
+    const held = running.slice().sort((a, b) => (b.lapS || 0) - (a.lapS || 0));
 
-    for (let i = 1; i < held.length; i++) {
-        const ahead = held[i - 1], c = held[i];
-        const gap = (ahead.trackProgress || 0) - (c.trackProgress || 0);
+    for (let i = 0; i < held.length; i++) {
+        // wraps: the last car on the lap is chasing the first one round
+        const ahead = held[(i - 1 + held.length) % held.length], c = held[i];
+        if (ahead === c) continue;
+        let gap = (ahead.lapS || 0) - (c.lapS || 0);
+        if (gap < 0) gap += lapLen;
         if (gap >= VSC_HOLD_GAP) continue;
 
         // Everything below works along the TRACK, not along the car's own
@@ -2434,6 +2467,30 @@ function updateRecovery(dt) {
         // grandstand.
         if (r.phase !== 'done') nudgeOffStand(track, r.crane, 14);
 
+        // ...nor inside another crane. Two wrecks close together used to send
+        // two cranes to overlapping spots and they were drawn one on top of
+        // the other, which read as one very confused machine.
+        if (r.phase !== 'done') {
+            for (let k = 0; k < recoveries.length; k++) {
+                if (k === i) continue;
+                const o = recoveries[k];
+                if (!o || o.phase === 'done') continue;
+                let dx = r.crane.x - o.crane.x, dy = r.crane.y - o.crane.y;
+                let d = Math.hypot(dx, dy);
+                if (d >= CRANE_CLEARANCE) continue;
+                if (d < 0.001) { dx = 1; dy = 0; d = 1; }   // exactly co-located
+                // Push them apart evenly, then keep both off the grandstands:
+                // the separation must not be bought by parking in the crowd.
+                const push = (CRANE_CLEARANCE - d) / 2;
+                r.crane.x += (dx / d) * push;
+                r.crane.y += (dy / d) * push;
+                o.crane.x -= (dx / d) * push;
+                o.crane.y -= (dy / d) * push;
+                nudgeOffStand(track, r.crane, 14);
+                nudgeOffStand(track, o.crane, 14);
+            }
+        }
+
         if (r.phase === 'done') {
             r.car.recovering = false;
             r.car.recovered = true;                 // parked, out of the way
@@ -2460,7 +2517,7 @@ function updateRecovery(dt) {
         if (!vscActive) {
             vscActive = true;
             vscPowerFactor = VSC_POWER;
-            vscBanner.style.display = 'block';
+            showVscBanner(true);
             renderVscCountdown(null);
             RaceLog.event('VSC', `deployed — engine power limited to ${Math.round(VSC_POWER * 100)}%`);
         }
@@ -2474,13 +2531,24 @@ function updateRecovery(dt) {
             vscActive = false;
             vscEndsAt = null;
             vscPowerFactor = 1;
-            vscBanner.style.display = 'none';
+            showVscBanner(false);
             renderVscCountdown(null);
             RaceLog.event('VSC', 'withdrawn — track clear, full power');
         } else {
             renderVscCountdown(left);
         }
     }
+}
+
+// Raise and lower the banner. It lives along the bottom edge, which is also
+// where the two-player cards sit, so the cards step up out of its way; and it
+// has to come down whenever the race does, or it is left lying across the
+// results screen and the menu.
+function showVscBanner(on) {
+    vscBanner.style.display = on ? 'flex' : 'none';
+    const h2 = document.getElementById('hud2');
+    if (h2) h2.style.bottom = on ? '52px' : '10px';
+    if (!on) renderVscCountdown(null);
 }
 
 // The banner's ending clock: seconds and tenths, or back to the normal
@@ -2497,6 +2565,57 @@ function renderVscCountdown(leftMs) {
         count.innerText = (Math.max(0, leftMs) / 1000).toFixed(1);
         sub.innerText = 'TRACK CLEAR — GREEN FLAG IN';
     }
+}
+
+// --- cranes are solid ----------------------------------------------------
+// A recovery vehicle sitting on the edge of the circuit is a hazard, not
+// scenery. A car that runs into one is stopped by it and damaged, exactly as
+// by a barrier: leaning on it costs little, spearing it costs a lot.
+function applyCraneCollisions() {
+    if (!recoveries.length) return;
+    for (const c of cars) {
+        if (c.finished || c.isBroken) continue;
+        for (const r of recoveries) {
+            if (r.phase === 'done') continue;
+            const dx = c.x - r.crane.x, dy = c.y - r.crane.y;
+            const d = Math.hypot(dx, dy);
+            const minD = CRANE_RADIUS + 12;          // 12 = the car's own radius
+            if (d >= minD || d < 0.001) continue;
+
+            const nx = dx / d, ny = dy / d;
+            // push clear
+            c.x = r.crane.x + nx * minD;
+            c.y = r.crane.y + ny * minD;
+
+            // kill the component of velocity going INTO the crane, and take
+            // the damage from it. Same shape as the barrier rule, so brushing
+            // one is survivable and driving into it head-on is not.
+            const into = -(c.velocity.x * nx + c.velocity.y * ny);
+            if (into > 0) {
+                c.velocity.x += nx * into * 1.35;     // stop, plus a little bounce
+                c.velocity.y += ny * into * 1.35;
+                const hit = Math.max(0, into - 30) * 0.10;
+                if (hit > 0 && typeof c.takeDamage === 'function') {
+                    c.takeDamage(hit * hit * 0.5);
+                    if (!c._craneLogged || raceNow() - c._craneLogged > 2000) {
+                        c._craneLogged = raceNow();
+                        RaceLog.event('CONTACT', `${c.driverName || c.color} hit a recovery ` +
+                            `vehicle (closing ${into.toFixed(0)} px/s)`);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Where the AI should not go. ai.js reads this through the global.
+function craneObstacles() {
+    const out = [];
+    for (const r of recoveries) {
+        if (r.phase === 'done') continue;
+        out.push({ x: r.crane.x, y: r.crane.y, r: CRANE_RADIUS });
+    }
+    return out;
 }
 
 function drawCranes(ctx) {
@@ -2606,6 +2725,7 @@ function endPracticeSession() {
     raceFinished = true;
     hud.style.display = 'none';
     hideSplitHud();
+    showVscBanner(false);   // never leave it lying over a menu
     timingTower.style.display = 'none';
     stopSessionBtn.style.display = 'none';
     if (isMobile) mobileControls.style.display = 'none';
@@ -2983,6 +3103,7 @@ function updateHUD() {
         gameState = 'gameover';
         hud.style.display = 'none';
         hideSplitHud();
+        showVscBanner(false);   // never leave it lying over a menu
         document.getElementById('skip-overlay').style.display = 'none';
         winnerAnnouncement.style.display = 'none';
         if (isMobile) mobileControls.style.display = 'none';
@@ -3841,6 +3962,7 @@ function nextChampionshipRound() {
 function showChampionshipFinal() {
     hud.style.display = 'none';
     hideSplitHud();
+    showVscBanner(false);   // never leave it lying over a menu
     if (isMobile) mobileControls.style.display = 'none';
     champFinalScreen.style.display = 'block';
     

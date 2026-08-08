@@ -355,6 +355,53 @@ button:hover {
 /* empty readouts leave no gap */
 #side-hud > div:empty { display: none; }
 
+/* --- VSC banner --------------------------------------------------------
+   A strip along the bottom edge rather than a slab over the circuit: under a
+   VSC the field bunches up and you need to see the road, not a warning about
+   it. Sits above the two-player cards' line but is hidden whenever they are
+   in use, so the two never fight for the space. */
+#vsc-banner {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 214, 0, 0.94);
+    color: #201800;
+    border-top: 3px solid #7a6500;
+    padding: 5px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-align: center;
+    text-shadow: none;
+    pointer-events: none;
+    box-sizing: border-box;
+}
+
+#vsc-tag {
+    font-size: 19px;
+    letter-spacing: 3px;
+    background: #201800;
+    color: #ffd600;
+    padding: 1px 9px;
+    border-radius: 4px;
+}
+
+#vsc-sub {
+    font-size: 12px;
+    letter-spacing: 1.5px;
+}
+
+#vsc-count {
+    font-size: 26px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 1px;
+    min-width: 56px;
+}
+
 /* --- two-player HUD ---------------------------------------------------
    With two people on one keyboard the top bar can only ever describe one of
    them, so in two-player mode the per-driver readouts move down here: one

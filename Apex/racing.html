@@ -320,7 +320,13 @@
                                 qualifying.</li>
                             <li><b>Virtual Safety Car.</b> While the VSC is out the order is frozen:
                                 each car meets an invisible wall that travels with the one in front and
-                                cannot get past it. Recover the places when the track goes green.</li>
+                                cannot get past it. That means <i>anybody</i> in front &mdash; including a
+                                car you are about to lap. When the crane is home the banner counts down
+                                three seconds with tenths, so the green flag never catches you
+                                mid&#8209;corner. Recover the places after that.</li>
+                            <li><b>The crane.</b> A recovery vehicle on the edge of the circuit is solid.
+                                Hit it and it costs you exactly what a barrier would &mdash; brushing it is
+                                cheap, spearing it is not. Give it room.</li>
                             <li><b>Grand Chelem.</b> Pole, the win, the fastest lap and leading every
                                 single lap of the race &mdash; all four in one Grand Prix. It is marked with
                                 a gold <span style="color:#FFD700;">&#9733;</span> beside your name in the
@@ -468,19 +474,16 @@
                 <div id="season-recap"></div>
                 <button id="champ-restart-btn">Main Menu</button>
             </div>
-            <div id="vsc-banner" style="display: none; position: absolute; top: 8%; left: 50%;
-                 transform: translateX(-50%); background: #ffd600; color: #201800; padding: 8px 26px;
-                 border-radius: 6px; border: 3px solid #7a6500; font-size: 22px; font-weight: 900;
-                 letter-spacing: 3px; text-align: center; box-shadow: 0 0 18px rgba(255,214,0,0.55);">
-                VSC
-                <div id="vsc-sub" style="font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 2px;">
-                    VIRTUAL SAFETY CAR &mdash; RECOVERY IN PROGRESS
-                </div>
-                <!-- the last three seconds: a big clock with tenths, so nobody
-                     is caught mid-corner guessing when the power comes back -->
-                <div id="vsc-count" style="display: none; font-size: 34px; font-weight: 900;
-                     font-variant-numeric: tabular-nums; letter-spacing: 2px; line-height: 1.1;
-                     margin-top: 3px;">3.0</div>
+            <!-- A yellow slab across the middle of the circuit is the last
+                 thing you want while the field is bunching up. The banner is a
+                 single strip along the very bottom edge, clear of every
+                 racing line and of the two HUD panels. -->
+            <div id="vsc-banner" style="display: none;">
+                <span id="vsc-tag">VSC</span>
+                <span id="vsc-sub">VIRTUAL SAFETY CAR &mdash; RECOVERY IN PROGRESS</span>
+                <!-- the last three seconds: a clock with tenths, so nobody is
+                     caught mid-corner guessing when the power comes back -->
+                <span id="vsc-count" style="display: none;">3.0</span>
             </div>
             <div id="log-screen" style="display: none; position: absolute; top: 50%; left: 50%;
                  transform: translate(-50%, -50%); background: rgba(0,0,0,0.94); border: 2px solid #555;
