@@ -1,6 +1,43 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// The world. Everything - track geometry, crane parking, the mini-map - is in
+// these units, and the canvas is scaled to the window by CSS. 16:9, so a
+// modern screen is filled rather than letterboxed with two green bands.
+const WORLD_W = 1280;
+const WORLD_H = 720;
+
+// The HUD is one column down the left: the timing tower, the driver's
+// readouts, the two-player cards and the VSC strip all live in it, so there is
+// only ONE thing taking room from the circuits instead of two. Everything to
+// the right of it, top to bottom, is racing surface - the circuits are laid
+// out strictly inside that box (see track.js), so nothing ever sits on the
+// road.
+const PANEL_W = 210;
+const ARENA_X0 = PANEL_W;
+const ARENA_X1 = WORLD_W;
+const ARENA_Y0 = 0;
+const ARENA_Y1 = WORLD_H;
+
+// The HUD lives in #stage, a WORLD_W x WORLD_H box laid exactly over the
+// canvas and scaled with it. Without that the bands would be reserved in world
+// pixels but the HUD drawn in CSS pixels, and the two would only agree at one
+// particular window size.
+function layoutStage() {
+    const stage = document.getElementById('stage');
+    const box = document.getElementById('game-container');
+    if (!stage || !box || typeof canvas.getBoundingClientRect !== 'function') return;
+    const c = canvas.getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    const k = c.width / WORLD_W;
+    stage.style.setProperty('--stage-x', (c.left - b.left) + 'px');
+    stage.style.setProperty('--stage-y', (c.top - b.top) + 'px');
+    stage.style.setProperty('--stage-scale', k);
+}
+if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('resize', layoutStage);
+}
+
 let track;
 let cars = [];
 let ais = [];
@@ -793,7 +830,8 @@ function startQualifying(forceTrackType) {
     menu.style.display = 'none';
     gameOverScreen.style.display = 'none';
     qualiScreen.style.display = 'none';
-    hud.style.display = 'flex';
+    hud.style.display = 'block';
+    layoutStage();
     if (isMobile) mobileControls.style.display = 'flex';
 
     raceMode = 'qualifying';
@@ -824,7 +862,11 @@ function startQualifying(forceTrackType) {
     if (!weatherIndicator) {
         weatherIndicator = document.createElement('div');
         weatherIndicator.id = 'weather-indicator';
-        hud.insertBefore(weatherIndicator, quitBtn);
+        // into the right-hand group of the bar, beside the buttons. It used
+        // to be inserted before quitBtn as a child of #hud; quitBtn now lives
+        // inside #hud-right, and insertBefore throws if the reference node is
+        // not actually a child of the parent.
+        (document.getElementById('hud-right') || hud).appendChild(weatherIndicator);
     }
     weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
     renderTyreIndicator(null);
@@ -845,7 +887,7 @@ function startQualifying(forceTrackType) {
     showVscBanner(false);
     stopSessionBtn.style.display = 'inline-block';
     stopSessionBtn.innerText = 'End Qualifying';
-    timingTower.style.display = 'block';
+    timingTower.style.display = 'flex';
     timingTower.innerHTML = '';
 
     pendingField = buildField();
@@ -1004,14 +1046,14 @@ function playerCardHtml(car, pos, field) {
 
     const dead = car.isBroken ? '<span class="p-dead">OUT</span>' : '';
 
-    return `<div class="p-line"><span class="p-who" style="color:${car.color};">` +
-           `${humanLabel(car)}</span>` +
-           `<span class="p-keys">${s.short}</span>${dead}</div>` +
-           `<div class="p-line"><span>${line1}</span></div>` +
-           `<div class="p-line"><span class="p-speed">${Math.floor(speed * 0.5)} km/h</span>` +
-           tyreHtml + `</div>` +
-           `<div class="p-line"><span style="color:${curCol};">${fmtLapMs(cur)}</span>` +
-           `<span style="opacity:.6;">B ${fmtLapMs(car.bestLapTime)}</span></div>`;
+    // One row: the card is a strip along the bottom, not a box in the corner.
+    return `<span class="p-who" style="color:${car.color};">${humanLabel(car)}</span>` +
+           `<span class="p-keys">${s.short}</span>${dead}` +
+           `<span>${line1}</span>` +
+           `<span class="p-speed">${Math.floor(speed * 0.5)} km/h</span>` +
+           `<span class="p-line">${tyreHtml}</span>` +
+           `<span style="color:${curCol};font-weight:bold;">${fmtLapMs(cur)}</span>` +
+           `<span style="opacity:.6;">B ${fmtLapMs(car.bestLapTime)}</span>`;
 }
 
 function renderSplitHud(sortedCars) {
@@ -1028,10 +1070,9 @@ function renderSplitHud(sortedCars) {
         const car = seats[i][0], el = seats[i][1];
         if (!el) continue;
         if (!car) { el.style.display = 'none'; continue; }
-        el.style.display = 'block';
-        el.style.borderLeftColor = car.color;
-        el.style.borderRightColor = car.color;
-        el.className = 'p-card' + (i === 1 ? ' p-right' : '');
+        el.style.display = 'flex';
+        el.style.borderTopColor = car.color;
+        el.className = 'p-card';
         const pos = sortedCars ? sortedCars.indexOf(car) + 1 : 0;
         el.innerHTML = playerCardHtml(car, pos, sortedCars ? sortedCars.length : 0);
     }
@@ -1212,13 +1253,17 @@ function showGpPreview(trackType) {
     // Mini-map: the real track, drawn scaled onto a small canvas.
     const map = document.getElementById('gp-map');
     const mctx = map.getContext('2d');
-    const sc = Math.min(map.width / 1000, map.height / 700);
+    // Only the arena, not the whole world: the left column is HUD, and a
+    // mini-map with a 210px empty margin down one side is just a smaller map.
+    const aw = ARENA_X1 - ARENA_X0, ah = ARENA_Y1 - ARENA_Y0;
+    const sc = Math.min(map.width / aw, map.height / ah);
     mctx.setTransform(1, 0, 0, 1, 0, 0);
     mctx.clearRect(0, 0, map.width, map.height);
     mctx.setTransform(sc, 0, 0, sc,
-        (map.width - 1000 * sc) / 2, (map.height - 700 * sc) / 2);
+        (map.width - aw * sc) / 2 - ARENA_X0 * sc,
+        (map.height - ah * sc) / 2 - ARENA_Y0 * sc);
     mctx.fillStyle = '#388E3C';
-    mctx.fillRect(0, 0, 1000, 700);
+    mctx.fillRect(ARENA_X0, ARENA_Y0, aw, ah);
     pTrack.draw(mctx);
 
     // 1 px = 1 m, the same fiction the speedometer already uses (0.5 factor).
@@ -1330,7 +1375,8 @@ function startGame(forceTrackType = null) {
 
     menu.style.display = 'none';
     // Nothing to watch while a skipped Grand Prix is being simulated.
-    hud.style.display = skipMode ? 'none' : 'flex';
+    hud.style.display = skipMode ? 'none' : 'block';
+    layoutStage();
     if (isMobile) mobileControls.style.display = skipMode ? 'none' : 'flex';
     
     // Reset effects
@@ -1360,7 +1406,11 @@ function startGame(forceTrackType = null) {
     if (!weatherIndicator) {
         weatherIndicator = document.createElement('div');
         weatherIndicator.id = 'weather-indicator';
-        hud.insertBefore(weatherIndicator, quitBtn);
+        // into the right-hand group of the bar, beside the buttons. It used
+        // to be inserted before quitBtn as a child of #hud; quitBtn now lives
+        // inside #hud-right, and insertBefore throws if the reference node is
+        // not actually a child of the parent.
+        (document.getElementById('hud-right') || hud).appendChild(weatherIndicator);
     }
     weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
     
@@ -1374,7 +1424,7 @@ function startGame(forceTrackType = null) {
 
     const isPractice = raceMode === 'practice';
     stopSessionBtn.style.display = isPractice ? 'inline-block' : 'none';
-    timingTower.style.display = isPractice ? 'none' : 'block';
+    timingTower.style.display = isPractice ? 'none' : 'flex';
     timingTower.innerHTML = '';
 
     // Free practice: unlimited running, no opponents, no flag.
@@ -2209,7 +2259,10 @@ function segmentStandHits(track, x1, y1, x2, y2, pad) {
 function nudgeOffStand(track, p, pad) {
     const stands = (typeof track.getStands === 'function') ? track.getStands() : [];
     const m = pad === undefined ? 14 : pad;
-    for (let iter = 0; iter < 3; iter++) {
+    // Three passes cleared it on the old, smaller circuits. On the wider ones
+    // the stands are denser and a crane pushed out of one can land in its
+    // neighbour, so keep going until it is clear of all of them.
+    for (let iter = 0; iter < 12; iter++) {
         let moved = false;
         for (const st of stands) {
             const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
@@ -2233,6 +2286,23 @@ function nudgeOffStand(track, p, pad) {
             moved = true;
         }
         if (!moved) break;
+    }
+
+    // Last resort. Pushing out of one stand can drop the point into the next,
+    // and on a circuit ringed with them the two can trade it back and forth
+    // for ever. If it is still inside one, shove it clear of that stand's
+    // bounding circle in one move: a bigger jump than the face-push, but it
+    // always ends outside, which is the thing that matters.
+    for (const st of stands) {
+        const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
+        const dx = p.x - st.x, dy = p.y - st.y;
+        const u = dx * ca - dy * sa, v = dx * sa + dy * ca;
+        if (Math.abs(u) >= st.len / 2 + m || Math.abs(v) >= st.depth / 2 + m) continue;
+        const R = Math.hypot(st.len / 2, st.depth / 2) + m + 2;
+        const d = Math.hypot(dx, dy);
+        const nx = d > 0.001 ? dx / d : 1, ny = d > 0.001 ? dy / d : 0;
+        p.x = st.x + nx * R;
+        p.y = st.y + ny * R;
     }
     return p;
 }
@@ -2288,7 +2358,8 @@ function startRecovery(car) {
                             track.grassWidth + 82, track.grassWidth + 110]) {
             const px = proj.projX + vx * dist;
             const py = proj.projY + vy * dist;
-            if (px < 22 || px > 978 || py < 22 || py > 678) continue;
+            if (px < ARENA_X0 + 22 || px > ARENA_X1 - 22 ||
+                py < ARENA_Y0 + 22 || py > ARENA_Y1 - 22) continue;
 
             const clear = track.getClosestPoint(px, py).dist;
             // how far past the barrier we are, capped so absurdly remote spots
@@ -2311,8 +2382,10 @@ function startRecovery(car) {
     }
 
     if (tx === null) {           // literally nowhere on canvas: clamp and accept
-        tx = Math.max(22, Math.min(978, proj.projX + nx * (track.grassWidth + 42)));
-        ty = Math.max(22, Math.min(678, proj.projY + ny * (track.grassWidth + 42)));
+        tx = Math.max(ARENA_X0 + 22, Math.min(ARENA_X1 - 22,
+                                              proj.projX + nx * (track.grassWidth + 42)));
+        ty = Math.max(ARENA_Y0 + 22, Math.min(ARENA_Y1 - 22,
+                                              proj.projY + ny * (track.grassWidth + 42)));
     }
 
     // Geometry of the recovery. The crane always keeps a tow length between
@@ -2366,7 +2439,8 @@ function startRecovery(car) {
         for (const c of cand) {
             const px = c.x, py = c.y;
             const spin = c.spin, back = c.back;
-            if (px < 16 || px > 984 || py < 16 || py > 684) continue;
+            if (px < ARENA_X0 + 16 || px > ARENA_X1 - 16 ||
+                py < ARENA_Y0 + 16 || py > ARENA_Y1 - 16) continue;
 
             let score = 0;
             if (pointOnStand(track, px, py, 22)) score -= 400;       // parked in the crowd
@@ -2464,13 +2538,47 @@ function updateRecovery(dt) {
         }
 
         // Whatever the route worked out, the crane is never drawn inside a
-        // grandstand.
-        if (r.phase !== 'done') nudgeOffStand(track, r.crane, 14);
+        // grandstand - nor off the visible part of the canvas. The circuits
+        // now run right to the edge, so "just outside the barrier" can be off
+        // the screen entirely, and the top and bottom bands belong to the HUD.
+        if (r.phase !== 'done') {
+            nudgeOffStand(track, r.crane, 14);
+            r.crane.x = Math.max(ARENA_X0 + 18, Math.min(ARENA_X1 - 18, r.crane.x));
+            r.crane.y = Math.max(ARENA_Y0 + 18, Math.min(ARENA_Y1 - 18, r.crane.y));
+        }
 
         // ...nor inside another crane. Two wrecks close together used to send
         // two cranes to overlapping spots and they were drawn one on top of
         // the other, which read as one very confused machine.
         if (r.phase !== 'done') {
+            // Two passes: pushing a crane clear of its neighbour can put it on
+            // a grandstand, and pushing it back off the stand can put it near
+            // the neighbour again. Twice round settles it.
+            for (let pass = 0; pass < 2; pass++) {
+                for (let k = 0; k < recoveries.length; k++) {
+                    if (k === i) continue;
+                    const o = recoveries[k];
+                    if (!o || o.phase === 'done') continue;
+                    let dx = r.crane.x - o.crane.x, dy = r.crane.y - o.crane.y;
+                    let d = Math.hypot(dx, dy);
+                    if (d >= CRANE_CLEARANCE) continue;
+                    if (d < 0.001) { dx = 1; dy = 0; d = 1; }   // exactly co-located
+                    // Push them apart evenly, then keep both off the stands:
+                    // the separation must not be bought by parking in the crowd.
+                    const push = (CRANE_CLEARANCE - d) / 2;
+                    r.crane.x += (dx / d) * push;
+                    r.crane.y += (dy / d) * push;
+                    o.crane.x -= (dx / d) * push;
+                    o.crane.y -= (dy / d) * push;
+                    nudgeOffStand(track, r.crane, 14);
+                    nudgeOffStand(track, o.crane, 14);
+                }
+            }
+            // Separation gets the last word. Being pushed off a stand can put
+            // two cranes back on top of each other, and now that a crane is a
+            // solid obstacle two of them in the same place is the worse fault
+            // of the two - one is a drawing overlap, the other is a wall in a
+            // place the drivers cannot read.
             for (let k = 0; k < recoveries.length; k++) {
                 if (k === i) continue;
                 const o = recoveries[k];
@@ -2478,16 +2586,10 @@ function updateRecovery(dt) {
                 let dx = r.crane.x - o.crane.x, dy = r.crane.y - o.crane.y;
                 let d = Math.hypot(dx, dy);
                 if (d >= CRANE_CLEARANCE) continue;
-                if (d < 0.001) { dx = 1; dy = 0; d = 1; }   // exactly co-located
-                // Push them apart evenly, then keep both off the grandstands:
-                // the separation must not be bought by parking in the crowd.
+                if (d < 0.001) { dx = 1; dy = 0; d = 1; }
                 const push = (CRANE_CLEARANCE - d) / 2;
-                r.crane.x += (dx / d) * push;
-                r.crane.y += (dy / d) * push;
-                o.crane.x -= (dx / d) * push;
-                o.crane.y -= (dy / d) * push;
-                nudgeOffStand(track, r.crane, 14);
-                nudgeOffStand(track, o.crane, 14);
+                r.crane.x += (dx / d) * push; r.crane.y += (dy / d) * push;
+                o.crane.x -= (dx / d) * push; o.crane.y -= (dy / d) * push;
             }
         }
 
@@ -2546,8 +2648,6 @@ function updateRecovery(dt) {
 // results screen and the menu.
 function showVscBanner(on) {
     vscBanner.style.display = on ? 'flex' : 'none';
-    const h2 = document.getElementById('hud2');
-    if (h2) h2.style.bottom = on ? '52px' : '10px';
     if (!on) renderVscCountdown(null);
 }
 
@@ -2864,13 +2964,12 @@ function updateHUD() {
                 ? `${fmt(playerCar.lastLapTime)}${playerCar.lastLapTime === playerCar.bestLapTime ? ' ★' : ''}`
                 : '--.---';
 
-            // Three lines, biggest first: the live lap, then last, then best.
-            // In a race you get half a glance at this - it has to land at
-            // half a glance.
+            // The live lap big, last and best beside it: the bar is one row,
+            // so these read left to right rather than stacked.
             lapTimerDiv.innerHTML =
-                `<div class="lt-cur" style="color:${colour};">${fmt(current)}</div>` +
-                `<div class="lt-sub">L&nbsp; ${lastStr}</div>` +
-                `<div class="lt-sub lt-best">B&nbsp; ${fmt(playerCar.bestLapTime)}</div>`;
+                `<span class="lt-cur" style="color:${colour};">${fmt(current)}</span>` +
+                `<span class="lt-sub">L ${lastStr}</span>` +
+                `<span class="lt-sub lt-best">B ${fmt(playerCar.bestLapTime)}</span>`;
         }
     }
     
@@ -2980,13 +3079,16 @@ function updateHUD() {
                   `opacity:${(0.35 + 0.65 * tw).toFixed(2)};" title="${c.tyre.label}">` +
                   `${c.tyre.short}</span>`
                 : '<span class="tt-tyre" style="opacity:0;">-</span>';
+            // One cell per car, laid left to right along the top.
             rows.push(
-                `<div class="tt-row${c.isPlayer ? ' me' : ''}">` +
+                `<div class="tt-row${c.isPlayer ? ' me' : ''}" ` +
+                `style="border-left-color:${c.color};">` +
+                `<div class="tt-top">` +
                 `<span class="tt-pos">${i + 1}</span>` +
-                `<span class="tt-chip" style="background:${c.color};"></span>` +
                 `<span class="tt-name"${(c.isBroken && !c.finished) ? ' style="opacity:.45;"' : ''}>${name}</span>` +
                 tyrePip +
-                `<span class="tt-gap">${gap}</span>` +
+                `</div>` +
+                `<div class="tt-gap">${gap}</div>` +
                 `</div>`);
         }
         timingTower.innerHTML = rows.join('');
@@ -3864,6 +3966,11 @@ function gameLoop(timestamp) {
 // Initial draw for menu background
 ctx.fillStyle = '#222';
 ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+// Put the HUD stage over the canvas straight away, and again once the browser
+// has settled the layout - getBoundingClientRect is zero until it has.
+layoutStage();
+if (typeof setTimeout === 'function') setTimeout(layoutStage, 0);
 
 function startChampionship() {
     const color = document.getElementById('color-select').value;

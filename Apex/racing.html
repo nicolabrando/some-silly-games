@@ -8,33 +8,55 @@
 </head>
 <body>
     <div id="game-container">
-        <canvas id="gameCanvas" width="1000" height="700"></canvas>
+        <canvas id="gameCanvas" width="1280" height="720"></canvas>
         <div id="ui-layer">
-            <div id="hud" style="display: none;">
-                <!-- The driver's readouts live in a panel beside the track
-                     (see #side-hud below); the top bar keeps only the shared
-                     things: the DNF clock, the weather, and the buttons. -->
-                <div id="dnf-timer" style="visibility: hidden; color: #ff5252; font-weight: bold;"></div>
-                <div id="weather-indicator"></div>
-                <button id="stopSessionBtn" class="hud-btn" style="display: none; background: #d84315;">Stop Session</button>
-                <button id="pauseBtn" class="hud-btn" style="background: #455a64;">&#9208; Pause</button>
-                <button id="quitBtn" class="hud-btn">Quit</button>
-                <!-- absolutely positioned, so it escapes the top bar's flex row
-                     but still appears and disappears with it -->
-                <div id="side-hud">
-                    <div id="position-counter">Pos: 1/6</div>
-                    <div id="lap-counter">Lap: 1/5</div>
-                    <div id="speedometer">0 km/h</div>
-                    <div id="lap-timer"></div>
-                    <div id="tyre-indicator"></div>
+            <!-- Everything that has to line up with the circuit lives in the
+                 stage: a 1280x720 box laid exactly over the canvas and scaled
+                 with it, so a band reserved in world pixels is the same band
+                 on any screen. The menus stay outside, at window scale, so
+                 their text does not shrink with the window. -->
+            <div id="stage">
+                <!-- ONE column down the left holds everything: the tower on
+                     top, the driver's readouts underneath it. Two separate
+                     bands were taking two bites out of the circuits, and the
+                     ticker along the top was unreadable besides. -->
+                <div id="sidebar">
+                    <!-- VSC: a strip at the head of the column, never over the road -->
+                    <div id="vsc-banner" style="display: none;">
+                        <span id="vsc-tag">VSC</span>
+                        <span id="vsc-sub">VIRTUAL SAFETY CAR</span>
+                        <span id="vsc-count" style="display: none;">3.0</span>
+                    </div>
+
+                    <div id="timing-tower" style="display: none;"></div>
+
+                    <div id="hud" style="display: none;">
+                        <div id="side-hud">
+                            <div id="position-counter">Pos: 1/6</div>
+                            <div id="lap-counter">Lap: 1/5</div>
+                            <div id="speedometer">0 km/h</div>
+                            <div id="lap-timer"></div>
+                            <div id="tyre-indicator"></div>
+                            <div id="hud-right">
+                                <div id="dnf-timer" style="visibility: hidden;"></div>
+                                <div id="weather-indicator"></div>
+                                <button id="stopSessionBtn" class="hud-btn" style="display: none; background: #d84315;">Stop</button>
+                                <button id="pauseBtn" class="hud-btn" style="background: #455a64;">&#9208;</button>
+                                <button id="quitBtn" class="hud-btn">Quit</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- two-player: one card per seat, stacked at the foot -->
+                    <div id="hud2" style="display: none;">
+                        <div class="p-card" id="p1-card"></div>
+                        <div class="p-card" id="p2-card"></div>
+                    </div>
                 </div>
             </div>
-            <!-- Two-player HUD: one card per seat, along the bottom. The top
-                 bar keeps the shared things (weather, DNF clock, buttons). -->
-            <div id="hud2" style="display: none;">
-                <div class="p-card" id="p1-card"></div>
-                <div class="p-card" id="p2-card"></div>
-            </div>
+
+            <!-- Outside the stage: a centred panel, like the menus, so its
+                 text does not shrink with the window. -->
             <div id="pause-overlay" style="display: none;">
                 <div id="pause-panel">
                     <div style="font-size: 30px; font-weight: 900; letter-spacing: 4px;">PAUSED</div>
@@ -45,7 +67,7 @@
                     <button id="pause-quit-btn" style="background: #37474f; color: #ddd;">Quit to menu</button>
                 </div>
             </div>
-            <div id="timing-tower" style="display: none;"></div>
+
             <div id="menu">
                 <div id="menu-title">
                     <h1>APEX</h1>
@@ -473,17 +495,6 @@
                 <div id="champ-legend"></div>
                 <div id="season-recap"></div>
                 <button id="champ-restart-btn">Main Menu</button>
-            </div>
-            <!-- A yellow slab across the middle of the circuit is the last
-                 thing you want while the field is bunching up. The banner is a
-                 single strip along the very bottom edge, clear of every
-                 racing line and of the two HUD panels. -->
-            <div id="vsc-banner" style="display: none;">
-                <span id="vsc-tag">VSC</span>
-                <span id="vsc-sub">VIRTUAL SAFETY CAR &mdash; RECOVERY IN PROGRESS</span>
-                <!-- the last three seconds: a clock with tenths, so nobody is
-                     caught mid-corner guessing when the power comes back -->
-                <span id="vsc-count" style="display: none;">3.0</span>
             </div>
             <div id="log-screen" style="display: none; position: absolute; top: 50%; left: 50%;
                  transform: translate(-50%, -50%); background: rgba(0,0,0,0.94); border: 2px solid #555;

@@ -1,3 +1,13 @@
+// The world these circuits are laid out in. 16:9, so a modern screen is
+// filled rather than letterboxed. main.js has the same pair.
+const TRACK_W = 1280;
+const TRACK_H = 720;
+
+// The timing tower and the driver's readouts share one column down the left,
+// so the racing surface starts here and not at zero. Everything to the right
+// of it - the full height - is circuit. main.js has the same number.
+const TRACK_X0 = 210;
+
 // Number of radii around a puddle's outline. Enough to look organic,
 // few enough that the per-frame containment test stays trivial.
 const PUDDLE_LOBES = 11;
@@ -533,7 +543,8 @@ class SegmentedTrack {
                 // 1. fully on canvas
                 let ok = true;
                 for (const p of pts) {
-                    if (p.x < 8 || p.x > 992 || p.y < 8 || p.y > 692) { ok = false; break; }
+                    if (p.x < TRACK_X0 + 8 || p.x > TRACK_W - 8 ||
+                        p.y < 8 || p.y > TRACK_H - 8) { ok = false; break; }
                 }
                 if (!ok) continue;
 
@@ -837,16 +848,16 @@ class OvalTrack extends SegmentedTrack {
         const cx1 = 350;
         const cx2 = 650;
         const cy = 350;
-        const r = 180; // Scaled to look round and fit perfectly within 1000x700
+        const r = 180; // the end radius; the straights carry the extra width
         
-        this.startX = 500;
-        this.startY = cy - r;
+        this.startX = 657.33;
+        this.startY = 180;
         
         this.segments = [
-            { type: 'line', x1: cx1, y1: cy - r, x2: cx2, y2: cy - r },
-            { type: 'arc', cx: cx2, cy: cy, r: r, start: -Math.PI/2, end: Math.PI/2, ccw: false },
-            { type: 'line', x1: cx2, y1: cy + r, x2: cx1, y2: cy + r },
-            { type: 'arc', cx: cx1, cy: cy, r: r, start: Math.PI/2, end: -Math.PI/2, ccw: false }
+            { type: 'line', x1: 506, y1: 180, x2: 984, y2: 180 },
+            { type: 'arc', cx: 984, cy: 360, r: 180, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 984, y1: 540, x2: 506, y2: 540 },
+            { type: 'arc', cx: 506, cy: 360, r: 180, start: 1.5708, end: -1.5708, ccw: false }
         ];
         
         this.waypoints = this.generateWaypoints();
@@ -859,18 +870,18 @@ class F1Track extends SegmentedTrack {
         super();
         this.trackWidth = 60;
         this.grassWidth = 80;
-        this.startX = 450;
-        this.startY = 100;
+        this.startX = 603.53;
+        this.startY = 147.5;
         
         this.segments = [
-            { type: 'line', x1: 250, y1: 100, x2: 650, y2: 100 },
-            { type: 'arc', cx: 650, cy: 312.5, r: 212.5, start: -Math.PI/2, end: Math.PI/2, ccw: false },
-            { type: 'line', x1: 650, y1: 525, x2: 550, y2: 525 },
-            { type: 'arc', cx: 550, cy: 450, r: 75, start: Math.PI/2, end: Math.PI, ccw: false },
-            { type: 'line', x1: 475, y1: 450, x2: 475, y2: 375 },
-            { type: 'arc', cx: 400, cy: 375, r: 75, start: 0, end: -Math.PI/2, ccw: true },
-            { type: 'line', x1: 400, y1: 300, x2: 250, y2: 300 },
-            { type: 'arc', cx: 250, cy: 200, r: 100, start: Math.PI/2, end: -Math.PI/2, ccw: false }
+            { type: 'line', x1: 396, y1: 147.5, x2: 981.5, y2: 147.5 },
+            { type: 'arc', cx: 981.5, cy: 360, r: 212.5, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 981.5, y1: 572.5, x2: 800.34, y2: 572.5 },
+            { type: 'arc', cx: 800.34, cy: 497.5, r: 75, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: 725.34, y1: 497.5, x2: 725.34, y2: 422.5 },
+            { type: 'arc', cx: 650.34, cy: 422.5, r: 75, start: 0, end: -1.5708, ccw: true },
+            { type: 'line', x1: 650.34, y1: 347.5, x2: 396, y2: 347.5 },
+            { type: 'arc', cx: 396, cy: 247.5, r: 100, start: 1.5708, end: -1.5708, ccw: false }
         ];
         
         this.waypoints = this.generateWaypoints();
@@ -898,14 +909,14 @@ class PeanutTrack extends SegmentedTrack {
         const cyTop = cy - dy;
         const cyBot = cy + dy;
         
-        this.startX = 500;
-        this.startY = cyTop + rBig;
+        this.startX = 745;
+        this.startY = 251.28;
         
         this.segments = [
-            { type: 'arc', cx: cx1, cy: cy, r: rSmall, start: theta, end: 2 * Math.PI - theta, ccw: false },
-            { type: 'arc', cx: 500, cy: cyTop, r: rBig, start: Math.PI - theta, end: theta, ccw: true },
-            { type: 'arc', cx: cx2, cy: cy, r: rSmall, start: Math.PI + theta, end: Math.PI - theta, ccw: false },
-            { type: 'arc', cx: 500, cy: cyBot, r: rBig, start: -theta, end: -Math.PI + theta, ccw: true }
+            { type: 'arc', cx: 472.14, cy: 360, r: 171.14, start: 1.12096, end: 5.16223, ccw: false },
+            { type: 'arc', cx: 745, cy: -205.1, r: 456.38, start: 2.02064, end: 1.12096, ccw: true },
+            { type: 'arc', cx: 1017.86, cy: 360, r: 171.14, start: 4.26255, end: 2.02064, ccw: false },
+            { type: 'arc', cx: 745, cy: 925.1, r: 456.38, start: -1.12096, end: -2.02064, ccw: true }
         ];
         
         this.waypoints = this.generateWaypoints();
@@ -918,22 +929,15 @@ class CircoMassimoTrack extends SegmentedTrack {
         this.trackWidth = 50;
         this.grassWidth = 70;
         
-        // Pulled in from 120/880: at the old width the barriers reached x=50
-        // and x=950 and the two ends ran off the visible area once the kerbs
-        // and grandstands were added around them.
-        const cx1 = 195;
-        const cx2 = 805;
-        const cy = 350;
-        const r = 60;
         
-        this.startX = 500;
-        this.startY = cy - r;
+        this.startX = 724.57;
+        this.startY = 285.6;
         
         this.segments = [
-            { type: 'line', x1: cx1, y1: cy - r, x2: cx2, y2: cy - r },
-            { type: 'arc', cx: cx2, cy: cy, r: r, start: -Math.PI/2, end: Math.PI/2, ccw: false },
-            { type: 'line', x1: cx2, y1: cy + r, x2: cx1, y2: cy + r },
-            { type: 'arc', cx: cx1, cy: cy, r: r, start: Math.PI/2, end: -Math.PI/2, ccw: false }
+            { type: 'line', x1: 360.4, y1: 285.6, x2: 1129.6, y2: 285.6 },
+            { type: 'arc', cx: 1129.6, cy: 360, r: 74.4, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 1129.6, y1: 434.4, x2: 360.4, y2: 434.4 },
+            { type: 'arc', cx: 360.4, cy: 360, r: 74.4, start: 1.5708, end: -1.5708, ccw: false }
         ];
         
         this.waypoints = this.generateWaypoints();
@@ -946,7 +950,12 @@ class CircoMassimoTrack extends SegmentedTrack {
         // 15px grey line with a 10px sand line painted ON TOP of it, which
         // left 2.5px of visible wall per side - effectively invisible. Now
         // the sand is the bed and the wall stands on it.
-        const x1 = 195, x2 = 805, y = 350;
+        // Derived from the geometry rather than typed in, so the spina follows
+        // the circuit wherever it is laid out.
+        const ends = this.segments.filter(s => s.type === 'arc');
+        const x1 = Math.min(ends[0].cx, ends[1].cx);
+        const x2 = Math.max(ends[0].cx, ends[1].cx);
+        const y = (ends[0].cy + ends[1].cy) / 2;
         ctx.lineCap = 'round';
 
         // sand bed, wider than the wall
@@ -1010,12 +1019,12 @@ class CircleTrack extends SegmentedTrack {
         const r = 250;
         
         this.segments = [
-            { type: 'arc', cx: cx, cy: cy, r: r, start: -Math.PI/2, end: Math.PI/2, ccw: false },
-            { type: 'arc', cx: cx, cy: cy, r: r, start: Math.PI/2, end: -Math.PI/2, ccw: false }
+            { type: 'arc', cx: 745, cy: 360, r: 226.55, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'arc', cx: 745, cy: 360, r: 226.55, start: 1.5708, end: -1.5708, ccw: false }
         ];
         
-        this.startX = 500;
-        this.startY = cy - r;
+        this.startX = 745;
+        this.startY = 133.45;
         
         this.waypoints = this.generateWaypoints();
     }
@@ -1028,20 +1037,20 @@ class SerpentTrack extends SegmentedTrack {
         this.grassWidth = 75;
         
         this.segments = [
-            { type: 'line', x1: 250, y1: 600, x2: 780, y2: 600 },
-            { type: 'arc', cx: 780, cy: 480, r: 120, start: Math.PI/2, end: -Math.PI/2, ccw: true },
-            { type: 'line', x1: 780, y1: 360, x2: 480, y2: 360 },
-            { type: 'arc', cx: 480, cy: 270, r: 90, start: Math.PI/2, end: Math.PI, ccw: false },
-            { type: 'line', x1: 390, y1: 270, x2: 390, y2: 180 },
-            { type: 'arc', cx: 310, cy: 180, r: 80, start: 0, end: -Math.PI/2, ccw: true },
-            { type: 'line', x1: 310, y1: 100, x2: 200, y2: 100 },
-            { type: 'arc', cx: 200, cy: 180, r: 80, start: -Math.PI/2, end: -Math.PI, ccw: true },
-            { type: 'line', x1: 120, y1: 180, x2: 120, y2: 470 },
-            { type: 'arc', cx: 250, cy: 470, r: 130, start: Math.PI, end: Math.PI/2, ccw: true }
+            { type: 'line', x1: 421, y1: 605.69, x2: 1079, y2: 605.69 },
+            { type: 'arc', cx: 1079, cy: 485.69, r: 120, start: 1.5708, end: -1.5708, ccw: true },
+            { type: 'line', x1: 1079, y1: 365.69, x2: 690.21, y2: 365.69 },
+            { type: 'arc', cx: 690.21, cy: 275.69, r: 90, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: 600.21, y1: 275.69, x2: 600.21, y2: 194.31 },
+            { type: 'arc', cx: 520.21, cy: 194.31, r: 80, start: 0, end: -1.5708, ccw: true },
+            { type: 'line', x1: 520.21, y1: 114.31, x2: 371, y2: 114.31 },
+            { type: 'arc', cx: 371, cy: 194.31, r: 80, start: -1.5708, end: -3.14159, ccw: true },
+            { type: 'line', x1: 291, y1: 194.31, x2: 291, y2: 475.69 },
+            { type: 'arc', cx: 421, cy: 475.69, r: 130, start: 3.14159, end: 1.5708, ccw: true }
         ];
         
-        this.startX = 500;
-        this.startY = 600;
+        this.startX = 657.56;
+        this.startY = 605.69;
         
         this.waypoints = this.generateWaypoints();
     }
@@ -1054,20 +1063,20 @@ class ThunderTrack extends SegmentedTrack {
         this.grassWidth = 80;
         
         this.segments = [
-            { type: 'line', x1: 170, y1: 570, x2: 825, y2: 570 },
-            { type: 'arc', cx: 825, cy: 480, r: 90, start: Math.PI/2, end: -Math.PI/2, ccw: true },
-            { type: 'line', x1: 825, y1: 390, x2: 730, y2: 390 },
-            { type: 'arc', cx: 730, cy: 270, r: 120, start: Math.PI/2, end: Math.PI, ccw: false },
-            { type: 'line', x1: 610, y1: 270, x2: 610, y2: 200 },
-            { type: 'arc', cx: 520, cy: 200, r: 90, start: 0, end: -Math.PI, ccw: true },
-            { type: 'line', x1: 430, y1: 200, x2: 430, y2: 320 },
-            { type: 'arc', cx: 350, cy: 320, r: 80, start: 0, end: Math.PI/2, ccw: false },
-            { type: 'line', x1: 350, y1: 400, x2: 170, y2: 400 },
-            { type: 'arc', cx: 170, cy: 485, r: 85, start: -Math.PI/2, end: -Math.PI * 1.5, ccw: true }
+            { type: 'line', x1: 387.8, y1: 593.25, x2: 1096.8, y2: 593.55 },
+            { type: 'arc', cx: 1096.8, cy: 496.35, r: 97.2, start: 1.5708, end: -1.5708, ccw: true },
+            { type: 'line', x1: 1096.8, y1: 399.15, x2: 963.87, y2: 409.71 },
+            { type: 'arc', cx: 963.87, cy: 280.11, r: 129.6, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: 834.27, y1: 280.11, x2: 867.57, y2: 223.65 },
+            { type: 'arc', cx: 770.37, cy: 223.65, r: 97.2, start: 0, end: -3.14159, ccw: true },
+            { type: 'line', x1: 673.17, y1: 223.65, x2: 691.96, y2: 332.08 },
+            { type: 'arc', cx: 605.56, cy: 332.08, r: 86.4, start: 0, end: 1.5708, ccw: false },
+            { type: 'line', x1: 605.56, y1: 418.48, x2: 387.8, y2: 409.65 },
+            { type: 'arc', cx: 387.8, cy: 501.45, r: 91.8, start: -1.5708, end: -4.71239, ccw: true }
         ];
         
-        this.startX = 500;
-        this.startY = 570;
+        this.startX = 704.4;
+        this.startY = 593.38;
         
         this.waypoints = this.generateWaypoints();
     }
@@ -1086,18 +1095,18 @@ class QuadratoTrack extends SegmentedTrack {
         const r = 100; // corner radius
         
         this.segments = [
-            { type: 'line', x1: L+r, y1: T, x2: R-r, y2: T },
-            { type: 'arc', cx: R-r, cy: T+r, r: r, start: -Math.PI/2, end: 0, ccw: false },
-            { type: 'line', x1: R, y1: T+r, x2: R, y2: B-r },
-            { type: 'arc', cx: R-r, cy: B-r, r: r, start: 0, end: Math.PI/2, ccw: false },
-            { type: 'line', x1: R-r, y1: B, x2: L+r, y2: B },
-            { type: 'arc', cx: L+r, cy: B-r, r: r, start: Math.PI/2, end: Math.PI, ccw: false },
-            { type: 'line', x1: L, y1: B-r, x2: L, y2: T+r },
-            { type: 'arc', cx: L+r, cy: T+r, r: r, start: Math.PI, end: -Math.PI/2, ccw: false }
+            { type: 'line', x1: 406, y1: 123.5, x2: 1084, y2: 123.5 },
+            { type: 'arc', cx: 1084, cy: 223.5, r: 100, start: -1.5708, end: 0, ccw: false },
+            { type: 'line', x1: 1184, y1: 223.5, x2: 1184, y2: 496.5 },
+            { type: 'arc', cx: 1084, cy: 496.5, r: 100, start: 0, end: 1.5708, ccw: false },
+            { type: 'line', x1: 1084, y1: 596.5, x2: 406, y2: 596.5 },
+            { type: 'arc', cx: 406, cy: 496.5, r: 100, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: 306, y1: 496.5, x2: 306, y2: 223.5 },
+            { type: 'arc', cx: 406, cy: 223.5, r: 100, start: 3.14159, end: -1.5708, ccw: false }
         ];
         
-        this.startX = 500;
-        this.startY = T;
+        this.startX = 672.4;
+        this.startY = 123.5;
         
         this.waypoints = this.generateWaypoints();
     }
@@ -1116,16 +1125,16 @@ class TriangleTrack extends SegmentedTrack {
         // enough for the full band, and the triangle is shifted 8px up so the
         // wider shape still sits inside the canvas.
         this.segments = [
-            { type: 'line', x1: 250.00, y1: 590.00, x2: 750.00, y2: 590.00 },
-            { type: 'arc', cx: 750.00, cy: 492.00, r: 98, start: 1.5708, end: -0.7289, ccw: true },
-            { type: 'line', x1: 823.10, y1: 426.73, x2: 573.10, y2: 146.73 },
-            { type: 'arc', cx: 500.00, cy: 212.00, r: 98, start: -0.7289, end: -2.4127, ccw: true },
-            { type: 'line', x1: 426.90, y1: 146.73, x2: 176.90, y2: 426.73 },
-            { type: 'arc', cx: 250.00, cy: 492.00, r: 98, start: -2.4127, end: 1.5708, ccw: true }
+            { type: 'arc', cx: 404, cy: 431.4, r: 98, start: 1.5708, end: -1.96739, ccw: false },
+            { type: 'line', x1: 366.14, y1: 341.01, x2: 707.14, y2: 198.21 },
+            { type: 'arc', cx: 745, cy: 288.6, r: 98, start: -1.96739, end: -1.1742, ccw: false },
+            { type: 'line', x1: 782.86, y1: 198.21, x2: 1123.86, y2: 341.01 },
+            { type: 'arc', cx: 1086, cy: 431.4, r: 98, start: -1.1742, end: 1.5708, ccw: false },
+            { type: 'line', x1: 1086, y1: 529.4, x2: 404, y2: 529.4 }
         ];
 
-        this.startX = 500;
-        this.startY = 590;
+        this.startX = 434.77;
+        this.startY = 312.27;
 
         this.waypoints = this.generateWaypoints();
     }
@@ -1144,24 +1153,24 @@ class CrownTrack extends SegmentedTrack {
         this.grassWidth = 68;   // the two legs of the esse are 148px apart
 
         this.segments = [
-            { type: 'arc', cx: 282.81, cy: 480.00, r: 90.00, start: 3.0585, end: 1.5708, ccw: true },
-            { type: 'line', x1: 282.81, y1: 570.00, x2: 765.03, y2: 570.00 },
-            { type: 'arc', cx: 765.03, cy: 495.00, r: 75.00, start: 1.5708, end: 0.3059, ccw: true },
-            { type: 'line', x1: 836.55, y1: 517.58, x2: 856.07, y2: 455.77 },
-            { type: 'arc', cx: 751.18, cy: 422.65, r: 110.00, start: 0.3059, end: -0.9453, ccw: true },
-            { type: 'line', x1: 815.58, y1: 333.48, x2: 757.19, y2: 291.30 },
-            { type: 'arc', cx: 710.35, cy: 356.16, r: 80.00, start: -0.9453, end: -2.3907, ccw: true },
-            { type: 'line', x1: 651.87, y1: 301.57, x2: 607.87, y2: 348.71 },
-            { type: 'arc', cx: 556.69, cy: 300.95, r: 70.00, start: 0.7509, end: 2.3239, ccw: false },
-            { type: 'line', x1: 508.82, y1: 352.02, x2: 433.62, y2: 281.52 },
-            { type: 'arc', cx: 382.32, cy: 336.23, r: 75.00, start: -0.8176, end: -1.9196, ccw: true },
-            { type: 'line', x1: 356.69, y1: 265.75, x2: 266.19, y2: 298.66 },
-            { type: 'arc', cx: 307.20, cy: 411.43, r: 120.00, start: -1.9196, end: 3.0585, ccw: true },
-            { type: 'line', x1: 187.62, y1: 421.40, x2: 193.12, y2: 487.47 }
+            { type: 'arc', cx: 412.79, cy: 462.26, r: 117, start: 3.04599, end: 1.5708, ccw: true },
+            { type: 'line', x1: 412.79, y1: 579.26, x2: 1065.81, y2: 579.26 },
+            { type: 'arc', cx: 1065.81, cy: 481.76, r: 97.5, start: 1.5708, end: 0.34854, ccw: true },
+            { type: 'line', x1: 1157.44, y1: 515.06, x2: 1197.4, y2: 405.1 },
+            { type: 'arc', cx: 1063, cy: 356.26, r: 143, start: 0.34854, end: -1.0103, ccw: true },
+            { type: 'line', x1: 1139.02, y1: 235.14, x2: 1040.02, y2: 173 },
+            { type: 'arc', cx: 984.73, cy: 261.09, r: 104, start: -1.0103, end: -2.32054, ccw: true },
+            { type: 'line', x1: 913.86, y1: 184.98, x2: 848.18, y2: 246.14 },
+            { type: 'arc', cx: 786.16, cy: 179.54, r: 91, start: 0.82105, end: 2.25446, ccw: false },
+            { type: 'line', x1: 728.68, y1: 250.09, x2: 621.37, y2: 162.65 },
+            { type: 'arc', cx: 559.78, cy: 238.24, r: 97.5, start: -0.88714, end: -1.87688, ccw: true },
+            { type: 'line', x1: 530.41, y1: 145.27, x2: 392.99, y2: 188.69 },
+            { type: 'arc', cx: 439.99, cy: 337.44, r: 156, start: -1.87688, end: 3.04599, ccw: true },
+            { type: 'line', x1: 284.71, y1: 352.33, x2: 296.32, y2: 473.43 }
         ];
 
-        this.startX = 500;
-        this.startY = 570;
+        this.startX = 714.23;
+        this.startY = 579.26;
 
         this.waypoints = this.generateWaypoints();
     }
@@ -1174,23 +1183,23 @@ class PettineTrack extends SegmentedTrack {
         this.grassWidth = 75; // reduced so curbs do not overwrite each other
         
         this.segments = [
-            { type: 'line', x1: 150, y1: 150, x2: 800, y2: 150 },
-            { type: 'arc', cx: 800, cy: 230, r: 80, start: -Math.PI/2, end: Math.PI/2, ccw: false },
-            { type: 'arc', cx: 800, cy: 390, r: 80, start: -Math.PI/2, end: -Math.PI, ccw: true },
-            { type: 'line', x1: 720, y1: 390, x2: 720, y2: 520 },
-            { type: 'arc', cx: 640, cy: 520, r: 80, start: 0, end: Math.PI, ccw: false },
-            { type: 'line', x1: 560, y1: 520, x2: 560, y2: 390 },
-            { type: 'arc', cx: 480, cy: 390, r: 80, start: 0, end: -Math.PI, ccw: true },
-            { type: 'line', x1: 400, y1: 390, x2: 400, y2: 520 },
-            { type: 'arc', cx: 320, cy: 520, r: 80, start: 0, end: Math.PI, ccw: false },
-            { type: 'line', x1: 240, y1: 520, x2: 240, y2: 390 },
-            { type: 'arc', cx: 160, cy: 390, r: 80, start: 0, end: -Math.PI/2, ccw: true },
-            { type: 'line', x1: 160, y1: 310, x2: 150, y2: 310 },
-            { type: 'arc', cx: 150, cy: 230, r: 80, start: Math.PI/2, end: Math.PI*1.5, ccw: false }
+            { type: 'line', x1: 371, y1: 108.96, x2: 1119, y2: 108.96 },
+            { type: 'arc', cx: 1119, cy: 188.96, r: 80, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'arc', cx: 1119, cy: 348.96, r: 80, start: -1.5708, end: -3.14159, ccw: true },
+            { type: 'line', x1: 1039, y1: 348.96, x2: 1039, y2: 531.04 },
+            { type: 'arc', cx: 959, cy: 531.04, r: 80, start: 0, end: 3.14159, ccw: false },
+            { type: 'line', x1: 879, y1: 531.04, x2: 879, y2: 368.8 },
+            { type: 'arc', cx: 799, cy: 368.8, r: 80, start: 0, end: -3.14159, ccw: true },
+            { type: 'line', x1: 719, y1: 368.8, x2: 719, y2: 531.04 },
+            { type: 'arc', cx: 639, cy: 531.04, r: 80, start: 0, end: 3.14159, ccw: false },
+            { type: 'line', x1: 559, y1: 531.04, x2: 559, y2: 348.96 },
+            { type: 'arc', cx: 479, cy: 348.96, r: 80, start: 0, end: -1.5708, ccw: true },
+            { type: 'line', x1: 479, y1: 268.96, x2: 371, y2: 268.96 },
+            { type: 'arc', cx: 371, cy: 188.96, r: 80, start: 1.5708, end: 4.71239, ccw: false }
         ];
         
-        this.startX = 500;
-        this.startY = 150;
+        this.startX = 703.74;
+        this.startY = 108.96;
         
         this.waypoints = this.generateWaypoints();
     }
