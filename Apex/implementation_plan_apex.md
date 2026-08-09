@@ -70,6 +70,14 @@ Il danno è **proporzionale all'impatto reale**, non al tempo di contatto.
 
 `kerbWidth` vale `clamp(trackWidth × 0.30, 14, 26)`. `ai.js` distingue i due casi (`onKerb` / `onGrass`) e reagisce di conseguenza, altrimenti tratterebbe un cordolo come un disastro e frenerebbe a sproposito.
 
+### 2.4ter Tempo di reazione
+
+Ogni vettura ne ha uno. Per un umano è l'istante del primo input dopo lo spegnimento dei semafori (`raceNow() - raceStartTime`, non `performance.now()`: lo stall guard sposta `raceStartTime` quando un frame va perso, e i due vanno letti sullo stesso orologio o una scheda in background inventa reazioni di secondi). Per l'IA è il ritardo che `AI_DRIVER_STYLES` tira alla partenza — Prost 0.45-0.90s, Verstappen 0.085-0.135 — quindi la colonna dice qualcosa anche sugli avversari.
+
+Era già misurato e non veniva mostrato da nessuna parte: `reactStr` esisteva nella tabella dei risultati ma non c'era la `<td>` corrispondente. Ora la colonna **React** c'è, il più rapido allo spegnimento è evidenziato, e una partenza anticipata — che si legge come una reazione prossima a zero, perché tale è stata — porta il segnale di penalità.
+
+Nota sul comportamento: dopo una falsa partenza la reazione viene ricronometrata dai semafori del **restart**. E se si resta sul gas, si riparte falsi all'infinito: i tasti non vengono azzerati dal reset della griglia, quindi l'unico modo di ripartire è alzare il piede.
+
 ### 2.5 Scia (slipstream)
 `car.draftStrength` è continuo in 0..1, prodotto di quattro attenuazioni (distanza, cono, allineamento delle prue, e la *velocità* di chi la genera: sotto 15 unità di avanzamento un'auto non lascia scia, la scia è piena da 45), invece del booleano di prima che dava +15% di colpo entrando nel cono e zero uscendone. La geometria non è più un **cono angolare** ma un **corridoio di scia**: semilarghezza `WAKE_HALF + WAKE_SPREAD * distanza` (11px + 0.085/px), cioè 14px a 40px di distanza e 27px a fondo scala, contro i 16px e 74px del vecchio cono a ±0.40 rad. Il cono, essendo angolare, a distanza diventava più largo della carreggiata: misurato su 64.000 traini, un terzo andava a un'auto oltre 20px fuori asse (l'auto è larga 14px, quindi zero sovrapposizione) e un sesto oltre 30px, cioè affiancata e non dietro. Col corridoio la mediana è 4px fuori asse e il caso peggiore 20px. Effetto sulla gara misurato su 12 gare complete: sorpassi 2.68 → 2.80 (invariato), auto in scia in un dato istante 6.63 → 3.52. In più il donatore deve essere **davanti sulla strada** (0 < gap d'arco < 250px, calcolato modulo giro su `lapS`): il solo cono geometrico veniva ingannato in curva — il 44% della scia misurata arrivava da un'auto in realtà dietro, inseguitore compreso. Effetto: `+18%` di spinta e `-22%` di resistenza, entrambi scalati dalla forza della scia.
 

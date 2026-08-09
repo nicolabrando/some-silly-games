@@ -1223,7 +1223,11 @@ function measureTrackStats(qTrack, raining) {
 
 const TRACK_LABELS = {
     oval: 'Oval', peanut: 'Peanut', f1: 'F1 Circuit', circomassimo: 'Circus Maximus',
-    circle: 'Circle', serpent: 'Serpent', quadrato: 'Square', triangle: 'Triangle',
+    // 'quadrato' is the internal key and stays put: it is written into saved
+    // championships and into every race log already on disk. Only the label
+    // changed - the circuit has been a rounded rectangle since the world went
+    // 16:9, and calling it Square was misleading.
+    circle: 'Circle', serpent: 'Serpent', quadrato: 'Rectangle', triangle: 'Triangle',
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown'
 };
 
@@ -3295,6 +3299,20 @@ function updateHUD() {
                 `${RaceLog.fmt(fastestCar.bestLapTime)}`);
         }
 
+        // Quickest away from the lights. Everyone has one: a human's is the
+        // moment of their first input after lights out, an AI's is the delay
+        // its driver style rolled (Prost 0.45-0.90s, Verstappen 0.085-0.135).
+        let quickestStart = null;
+        for (const c of cars) {
+            if (c.reactionTime && (!quickestStart || c.reactionTime < quickestStart.reactionTime)) {
+                quickestStart = c;
+            }
+        }
+        if (quickestStart) {
+            RaceLog.event('START', `${quickestStart.driverName || quickestStart.color} — ` +
+                `best reaction ${quickestStart.reactionTime.toFixed(3)}s`);
+        }
+
         // ---- Grand Chelem ------------------------------------------------
         // Pole, win, fastest lap and every single lap led. All four, one race.
         const winnerCar = sortedCars[0];
@@ -3412,7 +3430,11 @@ function updateHUD() {
             const dim = (isDNF || isLapped) ? ' style="opacity: 0.55;"' : '';
             const lapsStr = `${Math.min(c.lap, TOTAL_LAPS)}/${TOTAL_LAPS}`;
 
-            const reactStr = c.reactionTime ? `${c.reactionTime.toFixed(3)}s` : '-';
+            // Reaction at the lights. It was already measured for every car
+            // and simply never shown; a jump start reads as a near-zero here,
+            // which is exactly what it was.
+            const reactStr = c.reactionTime ? `${c.reactionTime.toFixed(3)}s` : '&mdash;';
+            const isQuickest = quickestStart === c && cars.length > 1;
             const isFastest = fastestCar === c;
             const bestLapStr = (c.bestLapTime !== null && c.bestLapTime !== undefined && c.bestLapTime < Infinity)
                 ? (formatTime(c.bestLapTime) + (isFastest ? ' &#9733;' : '')) : '-';
@@ -3427,6 +3449,7 @@ function updateHUD() {
                 <td${dim}>${timeStr}</td>
                 <td style="color: ${isFastest ? '#ce93d8' : '#4CAF50'}; font-weight: ${isFastest ? 'bold' : 'normal'};">${bestLapStr}</td>
                 <td>${gapStr}</td>
+                <td style="color: ${isQuickest ? '#4dd0e1' : '#cfd8dc'}; font-weight: ${isQuickest ? 'bold' : 'normal'};"${c.jumpStartPenalty ? ' title="jump start — penalty applied"' : (isQuickest ? ' title="quickest away from the lights"' : '')}>${reactStr}${c.jumpStartPenalty ? ' &#9888;' : ''}</td>
                 <td>${isChampionship ? (ptsEarned || 0) : '-'}</td>
                 <td class="pts-bonus"${bonusEarned > 0 ? ` title="${Math.max(0, (c.startGridPos || (index + 1)) - (index + 1))} places gained: P${c.startGridPos} to P${index + 1}"` : ''}>${isChampionship && bonusEarned > 0 ? '+' + bonusEarned : (isChampionship ? '&mdash;' : '-')}</td>
             `;
@@ -3814,7 +3837,11 @@ function gameLoop(timestamp) {
         for (const c of humanCars()) {
             const k = seatKeys(c);
             if (!c.inputRecorded && (k.up || k.down || k.left || k.right)) {
-                c.reactionTime = (performance.now() - raceStartTime) / 1000;
+                // raceNow(), not performance.now(): the stall guard shifts
+                // raceStartTime when a frame is lost, and the two have to be
+                // read off the same clock or a hidden tab invents a reaction
+                // time of several seconds.
+                c.reactionTime = (raceNow() - raceStartTime) / 1000;
                 c.inputRecorded = true;
             }
         }
