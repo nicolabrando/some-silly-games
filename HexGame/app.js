@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentPlayerIdx = 0; 
     let gameOver = false;
     let isThinking = false;
+    let aiToken = 0; // cambia a ogni nuova partita: annulla i calcoli IA in corso
     
     // UI Elements
     const startMenuView = document.getElementById('start-menu-view');
@@ -182,6 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function showMenu() {
+        aiToken++;
         exitContemplation();
         gameView.classList.add('view-hidden');
         startMenuView.classList.remove('view-hidden');
@@ -579,6 +581,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function startNewGame() {
+        aiToken++;
         globalTurnCounter = 1;
         exitContemplation();
         for (let p of activePlayers) {
@@ -600,7 +603,9 @@ document.addEventListener('DOMContentLoaded', () => {
         let p = activePlayers[currentPlayerIdx];
         if (p.type === 'ai') {
             isThinking = true;
-            setTimeout(() => makeAIMove(p), 50);
+            const token = aiToken;
+            // se nel frattempo si ricomincia o si torna al menu, la mossa in attesa decade
+            setTimeout(() => { if (token === aiToken) makeAIMove(p); }, 50);
         } else {
             isThinking = false;
         }
@@ -684,30 +689,49 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- AI LOGIC ---
+    // Budget di calcolo dei due livelli Monte Carlo (ms per mossa)
+    const MCTS_BUDGET = { 2: 50, 3: 900 };
+    // Fette di lavoro: il calcolo è spezzato per non bloccare l'interfaccia
+    const MCTS_CHUNK_MS = 30;
+    // Costante di esplorazione UCB1 (ricompense in [0,1])
+    const UCB_C = 1.0;
+
     function makeAIMove(playerObj) {
         if (gameOver) return;
 
         let emptyCells = cells.filter(c => c.player === 0);
-        if(emptyCells.length === 0) return;
+        if (emptyCells.length === 0) return;
 
-        let selectedCell = null;
+        const token = aiToken; // per annullare il calcolo se la partita cambia
 
-        if (playerObj.difficulty === 0) {
-            selectedCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
-        } 
-        else if (playerObj.difficulty === 1) {
-            selectedCell = getMediumMove(emptyCells, playerObj.id);
-        } 
-        else if (playerObj.difficulty === 2) {
-            selectedCell = getMCTSMove(emptyCells, playerObj.id, 150);
-        } 
-        else if (playerObj.difficulty === 3) {
-            selectedCell = getMCTSMove(emptyCells, playerObj.id, 600);
+        function commit(selectedCell) {
+            if (token !== aiToken || gameOver) return; // partita ricominciata nel frattempo
+            if (!selectedCell) selectedCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+            const element = svgBoard.querySelector(`polygon[data-id="${selectedCell.id}"]`);
+            isThinking = false;
+            executeMove(selectedCell, element, playerObj.id);
         }
 
-        const element = svgBoard.querySelector(`polygon[data-id="${selectedCell.id}"]`);
-        isThinking = false;
-        executeMove(selectedCell, element, playerObj.id);
+        if (playerObj.difficulty === 0) {
+            commit(getEasyMove(emptyCells, playerObj.id));
+        }
+        else if (playerObj.difficulty === 1) {
+            commit(getMediumMove(emptyCells, playerObj.id));
+        }
+        else {
+            const d = playerObj.difficulty === 3 ? 3 : 2;
+            runMonteCarlo(emptyCells, playerObj.id, MCTS_BUDGET[d], d === 3, token, commit);
+        }
+    }
+
+    // FACILE: punta alla propria strada più corta ma non ostacola mai l'avversario,
+    // e metà delle volte gioca a caso: perde, ma le sue mosse hanno una direzione.
+    function getEasyMove(emptyCells, myPlayerId) {
+        const rnd = () => emptyCells[Math.floor(Math.random() * emptyCells.length)];
+        if (Math.random() < 0.5) return rnd();
+        const info = getDijkstraInfo(myPlayerId);
+        if (info.path.length > 0) return info.path[Math.floor(Math.random() * info.path.length)];
+        return rnd();
     }
 
     function getDijkstraInfo(player) {
@@ -786,50 +810,64 @@ document.addEventListener('DOMContentLoaded', () => {
         return emptyCells[Math.floor(Math.random() * emptyCells.length)];
     }
 
-    function getMCTSMove(emptyCells, myPlayerId, maxTimeMs) {
-        const startTime = performance.now();
-        let scores = new Array(emptyCells.length).fill(0);
-        let plays = new Array(emptyCells.length).fill(0);
-        
-        let simBoard = new Uint8Array(cells.length);
-        
-        let loopCount = 0;
-        while(performance.now() - startTime < maxTimeMs) {
-            let moveIndex = Math.floor(Math.random() * emptyCells.length);
-            let cell = emptyCells[moveIndex];
-            
-            // Heuristic evaluation for MCTS using Dijkstra
-            cell.player = myPlayerId;
-            let dInfo = getDijkstraInfo(myPlayerId);
-            let distScore = (dInfo.dist === Infinity) ? -999 : -dInfo.dist;
-            cell.player = 0;
-            
-            let winner = simulateRandomGame(cell.id, simBoard, myPlayerId);
-            
-            let finalScore = 0;
-            if (winner === myPlayerId) finalScore = 1;
-            else if (winner === 0) finalScore = 0.5; 
-            
-            // Add a small heuristic bonus based on distance
-            finalScore += (distScore / 1000); // Very small so real wins always override
-            
-            scores[moveIndex] += finalScore;
-            plays[moveIndex]++;
-            loopCount++;
-        }
-        
-        let bestIndex = 0;
-        let bestScore = -1;
-        for (let i = 0; i < scores.length; i++) {
-            if (plays[i] > 0) {
-                let winRate = scores[i] / plays[i];
-                if (winRate > bestScore) {
-                    bestScore = winRate;
-                    bestIndex = i;
-                }
+    // Ricerca Monte Carlo, eseguita a fette per non congelare l'interfaccia.
+    // useUCB = false -> campionamento uniforme (Difficile)
+    // useUCB = true  -> allocazione UCB1: il budget si concentra sulle mosse promettenti (Impossibile)
+    function runMonteCarlo(emptyCells, myPlayerId, budgetMs, useUCB, token, done) {
+        const n = emptyCells.length;
+        const scores = new Float64Array(n);
+        const plays = new Uint32Array(n);
+        const simBoard = new Uint8Array(cells.length);
+        const deadline = performance.now() + budgetMs;
+        let total = 0;
+
+        function pickCandidate() {
+            if (total < n) return total;               // un giro di ricognizione su tutte
+            if (!useUCB) return Math.floor(Math.random() * n);
+            const logTotal = Math.log(total);
+            let best = 0, bestVal = -Infinity;
+            for (let i = 0; i < n; i++) {
+                const val = scores[i] / plays[i] + UCB_C * Math.sqrt(logTotal / plays[i]);
+                if (val > bestVal) { bestVal = val; best = i; }
             }
+            return best;
         }
-        return emptyCells[bestIndex];
+
+        function finish() {
+            // Con UCB il numero di visite è già un giudizio di qualità: si sceglie la mossa
+            // più esplorata (criterio "robust child"), a parità di visite la media migliore.
+            // Con campionamento uniforme le visite sono equivalenti fra loro e non dicono
+            // nulla: lì l'unico criterio valido è la percentuale di vittorie.
+            let best = 0, bestPlays = -1, bestRate = -1;
+            for (let i = 0; i < n; i++) {
+                if (plays[i] === 0) continue;
+                const rate = scores[i] / plays[i];
+                const better = useUCB
+                    ? (plays[i] > bestPlays || (plays[i] === bestPlays && rate > bestRate))
+                    : (rate > bestRate);
+                if (better) { best = i; bestPlays = plays[i]; bestRate = rate; }
+            }
+            done(emptyCells[best]);
+        }
+
+        function step() {
+            if (token !== aiToken || gameOver) return; // partita cambiata: calcolo annullato
+            const chunkEnd = Math.min(performance.now() + MCTS_CHUNK_MS, deadline);
+            do {
+                for (let k = 0; k < 64; k++) {
+                    const idx = pickCandidate();
+                    const winner = simulateRandomGame(emptyCells[idx].id, simBoard, myPlayerId);
+                    scores[idx] += (winner === myPlayerId) ? 1 : (winner === 0 ? 0.5 : 0);
+                    plays[idx]++;
+                    total++;
+                }
+            } while (performance.now() < chunkEnd);
+
+            if (performance.now() < deadline) setTimeout(step, 0);
+            else finish();
+        }
+
+        step();
     }
 
     function simulateRandomGame(firstMoveId, simBoard, myPlayerId) {
