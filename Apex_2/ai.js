@@ -290,23 +290,37 @@ class AI {
         const car = this.car;
 
         const scan = (from, count, directed) => {
-            let best = -1, bestD = Infinity, fall = -1, fallD = Infinity;
-            // On a circuit that crosses itself the nearest node can belong to
-            // the other road. When scanning the WHOLE lap - which only happens
-            // after a spin or a shunt - prefer a node the car is pointing
-            // along, or it can rejoin the wrong half of the eight and circle
-            // one lobe for the rest of the race.
-            const sp = Math.hypot(car.velocity.x, car.velocity.y);
-            const dx0 = sp > 25 ? car.velocity.x / sp : Math.cos(car.angle);
-            const dy0 = sp > 25 ? car.velocity.y / sp : Math.sin(car.angle);
+            let fall = -1, fallD = Infinity;
             for (let o = 0; o < count; o++) {
                 const i = (from + o + N * 4) % N;
                 const d = (car.x - nodes[i].cx) ** 2 + (car.y - nodes[i].cy) ** 2;
                 if (d < fallD) { fallD = d; fall = i; }
-                if (directed && nodes[i].tx * dx0 + nodes[i].ty * dy0 <= 0) continue;
-                if (d < bestD) { bestD = d; best = i; }
             }
-            return best >= 0 ? { idx: best, d2: bestD } : { idx: fall, d2: fallD };
+            if (!directed) return { idx: fall, d2: fallD };
+
+            // A whole-lap scan only happens after a spin or a shunt, and on a
+            // circuit that crosses itself the nearest node can belong to the
+            // other road. Direction settles it - but ONLY between nodes that
+            // are equally close in space and far apart along the lap, which is
+            // what a crossing is. Preferring an aligned node outright would
+            // change how every other circuit reads.
+            const sp = Math.hypot(car.velocity.x, car.velocity.y);
+            const dx0 = sp > 25 ? car.velocity.x / sp : Math.cos(car.angle);
+            const dy0 = sp > 25 ? car.velocity.y / sp : Math.sin(car.angle);
+            const near = Math.sqrt(fallD) + 8;
+            const apart = 72;
+            let best = fall, bAlign = nodes[fall].tx * dx0 + nodes[fall].ty * dy0;
+            for (let o = 0; o < count; o++) {
+                const i = (from + o + N * 4) % N;
+                if (i === fall) continue;
+                const d = Math.hypot(car.x - nodes[i].cx, car.y - nodes[i].cy);
+                if (d > near) continue;
+                if (Math.abs(nodes[i].s - nodes[fall].s) < apart) continue;
+                const al = nodes[i].tx * dx0 + nodes[i].ty * dy0;
+                if (al > bAlign + 0.25) { bAlign = al; best = i; }
+            }
+            return { idx: best,
+                     d2: (car.x - nodes[best].cx) ** 2 + (car.y - nodes[best].cy) ** 2 };
         };
 
         let res;

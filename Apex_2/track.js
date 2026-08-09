@@ -12,6 +12,33 @@ const TRACK_X0 = 210;
 // few enough that the per-frame containment test stays trivial.
 const PUDDLE_LOBES = 11;
 
+// Douglas-Peucker on a flat [x, y, x, y, ...] run. A wall is nearly all
+// smooth arc, so this is a large saving for no visible change.
+function simplifyRun(r, tol) {
+    const n = r.length / 2;
+    if (n < 3) return r;
+    const keep = new Uint8Array(n);
+    keep[0] = keep[n - 1] = 1;
+    const stack = [[0, n - 1]];
+    while (stack.length) {
+        const [a, b] = stack.pop();
+        if (b - a < 2) continue;
+        const ax = r[a * 2], ay = r[a * 2 + 1], bx = r[b * 2], by = r[b * 2 + 1];
+        const dx = bx - ax, dy = by - ay;
+        const len = Math.hypot(dx, dy) || 1;
+        let worst = -1, wi = -1;
+        for (let i = a + 1; i < b; i++) {
+            const px = r[i * 2], py = r[i * 2 + 1];
+            const d = Math.abs((px - ax) * dy - (py - ay) * dx) / len;
+            if (d > worst) { worst = d; wi = i; }
+        }
+        if (worst > tol) { keep[wi] = 1; stack.push([a, wi], [wi, b]); }
+    }
+    const out = [];
+    for (let i = 0; i < n; i++) if (keep[i]) out.push(r[i * 2], r[i * 2 + 1]);
+    return out;
+}
+
 // Is a lap position inside a window that may wrap past the start line?
 function inLapWindow(s, win, lapLen) {
     if (win.from <= win.to) return s >= win.from && s <= win.to;
@@ -264,6 +291,178 @@ class SegmentedTrack {
         ctx.restore();
     }
 
+    // =====================================================================
+    //  THE WALL YOU ACTUALLY HIT
+    //  checkBarrierCollision stops a car when the NEAREST centre line is more
+    //  than grassWidth - 12 away (12 being the car's collision radius). The
+    //  painted barrier, on the other hand, is a ring at grassWidth: on a wide
+    //  circuit the two are close enough that stopping reads as touching the
+    //  wall, but they are not the same line, and on a tight one they are
+    //  nowhere near each other.
+    //
+    //  Lombard made that plain. Its verge is 14px wider than its road, so
+    //  after the 12px of car there are TWO pixels of run-off: you stop at the
+    //  edge of the tarmac while the painted barrier is 14px away across a
+    //  green band - and where another part of the circuit passes close, that
+    //  painted ring is covered over by its grass and there is nothing to see
+    //  at all. A car stopped dead against nothing.
+    //
+    //  So the wall is drawn where the wall IS: the level set of "distance to
+    //  the nearest centre line = grassWidth - 12". Sampling both offsets of
+    //  the centre line and keeping only the points that no OTHER stretch of
+    //  road is closer to gives exactly the boundary of the drivable area,
+    //  including the places where two stretches run together and the boundary
+    //  is not a simple offset at all.
+    // =====================================================================
+    // How far from the centre line a car's CENTRE can get before the barrier
+    // stops it. grassWidth is where the barrier stands and 12 is the car's
+    // collision radius - but on a circuit whose verge is barely wider than its
+    // road that subtraction puts the wall INSIDE the asphalt. Pettine (road
+    // 70, verge 75) stopped cars 7px in from the edge of the tarmac, and Crown
+    // 2px in; both had done so since they were drawn. The floor keeps the
+    // barrier just outside the road, wherever it is.
+    wallRadius() {
+        return Math.max(this.grassWidth - 12, this.trackWidth + 2);
+    }
+
+    getWalls() {
+        if (this._walls) return this._walls;
+        const R = this.wallRadius();
+        const step = 2;
+        const runs = [];
+
+        // Dense samples of the centre line with its normal - plus, at every
+        // joint, a FAN of directions across the turn. Offsetting perpendicular
+        // to the road leaves a wedge unpainted on the outside of a corner,
+        // where the boundary is really a cap around the joint itself; without
+        // the fan, Thunder was left with a 15px hole in its wall.
+        const pts = [];
+        const fan = (x, y, a0, a1) => {
+            let d = a1 - a0;
+            while (d > Math.PI) d -= Math.PI * 2;
+            while (d < -Math.PI) d += Math.PI * 2;
+            const n = Math.ceil(Math.abs(d) * R / step);
+            for (let i = 1; i < n; i++) {
+                const a = a0 + d * i / n;
+                pts.push({ x: x, y: y, nx: Math.cos(a), ny: Math.sin(a) });
+            }
+        };
+        const normalAt = (g, which) => {
+            if (g.type === 'line') {
+                const dx = g.x2 - g.x1, dy = g.y2 - g.y1, L = Math.hypot(dx, dy);
+                return { nx: -dy / L, ny: dx / L, x: which === 'end' ? g.x2 : g.x1,
+                         y: which === 'end' ? g.y2 : g.y1 };
+            }
+            const a = which === 'end' ? g.end : g.start;
+            return { nx: Math.cos(a), ny: Math.sin(a),
+                     x: g.cx + g.r * Math.cos(a), y: g.cy + g.r * Math.sin(a) };
+        };
+
+        for (const g of this.segments) {
+            if (g.type === 'line') {
+                const dx = g.x2 - g.x1, dy = g.y2 - g.y1;
+                const L = Math.hypot(dx, dy), m = Math.max(2, Math.ceil(L / step));
+                for (let i = 0; i < m; i++) {
+                    pts.push({ x: g.x1 + dx * i / m, y: g.y1 + dy * i / m,
+                               nx: -dy / L, ny: dx / L });
+                }
+            } else {
+                const sweep = this._arcSweep(g);
+                const L = Math.abs(sweep) * g.r, m = Math.max(3, Math.ceil(L / step));
+                for (let i = 0; i < m; i++) {
+                    const a = g.start + sweep * i / m;
+                    pts.push({ x: g.cx + g.r * Math.cos(a), y: g.cy + g.r * Math.sin(a),
+                               nx: Math.cos(a), ny: Math.sin(a) });
+                }
+            }
+        }
+
+        // fill the wedges at the joints
+        for (let i = 0; i < this.segments.length; i++) {
+            const a = normalAt(this.segments[i], 'end');
+            const b = normalAt(this.segments[(i + 1) % this.segments.length], 'start');
+            fan(a.x, a.y, Math.atan2(a.ny, a.nx), Math.atan2(b.ny, b.nx));
+        }
+
+        // And a full circle around every segment END. getClosestPoint falls
+        // back to an arc's endpoints for anything outside its sweep, so the
+        // boundary can wrap right around a joint by more than the exterior
+        // angle - and where two stretches of road run close, it does. Walking
+        // the whole circle and keeping only what survives the boundary test
+        // catches those without having to reason about which case is which.
+        // Thunder had an 18px hole in its wall until this went in.
+        const ends = [];
+        for (const g of this.segments) {
+            if (g.type === 'line') ends.push({ x: g.x2, y: g.y2 });
+            else ends.push({ x: g.cx + g.r * Math.cos(g.end),
+                             y: g.cy + g.r * Math.sin(g.end) });
+        }
+        const ring = Math.max(24, Math.ceil(2 * Math.PI * R / step));
+        for (const e of ends) {
+            for (let i = 0; i < ring; i++) {
+                const a = (2 * Math.PI * i) / ring;
+                pts.push({ x: e.x, y: e.y, nx: Math.cos(a), ny: Math.sin(a), ring: true });
+            }
+        }
+
+        for (const side of [-1, 1]) {
+            let cur = [];
+            const flush = () => { if (cur.length >= 4) runs.push(cur); cur = []; };
+            for (let i = 0; i <= pts.length; i++) {
+                const p = pts[i % pts.length];
+                // the rings are walked once, not once per side
+                if (p.ring && side < 0) { flush(); continue; }
+                const wx = p.x + p.nx * side * R, wy = p.y + p.ny * side * R;
+                // Is this point really on the boundary? It is exactly R from
+                // the centre line it came from; if anything else is closer,
+                // the car can still drive here and there is no wall.
+                if (this.getClosestPoint(wx, wy).dist < R - 0.75) { flush(); continue; }
+                // A jump means the offset has come back somewhere else - round
+                // the far side of a hairpin, most often. Joining the two would
+                // draw a wall straight across the road, which is worse than
+                // drawing none: break the run instead.
+                if (cur.length >= 2) {
+                    const px = cur[cur.length - 2], py = cur[cur.length - 1];
+                    if (Math.hypot(wx - px, wy - py) > step * 4) flush();
+                }
+                cur.push(wx, wy);
+            }
+            flush();
+        }
+        // Thin them out. The samples are 2px apart, which is what it takes to
+        // FIND the boundary, but drawing every one of them means about 7000
+        // path operations per frame on a circuit like Lombard - enough to
+        // matter, and enough to exhaust a recording context in the tests.
+        // Douglas-Peucker at half a pixel keeps the shape and throws away
+        // nine tenths of the points.
+        this._walls = runs.map(r => simplifyRun(r, 0.5));
+        return this._walls;
+    }
+
+    drawWalls(ctx) {
+        const runs = this.getWalls();
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        for (const pass of [
+            { w: 7, c: 'rgba(0, 0, 0, 0.45)', dash: null, off: 0 },   // shadow at its foot
+            { w: 5, c: '#f2f2f2', dash: null, off: 0 },                // the wall
+            { w: 5, c: '#d32f2f', dash: [16, 16], off: 0 }             // and its markings
+        ]) {
+            ctx.lineWidth = pass.w;
+            ctx.strokeStyle = pass.c;
+            if (pass.dash) ctx.setLineDash(pass.dash); else ctx.setLineDash([]);
+            for (const r of runs) {
+                ctx.beginPath();
+                ctx.moveTo(r[0], r[1]);
+                for (let i = 2; i < r.length; i += 2) ctx.lineTo(r[i], r[i + 1]);
+                ctx.stroke();
+            }
+        }
+        ctx.setLineDash([]);
+        ctx.restore();
+    }
+
     // Width of the kerb band lining the inside of the corners.
     get kerbWidth() {
         return Math.min(26, Math.max(14, this.trackWidth * 0.30));
@@ -298,8 +497,9 @@ class SegmentedTrack {
         const distData = this.getClosestPoint(car.x, car.y);
         const currentRadius = distData.dist;
         
-        // Boundaries (using 12 as car collision radius)
-        const maxAllowed = this.grassWidth - 12;
+        // Boundaries (using 12 as car collision radius). One definition, shared
+        // with the wall that gets drawn - see wallRadius().
+        const maxAllowed = this.wallRadius();
         
         if (currentRadius > maxAllowed) {
             // Push car back inside the allowed bounds
@@ -329,7 +529,31 @@ class SegmentedTrack {
                 const free = 60 + (car.isPlayer && typeof PLAYER_FREE_IMPACT !== 'undefined'
                     ? PLAYER_FREE_IMPACT : 0);
                 if (intoWall > free) {
-                    car.takeDamage(260 * Math.pow((intoWall - free) / 100, 2));
+                    // ONE impact may not finish a healthy car.
+                    //
+                    // The curve above was set on circuits where a wall can only
+                    // ever be grazed - measured, the barrier is 88 to 89
+                    // degrees off your nose on all of the old ones, so a "square
+                    // hit" was unreachable. Two of the new circuits double back
+                    // on themselves: on Lombard, inside a hook, and on
+                    // Crossover, in the wedges beside the crossing, the wall
+                    // stands 0 to 2 degrees off your nose. There a single touch
+                    // at 260px/s costs 346hp of a 255hp car - qualifying over,
+                    // one mistake, no warning. It ended a session in a log
+                    // Nicola sent.
+                    //
+                    // So a heavy shunt still all but ruins the car, and a
+                    // second one does finish it, but the first one leaves you
+                    // something to limp home with.
+                    const raw = 260 * Math.pow((intoWall - free) / 100, 2);
+                    // The cap is on what the car ACTUALLY loses, so it means
+                    // the same thing for the player - whose damage is scaled
+                    // down in takeDamage - as for everybody else: at most 62%
+                    // of a full car, from any one impact.
+                    const scale = (car.isPlayer && typeof PLAYER_DAMAGE_SCALE !== 'undefined')
+                        ? PLAYER_DAMAGE_SCALE : 1;
+                    const cap = (car.maxHealth * 0.62) / scale;
+                    car.takeDamage(Math.min(raw, cap));
                 }
 
                 // Tangent projection for sliding effect (non-sticky wall)
@@ -952,6 +1176,10 @@ class SegmentedTrack {
         ctx.stroke();
 
         this.drawStartLine(ctx);
+        // The barrier, drawn last and drawn where it really is - see
+        // getWalls(). Anywhere a car can be stopped, there is now a wall on
+        // the screen at that exact spot.
+        this.drawWalls(ctx);
         // On top of the asphalt, under the cars.
         this.drawPuddles(ctx);
     }
@@ -1479,38 +1707,56 @@ class CrossoverTrack extends SegmentedTrack {
     }
 }
 
-// LOMBARDY. The Camunian rose off the regional flag, driven rather than flown.
+// LOMBARD. The Camunian rose off the Lombard flag - with three arms instead
+// of the flag's four, because four is undriveable.
 //
-// The symbol is a gift to this engine: its outline is made ENTIRELY of
-// circular arcs - eight of them, a tight reflex hook alternating with a long
-// sweeping lobe, in four-fold rotational symmetry - which is exactly the shape
-// of data track.js wants. The flag's own path was converted from SVG's
-// endpoint arc form into the centre form used here (lombardy.js); the joints
-// close to 0.0000px, so this is the shape itself and not an impression of it.
+// The four-armed original was built first, straight from the flag's own SVG
+// path: eight arcs, a reflex hook alternating with a long lobe, joints closing
+// to 0.0000px. It is the shape, exactly. It is also a corridor: four arms 90
+// degrees apart in a square box leave so little between them that the road can
+// only be 32 wide, and at that width nobody can race.
 //
-// It is the narrowest circuit on the calendar, and that is not a style choice.
-// The four hooks double back on themselves, and the two passes of a hook come
-// within 91px of each other; a barrier needs 2 x grassWidth + 10 between two
-// stretches of road, so the road can be 32 and no wider. Anything more and the
-// walls inside the hooks would pass through one another and not be drawn at
-// all. Widening the hooks was tried first and makes it worse, not better.
-class LombardyTrack extends SegmentedTrack {
+// So the rose is rebuilt PARAMETRICALLY from the flag's proportions rather
+// than redrawn, and given three arms:
+//
+//   * N lobes on a ring of radius A, one every 360/N degrees;
+//   * N hooks on a ring of radius B, halfway between them;
+//   * every junction an EXTERNAL tangency between a lobe circle and a hook
+//     circle - that is what reverses the curvature and makes a hook a hook, so
+//     the lobes all run one way round and the hooks the other, and every joint
+//     is smooth by construction.
+//
+// Tangency fixes the size: A^2 + B^2 - 2AB cos(pi/N) = (Rlobe + Rhook)^2.
+// Checked against the flag itself - at N=4 with the flag's ratios this
+// reproduces it arc for arc, lobes 281 degrees and hooks -191.
+//
+// At N=3 the centres are 120 degrees apart instead of 90, too far for the
+// flag's own radii to reach: the equation has no root, and the circles have to
+// grow. Fewer, bigger arms - which is exactly why there is room for a road.
+// The last free choice is how deep the hooks curl, and it is a straight trade
+// against width, measured rather than guessed (lombard.js sweep):
+//
+//      hook sweep 187 deg -> no road fits at all
+//                 167     -> 34
+//                 154     -> 46
+//                 148     -> 52   <= chosen
+//
+// so this is the widest road the rose can carry while still being a rose.
+class LombardTrack extends SegmentedTrack {
     constructor() {
         super();
-        this.trackWidth = 32;
-        this.grassWidth = 40;
+        this.trackWidth = 52;
+        this.grassWidth = 66;
         this.segments = [
-            { type: 'arc', cx: 879.43, cy: 305.76, r: 56.78, start: -1.8791573000000001, end: -5.2025423, ccw: true },
-            { type: 'arc', cx: 954.24, cy: 448.95, r: 104.77, start: -2.0475522, end: 2.8686671, ccw: false },
-            { type: 'arc', cx: 799.24, cy: 494.43, r: 56.78, start: -0.3083609, end: -3.6317459000000003, ccw: true },
-            { type: 'arc', cx: 656.05, cy: 569.24, r: 104.77, start: -0.47675589999999995, end: 4.4394634, ccw: false },
-            { type: 'arc', cx: 610.57, cy: 414.24, r: 56.78, start: 1.2624354, end: -2.0609496, ccw: true },
-            { type: 'arc', cx: 535.76, cy: 271.05, r: 104.77, start: 1.0940404, end: 6.0102598, ccw: false },
-            { type: 'arc', cx: 690.76, cy: 225.57, r: 56.78, start: 2.8332317, end: -0.4901533, ccw: true },
-            { type: 'arc', cx: 833.95, cy: 150.76, r: 104.77, start: 2.6648368, end: 7.5810561, ccw: false }
+            { type: 'arc', cx: 890.19, cy: 360, r: 120.35, start: -2.336959, end: 2.336959, ccw: false },
+            { type: 'arc', cx: 769.2, cy: 485.74, r: 54.16, start: -0.8046337, end: 2.8990288, ccw: true },
+            { type: 'arc', cx: 599.81, cy: 527.65, r: 120.35, start: -0.2425639, end: -1.8518312, ccw: false },
+            { type: 'arc', cx: 551.41, cy: 360, r: 54.16, start: 1.2897614, end: -1.2897614, ccw: true },
+            { type: 'arc', cx: 599.81, cy: 192.35, r: 120.35, start: 1.8518312, end: 0.2425639, ccw: false },
+            { type: 'arc', cx: 769.2, cy: 234.26, r: 54.16, start: -2.8990288, end: 0.8046337, ccw: true }
         ];
-        this.startX = 831.05;
-        this.startY = 46.03;
+        this.startX = 885.75;
+        this.startY = 239.74;
 
         this.waypoints = this.generateWaypoints();
     }

@@ -123,10 +123,29 @@ function seatChassis(index) {
         const c = championshipState.chassis[index === 2 ? 2 : 1];
         if (c) return c;
     }
-    const menu = document.getElementById('chassis-select');
-    const fromMenu = menu && menu.value;
-    if (index === 2) return playerChassis2 || fromMenu || CHASSIS_DEFAULT;
-    return playerChassis || fromMenu || CHASSIS_DEFAULT;
+    return (index === 2 ? playerChassis2 : playerChassis) || CHASSIS_DEFAULT;
+}
+
+// Outside a championship the car is chosen once per weekend, on the same
+// screen. `weekendChassisAsked` is cleared whenever the menu comes back up, so
+// a new weekend asks again and qualifying-then-race does not.
+let weekendChassisAsked = false;
+
+function chooseChassisForWeekend(done) {
+    if (weekendChassisAsked || !humanSeats().length) { done(); return; }
+    const seats = humanSeats();
+    const ask = (n) => {
+        if (n >= seats.length) { weekendChassisAsked = true; done(); return; }
+        const idx = seats[n].playerIndex || 1;
+        showChassisChoice(
+            seats.length > 1 ? `Player ${idx} — pick your car` : 'Pick your car',
+            'For this session and the race that follows it.',
+            (pick) => {
+                if (idx === 2) playerChassis2 = pick; else playerChassis = pick;
+                ask(n + 1);
+            });
+    };
+    ask(0);
 }
 
 // --- Places-gained bonus -------------------------------------------------
@@ -424,13 +443,19 @@ startBtn.addEventListener('click', () => {
     pendingGrid = null;
     pendingWeather = null;
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
-    if (qualifyingEnabled()) {
-        chooseTyres('Qualifying tyres', 'One flying lap is all that matters here.',
-            QUALI_LAPS - 1, () => startQualifying(null));
-    } else {
-        chooseTyres('Race tyres', 'This set has to last the whole race.',
-            laps, () => startGame());
-    }
+    // The car is chosen on the same screen a season uses, and asked once for
+    // the whole weekend - not again between qualifying and the race. There
+    // used to be a dropdown in the menu as well, which meant two controls for
+    // one decision.
+    chooseChassisForWeekend(() => {
+        if (qualifyingEnabled()) {
+            chooseTyres('Qualifying tyres', 'One flying lap is all that matters here.',
+                QUALI_LAPS - 1, () => startQualifying(null));
+        } else {
+            chooseTyres('Race tyres', 'This set has to last the whole race.',
+                laps, () => startGame());
+        }
+    });
 });
 
 champBtn.addEventListener('click', () => {
@@ -444,7 +469,7 @@ champBtn.addEventListener('click', () => {
 practiceBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'practice';
-    startGame();
+    chooseChassisForWeekend(() => startGame());
 });
 
 logBtn.addEventListener('click', () => {
@@ -538,6 +563,7 @@ qualiMenuBtn.addEventListener('click', () => {
     pendingGrid = null;
     pendingWeather = null;
     isChampionship = false;
+    weekendChassisAsked = false;   // a new weekend, a new choice of car
     menu.style.display = 'block';
 });
 
@@ -548,6 +574,7 @@ restartBtn.addEventListener('click', () => {
     skipMode = false;
     skipPlayer = null;
     skipPlayers = [];
+    weekendChassisAsked = false;   // a new weekend, a new choice of car
     menu.style.display = 'block';
 });
 
@@ -561,6 +588,7 @@ nextRoundBtn.addEventListener('click', () => {
 
 champRestartBtn.addEventListener('click', () => {
     champFinalScreen.style.display = 'none';
+    weekendChassisAsked = false;   // a new weekend, a new choice of car
     menu.style.display = 'block';
 });
 
@@ -575,6 +603,7 @@ quitBtn.addEventListener('click', () => {
     stopSessionBtn.style.display = 'none';
     stopSessionBtn.innerText = 'Stop Session';
     if (isMobile) mobileControls.style.display = 'none';
+    weekendChassisAsked = false;   // a new weekend, a new choice of car
     menu.style.display = 'block';
     if (typeof stopAudio === 'function') stopAudio();
     isChampionship = false;
@@ -748,7 +777,7 @@ function makeTrack(trackType) {
         case 'kettle':       return new KettleTrack();
         case 'harbour':      return new HarbourTrack();
         case 'crossover':    return new CrossoverTrack();
-        case 'lombardy':     return new LombardyTrack();
+        case 'lombard':      return new LombardTrack();
         default:             return new OvalTrack();
     }
 }
@@ -1343,7 +1372,7 @@ const TRACK_LABELS = {
     // 16:9, and calling it Square was misleading.
     circle: 'Circle', serpent: 'Serpent', quadrato: 'Rectangle', triangle: 'Triangle',
     boomerang: 'Boomerang', zipper: 'Zipper', kettle: 'Kettle',
-    harbour: 'Harbour', crossover: 'Crossover', lombardy: 'Lombardy',
+    harbour: 'Harbour', crossover: 'Crossover', lombard: 'Lombard',
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown'
 };
 
@@ -4155,21 +4184,45 @@ if (typeof setTimeout === 'function') setTimeout(layoutStage, 0);
 // How many rounds the season runs. Ten by default, which is what it always
 // was; the field is clamped rather than trusted, because a browser will hand
 // back whatever the user typed - including nothing at all.
+// Every circuit the championship can draw from. One list, and everything
+// else - the dropdown, the clamp, the calendar - reads it, so adding a
+// circuit to the game adds it to the season without touching anything else.
+const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent',
+                     'quadrato', 'triangle', 'pettine', 'thunder', 'crown',
+                     'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'lombard'];
+const SEASON_DEFAULT = 10;
+
 function seasonRounds() {
     const el = document.getElementById('rounds-select');
     const n = parseInt(el && el.value, 10);
-    if (!isFinite(n)) return 10;
-    return Math.max(1, Math.min(40, n));
+    if (!isFinite(n)) return Math.min(SEASON_DEFAULT, SEASON_POOL.length);
+    return Math.max(1, Math.min(SEASON_POOL.length, n));
 }
 
-// The calendar: `rounds` circuits drawn at random from the sixteen. Drawn
-// WITHOUT replacement while there are unused circuits left, so a ten-round
-// season never visits the same place twice; past sixteen the bag is refilled
-// and shuffled again, which is the only way to run a longer season at all.
+// The dropdown is built from the pool rather than written out in the HTML:
+// the longest season on offer is then exactly the number of circuits that
+// exist, and it cannot drift out of step when one is added.
+function populateSeasonLengths() {
+    const el = document.getElementById('rounds-select');
+    if (!el) return;
+    const want = Math.min(SEASON_DEFAULT, SEASON_POOL.length);
+    let html = '';
+    for (let i = 1; i <= SEASON_POOL.length; i++) {
+        html += '<option value="' + i + '"' + (i === want ? ' selected' : '') + '>' +
+                i + (i === 1 ? ' round' : ' rounds') + '</option>';
+    }
+    el.innerHTML = html;
+    el.value = String(want);
+}
+populateSeasonLengths();
+
+// The calendar: `rounds` circuits drawn at random from the pool, WITHOUT
+// replacement, so a season never visits the same place twice. The dropdown
+// cannot ask for more rounds than there are circuits; the refill below is
+// there only so that a longer season asked for in code still returns
+// something sensible rather than a short list.
 function seasonCalendar(rounds) {
-    const pool = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent',
-                  'quadrato', 'triangle', 'pettine', 'thunder', 'crown',
-                  'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'lombardy'];
+    const pool = SEASON_POOL;
     const shuffled = () => {
         const a = pool.slice();
         for (let i = a.length - 1; i > 0; i--) {

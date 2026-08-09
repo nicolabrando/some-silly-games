@@ -635,15 +635,33 @@ class Car {
         const dirY = Math.hypot(this.velocity.x, this.velocity.y) > 25
             ? this.velocity.y / Math.hypot(this.velocity.x, this.velocity.y)
             : Math.sin(this.angle);
+        // Take the nearest node - and only let the direction of travel overrule
+        // that when there is a genuine ambiguity: another node just as close in
+        // SPACE but far away along the LAP. That is exactly what a crossing is,
+        // and nothing else on any circuit looks like it.
+        //
+        // The first version of this preferred an aligned node outright, which
+        // quietly changed every circuit: ten cars parked on the same spot read
+        // ten different distances (151px apart) because they were pointing
+        // different ways, and the slipstream, which is keyed off the same
+        // number, started handing out tows to cars 22px off line.
         const globalScan = () => {
-            let bi = -1, bdd = Infinity, fi = 0, fd = Infinity;
+            let fi = 0, fd = Infinity;
             for (let i = 0; i < N; i++) {
                 const d = d2(i);
                 if (d < fd) { fd = d; fi = i; }
-                if (nodes[i].tx * dirX + nodes[i].ty * dirY <= 0) continue;
-                if (d < bdd) { bdd = d; bi = i; }
             }
-            return bi >= 0 ? { i: bi, d: bdd } : { i: fi, d: fd };
+            const near = Math.sqrt(fd) + 8;
+            const apart = (this.width || 24) * 3;
+            let bi = fi, bAlign = nodes[fi].tx * dirX + nodes[fi].ty * dirY;
+            for (let i = 0; i < N; i++) {
+                if (i === fi) continue;
+                if (Math.sqrt(d2(i)) > near) continue;
+                if (Math.abs(nodes[i].s - nodes[fi].s) < apart) continue;   // same stretch
+                const al = nodes[i].tx * dirX + nodes[i].ty * dirY;
+                if (al > bAlign + 0.25) { bAlign = al; bi = i; }
+            }
+            return { i: bi, d: d2(bi) };
         };
 
         let best = 0;

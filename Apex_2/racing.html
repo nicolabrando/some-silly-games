@@ -96,7 +96,7 @@
                                 <option value="kettle">Kettle</option>
                                 <option value="harbour">Harbour</option>
                                 <option value="crossover">Crossover &mdash; bridge</option>
-                                <option value="lombardy">Lombardy</option>
+                                <option value="lombard">Lombard</option>
                             </select>
                         </div>
                         <div class="menu-row">
@@ -105,8 +105,12 @@
                                 <input type="number" id="laps-select" min="1" max="100" value="5">
                             </div>
                             <div class="menu-group">
-                                <label>Season Length<br><span class="tag">championship</span></label>
-                                <input type="number" id="rounds-select" min="1" max="40" value="10">
+                                <label>Season Length</label>
+                                <!-- filled by main.js from the circuit list, so the
+                                     longest season it offers is always exactly the
+                                     number of circuits there are -->
+                                <select id="rounds-select"></select>
+                                <span class="tag tag-under">championship</span>
                             </div>
                             <div class="menu-group">
                                 <label>Opponents</label>
@@ -123,14 +127,6 @@
                                     <option value="10">10</option>
                                 </select>
                             </div>
-                        </div>
-                        <div class="menu-group">
-                            <label>Car <span class="tag">single race, practice &amp; qualifying</span></label>
-                            <select id="chassis-select">
-                                <option value="aero">Aero &mdash; downforce, slow on the straight</option>
-                                <option value="bolt">Bolt &mdash; top speed, poor turn-in</option>
-                                <option value="ridge" selected>Ridge &mdash; understeers, kind on tyres, good in the wet</option>
-                            </select>
                         </div>
                         <div class="menu-group">
                             <label>AI Difficulty</label>
@@ -154,8 +150,9 @@
                             says how many rounds &mdash; and rolls its own weather, so Track
                             and Force Wet only shape a single race or a practice run.
                             Laps, opponents and difficulty apply everywhere. In a
-                            championship the car is chosen once, on the first
-                            screen of the season, and cannot be changed after.
+                            The car is chosen on its own screen when a session
+                            starts &mdash; once for a whole season in the
+                            championship, once per weekend otherwise.
                         </div>
                         <div class="menu-hint">
                             You qualify before every race. Tick Reverse Grid and the

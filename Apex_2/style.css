@@ -1267,3 +1267,9 @@ button.chassis-opt:hover {
     color: #fff;
     letter-spacing: 0;
 }
+
+/* a tag sitting UNDER its control rather than beside its label */
+.tag-under {
+    display: inline-block;
+    margin: 5px 0 0;
+}

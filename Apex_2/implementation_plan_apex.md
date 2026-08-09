@@ -130,6 +130,35 @@ Perché serviva toccare la fisica: acceleratore e freno erano booleani. Ora `inp
 
 Dettagli decisi guardando il pollice, non lo schermo: tutta la striscia è il comando (dove appoggi è dove va la leva), c'è una zona morta del 7% attorno al centro, e **al rilascio torna in folle** — una leva che restasse dov'è significherebbe entrare in curva a tavoletta perché hai tolto il pollice per sterzare. In più, su telefono i dati del pilota si spostano in **cima** alla colonna e la torre va sotto, così l'angolo in basso a sinistra — dove stanno i pulsanti dello sterzo — è strada e non la cosa che stai cercando di leggere.
 
+### 2.4sexies Il muro che si vede è il muro che c'è (Apex 2)
+
+Il muro era dipinto e calcolato in due posti diversi. `checkBarrierCollision()` ferma una vettura quando l'asse stradale **più vicino** dista più di `grassWidth − 12` (12 è il raggio di collisione dell'auto); la barriera invece era dipinta come un anello a `grassWidth`. Su un circuito largo le due cose si leggono come una sola. Su Lombard no: la sua fascia è più larga della strada di 14px, quindi dopo i 12px dell'auto restano **due pixel** di via di fuga — ti fermi sul bordo dell'asfalto mentre la barriera dipinta è 14px più in là, dall'altra parte di una striscia verde. E dove un altro tratto passa vicino, quell'anello è coperto dalla sua erba e non c'è proprio nulla da vedere: auto ferma contro il niente.
+
+Due correzioni, entrambe emerse dalla misura.
+
+**1. Il muro non può stare dentro l'asfalto.** `wallRadius() = max(grassWidth − 12, trackWidth + 2)`, usata sia dalla fisica sia dal disegno. Su **Pettine** (strada 70, fascia 75) le vetture venivano fermate **7px dentro** il tarmac, e su **Crown** 2px: da sempre, da quando sono stati disegnati. Ora c'è un pavimento.
+
+**2. Il muro viene disegnato dov'è.** `getWalls()` calcola l'insieme di livello «distanza dall'asse più vicino = `wallRadius()`»: campiona entrambi i lati dell'asse ogni 2px e tiene solo i punti a cui **nessun altro tratto** è più vicino — che è esattamente il bordo della zona percorribile, anche dove due tratti si accostano e il bordo non è più un semplice parallelo. Il risultato viene disegnato **dopo l'asfalto**, quindi non può essere coperto.
+
+Due casi che non si vedevano a occhio e che il test ha trovato:
+
+- ai **giunti** l'offset perpendicolare lascia un cuneo scoperto sull'esterno della curva: serve un ventaglio di direzioni attorno al vertice (Thunder aveva un buco di 15px);
+- `getClosestPoint` ripiega sugli **estremi** di un arco per i punti fuori dal suo settore, quindi il confine può girare attorno a un estremo più di quanto giri il vertice: si percorre un cerchio intero attorno a ogni estremo e si tiene ciò che supera il test (altri 18px di buco su Thunder).
+
+Il test non ricalcola la stessa formula: passa una **griglia** sull'arena, tiene i punti che stanno sul confine (`|dist − wallRadius| ≤ 0.9`) e chiede quanto dista il muro disegnato più vicino. Su tutti e 17 i circuiti il peggior scarto è **2.1px**, e nessun muro viene disegnato dove si può guidare. *La prima versione del test prendeva i punti di confine dalle normali della traiettoria ideale, che sono **lisciate**: pochi gradi di differenza a 72px di offset fanno dieci pixel, e segnalava buchi nel muro che erano buchi nella misura.*
+
+### 2.4septies Un urto non chiude la sessione
+
+Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.
+
+La curva del danno contro le barriere — `260 · ((v·n − 88)/100)²` — era stata tarata su circuiti dove il muro si può **solo sfiorare**. Misurato: sugli undici originali la barriera sta a **88-89° dal muso**, cioè di striscio. Due dei nuovi tornano su se stessi — dentro un uncino di Lombard e nei cunei accanto all'incrocio di Crossover — e lì il muro sta a **0-2° dal muso**. Un tocco a 260 px/s costa 346 HP su 255: distruzione istantanea.
+
+Ora un singolo impatto non può togliere più del **62% della vita**, misurato su ciò che l'auto perde davvero (quindi vale lo stesso per il giocatore, il cui danno è già scalato in `takeDamage`). Uno scontro pesante rovina comunque la gara — resta il 38% — e il secondo la chiude. Sfiorare il muro continua a costare zero.
+
+### 2.4octies La scelta del telaio, in un posto solo
+
+C'erano due controlli per una sola decisione: la tendina nel menu e la schermata di inizio stagione. La tendina è sparita. Il telaio si sceglie sempre sulla stessa schermata: **una volta per stagione** nel campionato, **una volta per weekend** altrove — non di nuovo fra qualifica e gara (`weekendChassisAsked`, azzerato quando si torna al menu).
+
 ### 2.5 Scia (slipstream)
 `car.draftStrength` è continuo in 0..1, prodotto di quattro attenuazioni (distanza, cono, allineamento delle prue, e la *velocità* di chi la genera: sotto 15 unità di avanzamento un'auto non lascia scia, la scia è piena da 45), invece del booleano di prima che dava +15% di colpo entrando nel cono e zero uscendone. La geometria non è più un **cono angolare** ma un **corridoio di scia**: semilarghezza `WAKE_HALF + WAKE_SPREAD * distanza` (11px + 0.085/px), cioè 14px a 40px di distanza e 27px a fondo scala, contro i 16px e 74px del vecchio cono a ±0.40 rad. Il cono, essendo angolare, a distanza diventava più largo della carreggiata: misurato su 64.000 traini, un terzo andava a un'auto oltre 20px fuori asse (l'auto è larga 14px, quindi zero sovrapposizione) e un sesto oltre 30px, cioè affiancata e non dietro. Col corridoio la mediana è 4px fuori asse e il caso peggiore 20px. Effetto sulla gara misurato su 12 gare complete: sorpassi 2.68 → 2.80 (invariato), auto in scia in un dato istante 6.63 → 3.52. In più il donatore deve essere **davanti sulla strada** (0 < gap d'arco < 250px, calcolato modulo giro su `lapS`): il solo cono geometrico veniva ingannato in curva — il 44% della scia misurata arrivava da un'auto in realtà dietro, inseguitore compreso. Effetto: `+18%` di spinta e `-22%` di resistenza, entrambi scalati dalla forza della scia.
 
@@ -185,15 +214,40 @@ Non scrivendo archi a mano: ognuna è un **anello di vertici con un raggio per v
 
 **Dove va il traguardo, e perché non è una scelta libera.** `checkLapCross()` conta un giro quando la x dell'auto passa `startX` andando **verso destra** con `|y - startY| < grassWidth + 100`. Quel test non sa su quale pezzo di strada sei, quindi un traguardo è valido solo se **nessun altro tratto** del circuito attraversa quella x, nella stessa direzione, dentro quella fascia. Zipper l'aveva su un rettilineo percorso da destra a sinistra: zero giri completati da chiunque, per l'intera gara. `fix_starts.js` sceglie il rettilineo — lungo, orizzontale, percorso verso destra e **univoco** — e verifica tutti e 16 i circuiti.
 
-### 3.0quater Lombardy, e la lunghezza della stagione
+### 3.0quater Lombard, e la lunghezza della stagione
 
-**Il circuito.** È la **rosa camuna** della bandiera lombarda, guidata invece che sventolata. Il simbolo è un regalo per questo motore: il suo contorno è fatto **interamente di archi di cerchio** — otto, un uncino stretto alternato a un lobo lungo, con simmetria di ordine quattro — cioè esattamente la forma di dati che `track.js` vuole già. Il percorso della bandiera è stato convertito dalla forma "endpoint" degli archi SVG a quella "centro" usata qui (`lombardy.js`): le giunzioni chiudono a **0.0000px**, quindi questa è la forma, non una sua imitazione.
+**Il circuito.** È la **rosa camuna** della bandiera lombarda — con **tre** braccia invece delle quattro della bandiera, perché quattro sono inguidabili.
 
-È il circuito più stretto del calendario, e non è una scelta stilistica. I quattro uncini tornano su se stessi e i due passaggi di un uncino si avvicinano fino a **91px**; una barriera ha bisogno di `2 x grassWidth + 10` fra due tratti di strada, quindi la carreggiata può essere **32** e non di più. Con qualsiasi valore superiore i muri dentro gli uncini si attraverserebbero e non verrebbero disegnati affatto — lo stesso guasto di Thunder. Aprire gli uncini (raggio 40 → 50, 60, 70) è stato provato per primo e **peggiora** le cose, non le migliora: nessuna larghezza sopravvive.
+La versione a quattro è stata costruita per prima, direttamente dal path SVG della bandiera: otto archi, un uncino riflesso alternato a un lobo lungo, giunzioni che chiudono a 0.0000px. È la forma, esatta. Ed è anche un corridoio: quattro braccia a 90° in un riquadro quadrato lasciano così poco spazio fra loro che la carreggiata può essere solo **32**, e a quella larghezza non si corre.
 
-Risultato in gara: 8 vetture su 8 al traguardo, **0.0% del tempo fuori pista**, giri da 21s — i più lunghi del calendario, perché è tutto curva.
+Quindi la rosa è stata **ricostruita in forma parametrica** dalle proporzioni della bandiera, invece che ridisegnata:
 
-**La lunghezza della stagione.** Il menu ha un campo *Season* (default 10). Il calendario viene **estratto** dai 17 circuiti, senza reimmissione finché ce ne sono di nuovi: una stagione da dieci non visita mai due volte lo stesso posto, e oltre i diciassette il sacchetto viene riempito e rimescolato, che è l'unico modo di far girare una stagione più lunga. Il campo viene *clampato* e non creduto: vuoto → 10, `0` o negativo → 1, `999` → 40, testo → 10.
+- N lobi su un anello di raggio A, uno ogni 360/N gradi;
+- N uncini su un anello di raggio B, a metà strada fra i lobi;
+- ogni giunzione è una **tangenza esterna** fra un cerchio-lobo e un cerchio-uncino: è quella a invertire la curvatura e a fare di un uncino un uncino, quindi i lobi si percorrono tutti in un verso e gli uncini nell'altro, e ogni giunto è liscio per costruzione.
+
+La tangenza fissa la dimensione: `A² + B² − 2AB·cos(π/N) = (Rlobo + Runcino)²`. Verificato contro la bandiera stessa: a N=4 con i suoi rapporti la ricostruzione la riproduce arco per arco, lobi 281° e uncini −191°.
+
+A N=3 i centri sono a 120° invece che a 90°, troppo lontani perché i raggi della bandiera li raggiungano: l'equazione **non ha radice** e i cerchi devono crescere. Meno braccia, più grandi — ed è esattamente per questo che c'è spazio per una strada.
+
+L'ultima scelta libera è quanto profondi siano gli uncini, ed è un baratto diretto con la larghezza, misurato invece che indovinato (`lombard.js sweep`):
+
+| ampiezza uncino | strada più larga possibile |
+|---|---|
+| 187° | nessuna strada ci sta |
+| 167° | 34 |
+| 154° | 46 |
+| **148°** | **52** ← scelta |
+
+cioè la strada più larga che la rosa può portare restando una rosa. In gara: 8 vetture su 8 al traguardo, 1.7% del tempo fuori pista, giri da 14.3s.
+
+*Un errore di misura da ricordare*: il primo sweep riportava uncini da 142-160° per archi che in realtà erano da 191°, perché la formula ignorava il flag di verso. Era sbagliata la misura, non la forma — e per un attimo sembrava che la costruzione parametrica non producesse affatto una rosa.
+
+**La lunghezza della stagione.** Il menu ha un menu a tendina *Season Length* (default 10), con la targhetta CHAMPIONSHIP sotto il selettore.
+
+La tendina non è scritta nell'HTML: viene **costruita da `SEASON_POOL`**, la lista dei circuiti. Così la stagione più lunga offerta è esattamente il numero di circuiti che esistono (17), e aggiungerne uno la allunga da solo — non c'è un secondo posto da ricordarsi di aggiornare. Il calendario viene estratto dalla stessa lista **senza reimmissione**, quindi una stagione non visita mai due volte lo stesso posto.
+
+Il valore viene comunque *clampato* e non creduto — una tendina non si può digitare, ma è il clamp a decidere: vuoto → 10, `0` o negativo → 1, `999` → 17, testo → 10.
 
 ### 3.0ter Crossover: l'incrocio e il ponte
 
@@ -201,7 +255,9 @@ Due anelli uniti da due lunghe diagonali che si incrociano **fra i vertici**, no
 
 **Perché un incrocio è possibile.** Ogni vettura si localizza sulla traiettoria a partire da dov'era **il frame prima** (`car._nodeIdx`, `ai.nodeIdx`), cercando solo in una finestra intorno. Le due strade si toccano nello spazio ma sono mezzo giro di distanza come indice, quindi né il contachilometri né l'IA possono saltare dall'una all'altra.
 
-Restava un buco: dopo un testacoda o una speronata la ricerca torna **globale**, e lì il nodo più vicino può appartenere all'altra strada. È successo: vetture riagganciate alla metà sbagliata, che giravano in un solo lobo dell'otto senza mai passare sul traguardo (0 giri completati). Ora la ricerca globale preferisce un nodo **allineato con la direzione di marcia**: le due strade si incrociano a ~96°, quindi la direzione le distingue da sola. Se nulla è allineato, si ripiega sulla distanza pura.
+Restava un buco: dopo un testacoda o una speronata la ricerca torna **globale**, e lì il nodo più vicino può appartenere all'altra strada. È successo: vetture riagganciate alla metà sbagliata, che giravano in un solo lobo dell'otto senza mai passare sul traguardo (0 giri completati). Ora la ricerca globale prende il nodo **più vicino**, e lascia che sia la direzione di marcia a decidere **solo quando c'è una vera ambiguità**: un altro nodo altrettanto vicino nello *spazio* ma lontano lungo il *giro*. Che è esattamente cos'è un incrocio, e non somiglia a nient'altro su nessun circuito.
+
+*La prima versione preferiva il nodo allineato punto e basta, e cambiava silenziosamente ogni circuito: dieci vetture ferme sullo stesso punto leggevano dieci distanze diverse (151px di scarto) perché puntavano da parti diverse, e la scia — che si basa sullo stesso numero — cominciava a regalare traini a vetture 22px fuori linea. L'hanno trovata due harness che non avevo ancora copiato su Apex 2: passavano sull'originale e fallivano qui.*
 
 **Il ponte.** `getBridge()` non è scritto a mano: trova dove due tratti lontani lungo il giro si avvicinano nello spazio, e quello è l'incrocio. Restituisce le due finestre in **lapS** — la stessa unità che le auto già portano — quindi "questa vettura è sotto il ponte?" è un confronto, senza geometria a tempo di rendering.
 
