@@ -578,7 +578,7 @@ const LEVELS = [
             b.coinRow(4, 6, 11);
             b.coinRow(16, 20, 7).coinRow(22, 26, 7);
             b.coinRow(25, 28, 9);
-            b.coinArc(12, 15, 9);
+            b.coinArc(12, 15, 8);
             b.coinRow(36, 39, 11);
             b.coinArc(45, 48, 9);
             b.coinRow(55, 58, 8).coinRow(60, 63, 8);
@@ -607,8 +607,8 @@ const LEVELS = [
             b.urchin(24).urchin(50).urchin(54);
             b.coinRow(5, 8, 11);
             b.coinRow(15, 18, 7);
-            b.coinRow(39, 43, 11);                       // dentro il cunicolo
-            b.coinRow(39, 43, 9);                        // sul tetto del cunicolo
+            b.coinRow(39, 41, 11);                       // dentro il cunicolo
+            b.coinRow(42, 44, 9);                        // sul tetto, verso l'uscita
             b.coinArc(29, 33, 9);
             b.coinRow(46, 48, 11);
             b.coinArc(57, 61, 9);
@@ -616,7 +616,7 @@ const LEVELS = [
             b.coinRow(77, 80, 8);
             b.cabin(4, 0).cabin(20, 1).cabin(28, 2).cabin(52, 3).cabin(82, 1);
             b.umbrella(46, 2).towel(63, 0);
-            b.heart(44, 9);
+            b.heart(44, 8);
             b.startAt(2).flagAt(84);
             b.hint(34.6, 7.3, '↓ a terra = accucciati');
             b.hint(38.5, 8.6, 'striscia nel cunicolo →');
@@ -688,11 +688,13 @@ const LEVELS = [
             // salita alla via alta
             b.box(12, 11, 1, 1).box(13, 10, 1, 2);
             b.plank(15, 20, 8).plank(22, 27, 8).plank(29, 32, 7).plank(34, 39, 8).plank(41, 47, 8);
+            // scaletta di rientro: dalle monete a terra si risale sulla via alta
+            b.plank(28, 29, 10).plank(31, 32, 9);
             // seconda tratta alta
             b.plank(74, 76, 10).plank(78, 81, 9);
-            // via bassa: cunicolo e guai
+            // via bassa: cunicolo (aperto da entrambi i lati) e guai
             b.tunnel(62, 67, 10);
-            b.box(60, 11);
+            b.plank(59, 61, 10);
             b.crab(35).crab(70).crab(90);
             b.urchin(24).urchin(55).urchin(85);
             b.coinRow(15, 20, 7).coinRow(22, 27, 7).coinRow(29, 32, 6).coinRow(34, 39, 7).coinRow(42, 46, 7);
@@ -702,7 +704,7 @@ const LEVELS = [
             b.coinRow(50, 53, 11);
             b.coinRow(63, 66, 11);          // nel cunicolo
             b.coinRow(63, 66, 9);           // sopra il cunicolo
-            b.coinArc(77, 81, 8);
+            b.coinArc(78, 80, 8);
             b.coinRow(87, 89, 11);
             b.cabin(18, 0).cabin(23, 1).cabin(52, 2).cabin(57, 0).cabin(93, 3);
             b.umbrella(8, 1).umbrella(40, 3).umbrella(64, 2).towel(33, 0);
@@ -748,7 +750,7 @@ const LEVELS = [
             b.box(16, 11).box(18, 10, 1, 2);
             b.box(20, 9, 2, 2);                          // muro: sotto ci si accuccia
             b.box(25, 9, 2, 1);                          // mensola con monete
-            b.box(30, 11);
+            b.plank(29, 31, 10);
             b.tunnel(32, 38, 10);
             b.crab(43).crab(55).crab(85);
             b.urchin(28).urchin(47).urchin(84).urchin(93);
@@ -760,11 +762,11 @@ const LEVELS = [
             b.coinRow(5, 8, 11);
             b.coinRow(20, 21, 8);
             b.coinRow(25, 26, 8);
-            b.coinRow(33, 37, 11).coinRow(33, 37, 9);
+            b.coinRow(33, 37, 11).coinRow(35, 38, 9);   // sopra: verso l'uscita del cunicolo
             b.coinArc(49, 53, 9);
             b.coinRow(62, 68, 8);
-            b.coinRow(63, 67, 11);
-            b.coinRow(75, 78, 11).coinRow(75, 78, 9);
+            b.coinRow(65, 68, 11);      // sotto la tettoia, verso il rientro da destra
+            b.coinRow(75, 78, 11).coinRow(77, 80, 9);
             b.coinRow(88, 91, 11);
             b.towel(11, 2).cabin(89, 0);
             b.heart(44, 10);
@@ -921,14 +923,14 @@ const LEVELS = [
             b.crab(12).crab(54).crab(82).crab(105);
             b.urchin(35).urchin(50).urchin(56).urchin(86).urchin(100);
             b.coinRow(4, 8, 11);
-            b.coinRow(19, 25, 7);
-            b.coinRow(21, 25, 11);
-            b.coinRow(21, 25, 9);
+            b.coinRow(23, 26, 7);
+            b.coinRow(21, 23, 11);
+            b.coinRow(24, 26, 9);
             b.coinArc(30, 32, 9);
-            b.coinRow(41, 45, 11).coinRow(41, 45, 9);
+            b.coinRow(41, 43, 11).coinRow(44, 46, 9);
             b.coinRow(58, 60, 11);
             b.coinArc(62, 64, 9);
-            b.coinRow(71, 76, 11).coinRow(71, 76, 9);
+            b.coinRow(71, 73, 11).coinRow(74, 77, 9);
             b.coinRow(89, 93, 9);
             b.coinRow(95, 97, 11).coinRow(102, 104, 11);
             b.heart(22, 6);
@@ -984,6 +986,7 @@ const LEVELS = [
             b.clear(85, 87, 0, 13);
             b.box(8, 11);
             b.plank(10, 13, 9).plank(15, 19, 8).plank(21, 26, 8).plank(28, 32, 7).plank(34, 38, 8);
+            b.plank(19, 20, 10).plank(27, 28, 9);      // rientri sulla via alta
             b.plank(54, 59, 10);
             b.box(66, 11);
             b.plank(68, 71, 9).plank(73, 77, 8).plank(79, 84, 8).plank(86, 89, 9);
@@ -1073,9 +1076,9 @@ const LEVELS = [
             b.clear(78, 80, 0, 13);
             b.box(10, 11);
             b.box(12, 10, 1, 2).box(14, 9, 2, 3);
-            b.box(16, 11);
+            b.plank(15, 17, 10);
             b.tunnel(18, 24, 10);
-            b.box(20, 8, 2, 1);
+            b.box(22, 8, 2, 1);
             b.tunnel(28, 34, 10);
             b.box(34, 11).box(35, 10, 1, 2).box(36, 9, 2, 2);
             b.plank(37, 43, 8);
@@ -1095,16 +1098,16 @@ const LEVELS = [
             b.coinRow(3, 5, 11);
             b.coinRow(14, 15, 7);
             b.coinRow(19, 23, 11);
-            b.coinRow(20, 21, 6);
-            b.coinRow(29, 33, 11).coinRow(29, 33, 9);
+            b.coinRow(22, 23, 6);
+            b.coinRow(29, 31, 11).coinRow(32, 34, 9);
             b.coinRow(37, 43, 7);
-            b.coinRow(47, 52, 11).coinRow(47, 52, 9);
+            b.coinRow(47, 49, 11).coinRow(50, 53, 9);
             b.coinRow(60, 61, 7);
             b.coinRow(64, 65, 6);
-            b.coinRow(69, 74, 11).coinRow(69, 74, 9);
+            b.coinRow(69, 71, 11).coinRow(72, 75, 9);
             b.coinRow(77, 81, 8);
             b.coinRow(90, 96, 8);
-            b.coinRow(91, 95, 11);
+            b.coinRow(93, 96, 11);
             b.coinRow(101, 105, 11);
             b.coinRow(110, 112, 11);
             b.heart(21, 5);
@@ -1171,7 +1174,7 @@ const LEVELS = [
             b.coinRow(30, 31, 8).coinRow(34, 35, 7).coinRow(38, 39, 8);
             b.coinRow(42, 44, 10).coinRow(47, 49, 10);
             b.coinRow(54, 57, 6);
-            b.coinRow(54, 57, 10);
+            b.coinRow(50, 51, 10);
             b.coinRow(58, 60, 10);
             b.coinRow(62, 66, 8);
             b.coinRow(68, 70, 10).coinRow(73, 74, 10).coinRow(77, 78, 10);
@@ -1189,12 +1192,77 @@ const LEVELS = [
     }
 ];
 
+/* ============================================================
+   SCALETTE DI SERVIZIO
+   Da terra si salta al massimo due file: chi scende dalla via alta
+   per prendere le monete in basso non riuscirebbe più a risalire, e
+   il 100% diventerebbe impossibile in una sola partita. Questa
+   passata garantisce che ogni tratto di passerella abbia, alla sua
+   estremità sinistra, una catena di appigli che parte da terra.
+   Sono passerelle: non chiudono mai il passaggio a chi corre sotto.
+   ============================================================ */
+function addServiceRamps(b) {
+    const W = b.width;
+    const solid = (x, y) => (x < 0 || x >= W || y < 0 || y >= ROWS) ? 0 : b.grid[y * W + x];
+    const way = (x, y) => (x < 0 || x >= W || y < 0 || y >= ROWS) ? 0 : b.oneway[y * W + x];
+    const standable = (x, y) => solid(x, y) || way(x, y);
+
+    // da terra (riga 12) si arriva a un piano di riga 10; da riga 10 a riga 8;
+    // da riga 9 a riga 7 — ecco le catene di appigli per ogni quota
+    const CHAIN = { 6: [10, 8], 7: [10, 9], 8: [10], 9: [10] };
+
+    // c'è già un appoggio a quella quota, a portata di mano?
+    const hasHold = (x, row) => {
+        for (let dx = -3; dx <= 3; dx++) if (standable(x + dx, row)) return true;
+        return false;
+    };
+    // si può posare un gradino qui? (spazio libero e terreno sotto, non acqua)
+    const canPlace = (x, row) => {
+        if (x < 1 || x >= W - 1) return false;
+        if (solid(x, row) || way(x, row)) return false;
+        if (solid(x, row - 1)) return false;              // niente soffitto addosso
+        for (let y = row + 1; y < ROWS; y++) if (solid(x, y)) return true;
+        return false;
+    };
+
+    const runs = [];
+    for (let row = 6; row <= 9; row++) {
+        for (let x = 0; x < W; x++) {
+            if (b.oneway[row * W + x] && !b.oneway[row * W + x - 1]) runs.push({ x, row });
+        }
+    }
+    for (const run of runs) {
+        const chain = CHAIN[run.row];
+        if (!chain) continue;
+        // dal gradino più alto (vicino alla passerella) al più basso, scendendo verso sinistra
+        let cursor = run.x;
+        for (let i = chain.length - 1; i >= 0; i--) {
+            const row = chain[i];
+            if (hasHold(cursor, row)) { cursor -= 2; continue; }
+            let placed = false;
+            for (const off of [-2, -3, -1, -4, 1, 2]) {
+                const x0 = cursor + off;
+                if (canPlace(x0, row) && canPlace(x0 + 1, row)) {
+                    b.oneway[row * W + x0] = 1;
+                    b.oneway[row * W + x0 + 1] = 1;
+                    cursor = x0;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) cursor -= 2;
+        }
+    }
+    return b;
+}
+
 function buildWorld(levelIndex) {
     const def = LEVELS[levelIndex];
     // larghezze scelte per livello
     const widths = [68, 84, 88, 92, 96, 100, 96, 100, 110, 112, 104, 108, 112, 108, 112, 110, 112, 116, 120, 124];
     const b = LevelBuilder(widths[levelIndex]);
     def.build(b);
+    addServiceRamps(b);
 
     // decorazioni automatiche sulla sabbia (cespugli, conchiglie, stelle marine)
     const rnd = makeRand(1234 + levelIndex * 777);
