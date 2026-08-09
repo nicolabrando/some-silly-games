@@ -370,11 +370,16 @@ button:hover {
 
 /* Fixed width, so the compound pips form a straight column instead of
    stepping in and out with the length of each driver's code. */
+/* Wide enough for three bold capitals with no clipping. 30px was measured
+   against a monospace assumption the page does not actually make - the tower
+   inherits the body font, where "MSC" and "HAM" are wider than "PRO", so some
+   codes lost their last letter and others did not. */
 #timing-tower .tt-name {
-    flex: 0 0 30px;
+    flex: 0 0 38px;
     font-weight: bold;
     letter-spacing: 0.3px;
     overflow: hidden;
+    white-space: nowrap;
 }
 
 #timing-tower .tt-chip {

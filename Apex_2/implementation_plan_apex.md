@@ -138,7 +138,9 @@ Due correzioni, entrambe emerse dalla misura.
 
 **1. Il muro non può stare dentro l'asfalto.** `wallRadius() = max(grassWidth − 12, trackWidth + 2)`, usata sia dalla fisica sia dal disegno. Su **Pettine** (strada 70, fascia 75) le vetture venivano fermate **7px dentro** il tarmac, e su **Crown** 2px: da sempre, da quando sono stati disegnati. Ora c'è un pavimento.
 
-**2. Il muro viene disegnato dov'è.** `getWalls()` calcola l'insieme di livello «distanza dall'asse più vicino = `wallRadius()`»: campiona entrambi i lati dell'asse ogni 2px e tiene solo i punti a cui **nessun altro tratto** è più vicino — che è esattamente il bordo della zona percorribile, anche dove due tratti si accostano e il bordo non è più un semplice parallelo. Il risultato viene disegnato **dopo l'asfalto**, quindi non può essere coperto.
+**2. La vecchia banda tricolore è sparita.** Era uno stroke largo `grassWidth*2 + 10`, tratteggiato verde/bianco/rosso e disegnato **sotto** l'erba: se ne vedeva solo un anello di 5px — tranne alle curve, dove le giunzioni arrotondate lo gonfiavano e lasciavano **barre rosse e bianche staccate**, sull'erba e persino sopra i cordoli. Nicola ha chiesto cosa fossero; erano la vecchia barriera che trapelava, e con il muro vero disegnato non avevano più un lavoro da fare.
+
+**3. Il muro viene disegnato dov'è.** `getWalls()` calcola l'insieme di livello «distanza dall'asse più vicino = `wallRadius()`»: campiona entrambi i lati dell'asse ogni 2px e tiene solo i punti a cui **nessun altro tratto** è più vicino — che è esattamente il bordo della zona percorribile, anche dove due tratti si accostano e il bordo non è più un semplice parallelo. Il risultato viene disegnato **dopo l'asfalto**, quindi non può essere coperto.
 
 Due casi che non si vedevano a occhio e che il test ha trovato:
 

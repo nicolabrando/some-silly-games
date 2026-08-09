@@ -325,6 +325,10 @@ class SegmentedTrack {
         return Math.max(this.grassWidth - 12, this.trackWidth + 2);
     }
 
+    // The barrier as geometry: the set of points at exactly wallRadius() from
+    // the nearest stretch of centre line, i.e. every place a car can be
+    // stopped. Nothing paints it any more - see draw() - but the tests use it
+    // to check that the barrier goes where a driver would expect it to.
     getWalls() {
         if (this._walls) return this._walls;
         const R = this.wallRadius();
@@ -437,30 +441,6 @@ class SegmentedTrack {
         // nine tenths of the points.
         this._walls = runs.map(r => simplifyRun(r, 0.5));
         return this._walls;
-    }
-
-    drawWalls(ctx) {
-        const runs = this.getWalls();
-        ctx.save();
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        for (const pass of [
-            { w: 7, c: 'rgba(0, 0, 0, 0.45)', dash: null, off: 0 },   // shadow at its foot
-            { w: 5, c: '#f2f2f2', dash: null, off: 0 },                // the wall
-            { w: 5, c: '#d32f2f', dash: [16, 16], off: 0 }             // and its markings
-        ]) {
-            ctx.lineWidth = pass.w;
-            ctx.strokeStyle = pass.c;
-            if (pass.dash) ctx.setLineDash(pass.dash); else ctx.setLineDash([]);
-            for (const r of runs) {
-                ctx.beginPath();
-                ctx.moveTo(r[0], r[1]);
-                for (let i = 2; i < r.length; i += 2) ctx.lineTo(r[i], r[i + 1]);
-                ctx.stroke();
-            }
-        }
-        ctx.setLineDash([]);
-        ctx.restore();
     }
 
     // Width of the kerb band lining the inside of the corners.
@@ -1111,39 +1091,25 @@ class SegmentedTrack {
         ctx.lineCap = 'butt'; // Crucial for segmented drawing without huge overlap
         ctx.lineJoin = 'round';
         
-        const dashLen = 100; // Increased length for better visibility
+        // Nothing white and red is painted outside the road. There were two
+        // such things and both are gone: the old tricolour band (a stroke
+        // wider than the grass, drawn under it, which the round joins at the
+        // corners bulged out into detached bars on the verge), and the wall
+        // markings that replaced it - a 5px white line with red dashes drawn
+        // along the barrier. The second was worse than the first, because it
+        // was correct: it ran exactly where a car is stopped. But a thin
+        // dashed line lying flat on the grass reads as PAINT, as something to
+        // run over, and that is what it looked like. The barrier sits within
+        // 12px of the outer edge of the green on all seventeen circuits, so
+        // the edge of the green is the honest signal and needs no line on it.
 
-        
-        // 1. Outer Barrier (Green segment)
-        this.drawPath(ctx);
-        ctx.lineWidth = this.grassWidth * 2 + 10;
-        ctx.strokeStyle = '#009246'; // Distinct Italian Green
-        ctx.setLineDash([dashLen, dashLen * 2]);
-        ctx.lineDashOffset = 0;
-        ctx.stroke();
-        
-        // 2. Outer Barrier (White segment)
-        this.drawPath(ctx);
-        ctx.strokeStyle = '#ffffff'; // White
-        ctx.lineDashOffset = -dashLen;
-        ctx.stroke();
-        
-        // 3. Outer Barrier (Red segment)
-        this.drawPath(ctx);
-        ctx.strokeStyle = '#d32f2f'; // Italian Red
-        ctx.lineDashOffset = -dashLen * 2;
-        ctx.stroke();
-        
-        ctx.setLineDash([]);
-        ctx.lineDashOffset = 0;
-        
-        // 3. Grass Margin (Dark Green)
+        // 1. Grass Margin (Dark Green)
         this.drawPath(ctx);
         ctx.lineWidth = this.grassWidth * 2;
         ctx.strokeStyle = '#2e7d32';
         ctx.stroke();
 
-        // 4. Kerbs on the inside of every corner (red / white).
+        // 2. Kerbs on the inside of every corner (red / white).
         //    Drawn as a thin band hugging the inner edge of the asphalt, so
         //    nothing appears on the outside of the corner or on the straights.
         for (const seg of this.segments) {
@@ -1169,17 +1135,20 @@ class SegmentedTrack {
             }
         }
 
-        // 5. Track Asphalt (Dark Grey)
+        // 3. Track Asphalt (Dark Grey)
         this.drawPath(ctx);
         ctx.lineWidth = this.trackWidth * 2;
         ctx.strokeStyle = '#555';
         ctx.stroke();
 
         this.drawStartLine(ctx);
-        // The barrier, drawn last and drawn where it really is - see
-        // getWalls(). Anywhere a car can be stopped, there is now a wall on
-        // the screen at that exact spot.
-        this.drawWalls(ctx);
+        // No barrier is painted any more. getWalls() puts the wall within 12px
+        // of the outer edge of the grass on every circuit in the game, so the
+        // edge of the green already tells you where you stop - and a 5px
+        // white-and-red dashed line drawn on top of the grass read as PAINT,
+        // as something you could run over, which is exactly what it looked
+        // like to Nicola. The wall is still there in the physics; it just no
+        // longer draws a line across the scenery to say so.
         // On top of the asphalt, under the cars.
         this.drawPuddles(ctx);
     }
@@ -1340,22 +1309,23 @@ class CircoMassimoTrack extends SegmentedTrack {
         ctx.strokeStyle = 'rgba(0, 0, 0, 0.30)';
         ctx.stroke();
 
-        // the wall itself: white with red blocks, like every other barrier
-        // a driver is meant to keep away from
+        // The wall itself. It used to be white with red blocks, to match the
+        // barriers - but nothing is painted white and red outside the road any
+        // more, and on this one the markings were the only thing that made the
+        // spina look like a line rather than a thing. Concrete, with a lighter
+        // top edge, so it reads as standing up off the sand.
         ctx.beginPath();
         ctx.moveTo(x1, y);
         ctx.lineTo(x2, y);
         ctx.lineWidth = 11;
-        ctx.strokeStyle = '#f5f5f5';
+        ctx.strokeStyle = '#5f6066';
         ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(x1 + 8, y);
-        ctx.lineTo(x2 - 8, y);
-        ctx.lineWidth = 11;
-        ctx.setLineDash([26, 26]);
-        ctx.strokeStyle = '#d32f2f';
+        ctx.moveTo(x1, y - 2.5);
+        ctx.lineTo(x2, y - 2.5);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = '#9b9da6';
         ctx.stroke();
-        ctx.setLineDash([]);
 
         // the metae: the gilded turning posts at either end of the spina
         for (const mx of [x1, x2]) {
