@@ -1,0 +1,1269 @@
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #222;
+    color: white;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#game-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #388E3C; /* Darker grass color for background */
+}
+
+canvas {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+}
+
+#ui-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+/* Every centred panel must be listed here: #ui-layer is pointer-events:none,
+   so a panel left out of this rule renders unstyled AND its buttons are dead. */
+#menu, #game-over, #championship-final, #quali-screen, #gp-preview, #tyre-screen,
+#chassis-screen {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.85);
+    padding: 40px;
+    border-radius: 10px;
+    text-align: center;
+    pointer-events: auto;
+    border: 2px solid #555;
+    min-width: 250px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+
+/* --- main menu --------------------------------------------------------- */
+#menu {
+    width: min(600px, 94vw);
+    padding: 26px 30px 28px;
+    border-color: #333;
+    background: linear-gradient(160deg, rgba(16, 18, 22, 0.97), rgba(8, 9, 11, 0.97));
+}
+
+#menu-title h1 {
+    margin: 0;
+    font-size: 34px;
+    font-weight: 900;
+    letter-spacing: 10px;
+    font-style: italic;
+    text-indent: 10px;   /* visually balance the letter-spacing */
+}
+
+/* three racing stripes under the title */
+#menu-stripe {
+    display: flex;
+    gap: 5px;
+    justify-content: center;
+    margin: 10px auto 20px;
+    width: 210px;
+}
+
+#menu-stripe span {
+    height: 4px;
+    border-radius: 2px;
+    flex: 1 1 auto;
+    transform: skewX(-30deg);
+}
+
+#menu-stripe span:nth-child(1) { background: #e53935; flex-grow: 3; }
+#menu-stripe span:nth-child(2) { background: #eceff1; flex-grow: 2; }
+#menu-stripe span:nth-child(3) { background: #e53935; flex-grow: 1; }
+
+.menu-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 26px;
+    text-align: left;
+}
+
+/* one column on a narrow screen */
+@media (max-width: 560px) {
+    .menu-cols { grid-template-columns: 1fr; }
+}
+
+.menu-section {
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #90a4ae;
+    border-bottom: 1px solid #2e343a;
+    padding-bottom: 5px;
+    margin: 6px 0 12px;
+}
+
+.menu-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 10px;
+}
+
+.menu-group {
+    margin-bottom: 14px;
+    text-align: left;
+}
+
+.menu-group label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    color: #b0bec5;
+}
+
+#menu select,
+#menu input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 10px;
+    font-size: 15px;
+    border-radius: 6px;
+    border: 1px solid #3a4148;
+    background: #1c2126;
+    color: #fff;
+}
+
+#menu select:focus,
+#menu input[type="number"]:focus {
+    outline: none;
+    border-color: #e53935;
+}
+
+.menu-check {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0 0 10px;
+    font-size: 14px;
+    color: #cfd8dc;
+    cursor: pointer;
+    user-select: none;
+}
+
+.menu-check input {
+    width: 17px;
+    height: 17px;
+    accent-color: #e53935;
+    margin: 0;
+    flex: 0 0 auto;
+}
+
+.menu-hint {
+    font-size: 11px;
+    opacity: 0.55;
+    line-height: 1.45;
+    text-align: left;
+    margin: 2px 0 8px;
+}
+
+/* which mode a setting belongs to, at a glance */
+.tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #78909c;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid #37474f;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 6px;
+    vertical-align: 1px;
+}
+
+/* Single Race and Championship carry the same weight: two equal doors into
+   the game, side by side. */
+.menu-main-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.menu-main-row button {
+    margin-top: 0;
+    padding: 13px 6px;
+    font-size: 17px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    border-radius: 7px;
+}
+
+#start-btn { background: #e53935; }
+#start-btn:hover { background: #f44336; }
+#champ-btn { background: #c9a227; color: #111; }
+#champ-btn:hover { background: #ffd700; }
+
+.menu-btn-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.menu-btn-row button {
+    margin-top: 0;
+    padding: 10px 6px;
+    font-size: 14px;
+    border-radius: 6px;
+}
+
+#practice-btn { background: #1f7a70; color: #e0f2f1; }
+#practice-btn:hover { background: #26a69a; }
+#log-btn { background: #37474f; color: #cfd8dc; }
+#log-btn:hover { background: #455a64; }
+
+select, button {
+    padding: 10px;
+    font-size: 16px;
+    border-radius: 5px;
+    border: none;
+}
+
+select {
+    width: 100%;
+    background: #333;
+    color: white;
+}
+
+button {
+    background-color: #E53935;
+    color: white;
+    cursor: pointer;
+    font-weight: bold;
+    margin-top: 10px;
+    width: 100%;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #F44336;
+}
+
+/* --- the stage -----------------------------------------------------------
+   A 1280x720 box laid exactly over the canvas and scaled with it. Anything
+   that has to line up with the circuit goes in here, so a band reserved in
+   world pixels is that same band on any screen. main.js sets --stage-*. */
+#stage {
+    position: absolute;
+    left: var(--stage-x, 0px);
+    top: var(--stage-y, 0px);
+    width: 1280px;
+    height: 720px;
+    transform: scale(var(--stage-scale, 1));
+    transform-origin: 0 0;
+    pointer-events: none;
+}
+
+/* --- the side column -----------------------------------------------------
+   The timing tower and the driver's readouts share ONE column down the left.
+   Before, a ticker lay along the top and a bar along the bottom: two separate
+   bites out of the circuits, and ten cars strung out across a 1280px ticker
+   were unreadable. A column reads top to bottom, which is how a timing screen
+   is meant to be read, and it costs the circuits 210px once instead of 116px
+   of height twice. Everything to the right of it is racing surface. */
+#sidebar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 210px;
+    height: 720px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    box-sizing: border-box;
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+    text-shadow: none;
+}
+
+/* No background on the column itself: in the menu both children are hidden,
+   and a black stripe standing behind the menu would look like a bug. */
+
+/* --- timing tower: one row per car, the tall part of the column ---------- */
+#timing-tower {
+    /* only as tall as its rows: a 500px slab of black with six lines at one
+       end of it would look like a bug, so the tower hugs the top of the
+       column and the readouts hug the bottom */
+    flex: 0 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 2px;
+    padding: 6px 6px 8px;
+    background: rgba(0, 0, 0, 0.66);
+    border-right: 2px solid rgba(255, 255, 255, 0.16);
+    border-radius: 0 0 7px 0;
+    font-size: 14px;
+    line-height: 1;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+#timing-tower .tt-row {
+    flex: 0 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 26px;
+    min-height: 20px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 4px solid transparent;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+#timing-tower .tt-row.me {
+    background: rgba(255, 255, 255, 0.20);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+/* The badges are the part that must never be cut. This group therefore does
+   NOT shrink and does NOT clip; if the row runs out of room it is the gap
+   text on the right that gives way, because "+1.3" losing its last character
+   is survivable and "RD" instead of "RDG" is not. That was the bug: this
+   group was the flexible one, so the last badge in it was always the casualty. */
+#timing-tower .tt-top {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow: visible;
+}
+
+#timing-tower .tt-pos {
+    min-width: 14px;
+    text-align: right;
+    opacity: 0.65;
+    font-size: 12px;
+}
+
+/* Fixed width, so the compound pips form a straight column instead of
+   stepping in and out with the length of each driver's code. */
+#timing-tower .tt-name {
+    flex: 0 0 30px;
+    font-weight: bold;
+    letter-spacing: 0.3px;
+    overflow: hidden;
+}
+
+#timing-tower .tt-chip {
+    width: 7px;
+    height: 12px;
+    border-radius: 1px;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    flex: 0 0 auto;
+}
+
+/* pushed to the right-hand edge of the row, so the gaps line up in a column
+   you can read down */
+#timing-tower .tt-gap {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-left: auto;
+    padding-left: 5px;
+    text-align: right;
+    font-size: 13px;
+    opacity: 0.9;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+#timing-tower .tt-tyre {
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 14px;
+    min-width: 14px;
+    height: 14px;
+    line-height: 14px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: bold;
+    text-align: center;
+    color: #111;
+}
+
+/* the chassis, immediately right of the compound */
+#timing-tower .tt-ch {
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 24px;
+    height: 14px;
+    line-height: 14px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 0;
+    text-align: center;
+    color: #08131a;
+    overflow: visible;
+}
+
+#timing-tower .tt-note {
+    flex: 0 0 auto;
+    font-size: 11px;
+    opacity: 0.75;
+    padding: 3px 6px;
+}
+
+/* --- the driver's readouts, at the foot of the column -------------------- */
+#hud {
+    flex: 0 0 auto;
+    margin-top: auto;        /* pinned to the foot of the column */
+    pointer-events: none;
+}
+
+#side-hud {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    padding: 8px 10px 10px;
+    background: rgba(0, 0, 0, 0.74);
+    border-right: 2px solid rgba(255, 255, 255, 0.16);
+    border-top: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 0 7px 0 0;
+    font-weight: bold;
+    box-sizing: border-box;
+}
+
+#side-hud #position-counter { font-size: 17px; color: #cfd8dc; letter-spacing: 0.5px; }
+#side-hud #lap-counter { font-size: 24px; color: #fff; line-height: 1.1; }
+#side-hud #speedometer { font-size: 31px; color: #ffd54f; line-height: 1.05; }
+
+#side-hud #lap-timer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 1px 10px;
+    font-weight: normal;
+}
+
+/* the live lap gets a line to itself; last and best share the one below */
+#side-hud .lt-cur { flex: 1 0 100%; font-size: 26px; font-weight: 900; line-height: 1.1; }
+#side-hud .lt-sub { font-size: 14px; font-weight: bold; color: #b0bec5; }
+#side-hud .lt-best { color: #ce93d8; }
+
+#side-hud #tyre-indicator { display: flex; align-items: center; gap: 6px; }
+
+#hud-right {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 3px;
+}
+
+#hud-right #dnf-timer { color: #ff5252; font-size: 15px; }
+#hud-right #weather-indicator { font-size: 15px; }
+#hud-right #quitBtn { margin-left: 0; }
+
+/* empty readouts leave no gap */
+#side-hud > div:empty, #hud-right > div:empty { display: none; }
+
+/* --- VSC: a strip at the head of the column, never over the road --------- */
+#vsc-banner {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px 8px;
+    padding: 6px 8px;
+    background: rgba(255, 214, 0, 0.94);
+    color: #201800;
+    border-right: 2px solid #7a6500;
+    border-bottom: 3px solid #7a6500;
+    border-radius: 0 0 7px 0;
+    font-weight: 900;
+    letter-spacing: 1px;
+    text-shadow: none;
+    pointer-events: none;
+    box-sizing: border-box;
+}
+
+#vsc-tag {
+    font-size: 15px;
+    letter-spacing: 2px;
+    background: #201800;
+    color: #ffd600;
+    padding: 0 6px;
+    border-radius: 3px;
+}
+
+#vsc-sub { font-size: 10px; letter-spacing: 0.5px; text-align: center; }
+#vsc-count { font-size: 23px; font-variant-numeric: tabular-nums; min-width: 46px; text-align: center; }
+
+/* --- two-player: one card per seat, stacked at the foot ------------------ */
+#hud2 {
+    flex: 0 0 auto;
+    margin-top: auto;        /* same foot, when two are driving */
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+}
+
+#hud2 .p-card {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 8px;
+    row-gap: 2px;
+    padding: 6px 10px 8px;
+    background: rgba(0, 0, 0, 0.74);
+    border-right: 2px solid rgba(255, 255, 255, 0.16);
+    border-top: 3px solid #555;
+    font-size: 13px;
+    text-shadow: none;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+#hud2 .p-who { flex: 1 0 100%; font-weight: 900; letter-spacing: 2px; font-size: 15px; }
+#hud2 .p-keys { opacity: 0.5; font-weight: normal; font-size: 11px; letter-spacing: 1px; }
+#hud2 .p-line { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+#hud2 .p-speed { flex: 1 0 100%; font-weight: bold; font-size: 22px; color: #ffd54f; }
+
+#hud2 .p-bar {
+    display: inline-block;
+    width: 40px; height: 7px;
+    border-radius: 3px;
+    background: #111;
+    border: 1px solid #000;
+    overflow: hidden;
+    vertical-align: middle;
+}
+#hud2 .p-bar > span { display: block; height: 100%; }
+
+#hud2 .p-pip {
+    display: inline-block;
+    width: 8px; height: 11px;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    vertical-align: middle;
+}
+
+#hud2 .p-dead { color: #ff5252; font-weight: bold; }
+
+#controls-hint {
+    font-size: 11px;
+    opacity: 0.6;
+    margin-top: 6px;
+    line-height: 1.4;
+}
+
+#stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+#stats-table th, #stats-table td {
+    padding: 8px;
+    text-align: center;
+}
+
+#quitBtn {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer;
+    pointer-events: auto;
+    font-family: monospace;
+    width: auto;
+    margin-left: 10px;
+}
+
+#quitBtn:hover {
+    background-color: #d32f2f;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Touch controls                                                     */
+/*  Steering left, throttle right. Sized for a thumb, not a cursor.     */
+/* ------------------------------------------------------------------ */
+#mobile-controls {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    touch-action: none;
+}
+
+#mobile-steer {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    display: flex;
+    gap: 14px;
+}
+
+#mobile-steer button {
+    width: 78px;
+    height: 78px;
+    border-radius: 39px;
+    background: rgba(0, 0, 0, 0.42);
+    color: #fff;
+    font-weight: bold;
+    font-size: 26px;
+    line-height: 1;
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    pointer-events: auto;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    padding: 0;
+    margin: 0;
+}
+
+#mobile-steer button:active {
+    background: rgba(0, 0, 0, 0.8);
+    border-color: #fff;
+}
+
+/* the throttle strip: gas above the middle, brake and reverse below */
+#mobile-throttle {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    width: 86px;
+    height: 62vh;
+    max-height: 340px;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#mt-track {
+    position: relative;
+    flex: 1 1 auto;
+    width: 100%;
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.42);
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    overflow: hidden;
+}
+
+#mt-fill {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 0;
+    background: #00e676;
+    opacity: 0.45;
+}
+
+/* the neutral line: where your thumb has to come back to */
+#mt-centre {
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    background: rgba(255, 255, 255, 0.65);
+}
+
+#mt-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 62px;
+    height: 22px;
+    margin-left: -31px;
+    margin-top: -11px;
+    border-radius: 11px;
+    background: #eceff1;
+    border: 2px solid #263238;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+#mt-up, #mt-down {
+    position: absolute;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: rgba(255, 255, 255, 0.55);
+}
+#mt-up { top: 10px; }
+#mt-down { bottom: 10px; }
+
+#mt-read {
+    flex: 0 0 auto;
+    font-size: 15px;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+    color: #b0bec5;
+    text-shadow: 0 1px 2px #000;
+}
+
+/* On a phone the driver's readouts move to the TOP of the HUD column and the
+   tower goes under them, so the bottom-left corner - where the steering
+   buttons live - is empty road instead of the thing you are trying to read. */
+body.is-mobile #hud { order: 2; margin-top: 0; }
+body.is-mobile #hud2 { order: 2; margin-top: 0; }
+body.is-mobile #timing-tower { order: 3; }
+body.is-mobile #vsc-banner { order: 1; }
+
+/* ------------------------------------------------------------------ */
+/*  How to play                                                        */
+/* ------------------------------------------------------------------ */
+#how-to-play {
+    margin-top: 18px;
+    text-align: left;
+    border-top: 1px solid #444;
+    padding-top: 14px;
+    /* keep the paragraphs from stretching the whole menu panel */
+    max-width: 440px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+#how-to-play > summary {
+    cursor: pointer;
+    text-align: center;
+    font-weight: bold;
+    font-size: 16px;
+    color: #9ecbff;
+    padding: 6px;
+    list-style: none;
+    user-select: none;
+}
+
+#how-to-play > summary::-webkit-details-marker { display: none; }
+
+#how-to-play > summary::before {
+    content: '▸ ';
+    display: inline-block;
+    transition: transform 0.15s ease;
+}
+
+#how-to-play[open] > summary::before {
+    content: '▾ ';
+}
+
+#how-to-play > summary:hover { color: #d6e9ff; }
+
+#how-to-play .guide {
+    margin-top: 10px;
+    max-height: 46vh;
+    overflow-y: auto;
+    padding-right: 12px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: #ddd;
+}
+
+#how-to-play .guide h3 {
+    margin: 16px 0 4px;
+    font-size: 13px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #FFD700;
+}
+
+#how-to-play .guide h3:first-child { margin-top: 0; }
+
+#how-to-play .guide p { margin: 4px 0; }
+
+#how-to-play .guide ul {
+    margin: 4px 0;
+    padding-left: 18px;
+}
+
+#how-to-play .guide li { margin-bottom: 4px; }
+
+#how-to-play .guide b { color: #fff; }
+
+/* ------------------------------------------------------------------ */
+/*  HUD buttons                                                        */
+/*  The HUD itself is pointer-events:none so it never eats clicks meant */
+/*  for the canvas; its buttons have to opt back in, or they look       */
+/*  perfectly normal and simply do nothing when pressed.                */
+/* ------------------------------------------------------------------ */
+.hud-btn {
+    pointer-events: auto;
+    width: auto;
+    margin-top: 0;
+    padding: 4px 12px;
+    font-size: 13px;
+    line-height: 1.2;
+    border-radius: 4px;
+    align-self: flex-start;
+}
+
+/* ---- skipped Grand Prix (race simulating in the background) -------- */
+#skip-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    z-index: 45;
+}
+
+#skip-panel {
+    background: rgba(0, 0, 0, 0.9);
+    border: 2px solid #555;
+    border-radius: 10px;
+    padding: 30px 46px;
+    text-align: center;
+    min-width: 300px;
+}
+
+/* ---- tyre choice --------------------------------------------------- */
+#tyre-screen { min-width: 430px; }
+
+#tyre-options {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+button.tyre-opt {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    margin: 0;
+    padding: 14px 6px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    color: #fff;
+    font-weight: normal;
+}
+
+button.tyre-opt:hover {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.tyre-dot {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 3px solid rgba(0, 0, 0, 0.55);
+    margin-bottom: 2px;
+}
+
+.tyre-name { font-size: 15px; font-weight: bold; letter-spacing: 0.5px; }
+.tyre-stat { font-size: 11px; opacity: 0.7; }
+
+/* small coloured pip used in the results table and the HUD */
+.tyre-pip {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+.pts-bonus { color: #4CAF50; }
+
+.pts-legend {
+    font-size: 11px;
+    opacity: 0.6;
+    margin: 4px 0 14px;
+    text-align: left;
+    line-height: 1.4;
+}
+
+.pts-legend b { color: #4CAF50; opacity: 0.9; }
+
+#tyre-indicator {
+    display: flex;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+}
+
+/* A dark well with its own border, so the fill never has to be read against
+   whatever the track happens to be behind it. */
+#tyre-wear-bar {
+    display: inline-block;
+    width: 52px;
+    height: 9px;
+    border-radius: 5px;
+    background: #14181c;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
+    margin-left: 7px;
+    overflow: hidden;
+    vertical-align: middle;
+}
+
+#tyre-wear-fill {
+    display: block;
+    height: 100%;
+    width: 100%;
+    background: #00e676;
+    transition: width 0.25s linear;
+}
+
+#tyre-wear-pct {
+    margin-left: 6px;
+    font-size: 13px;
+    font-weight: bold;
+    min-width: 34px;
+    text-align: right;
+    text-shadow: 0 0 3px #000, 1px 1px 0 #000;
+}
+
+/* compound letter in the timing tower */
+#timing-tower .tt-tyre {
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    line-height: 13px;
+    border-radius: 50%;
+    text-align: center;
+    font-size: 9px;
+    font-weight: bold;
+    color: rgba(0, 0, 0, 0.82);
+    border: 1px solid rgba(0, 0, 0, 0.55);
+    margin-right: 4px;
+}
+
+/* ---- Grand Prix preview ------------------------------------------- */
+#gp-preview {
+    min-width: 420px;
+}
+
+#gp-map {
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 6px;
+    margin-bottom: 14px;
+    background: #388E3C;
+}
+
+#gp-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 18px;
+}
+
+#gp-stats .gp-cell {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 8px 6px;
+}
+
+#gp-stats .gp-k {
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    opacity: 0.55;
+    margin-bottom: 3px;
+}
+
+#gp-stats .gp-v {
+    font-size: 15px;
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+
+/* DNS cell in the season recap (skipped Grand Prix) */
+.season-table .sr-dns {
+    color: #888;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+}
+
+/* ---- pause -------------------------------------------------------- */
+/* Sits over the whole canvas. #ui-layer is pointer-events:none, so the
+   overlay has to opt back in or its buttons are dead. */
+#pause-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.62);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    z-index: 40;
+}
+
+#pause-panel {
+    background: rgba(0, 0, 0, 0.9);
+    border: 2px solid #555;
+    border-radius: 10px;
+    padding: 32px 44px;
+    text-align: center;
+    min-width: 240px;
+}
+
+/* ---- qualifying classification ----------------------------------- */
+#quali-screen {
+    min-width: 460px;
+}
+
+#quali-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 22px;
+}
+
+#quali-table th {
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: normal;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    opacity: 0.55;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+    text-align: center;
+}
+
+#quali-table td {
+    padding: 8px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+#quali-table tbody tr.q-me {
+    background: rgba(255, 255, 255, 0.09);
+}
+
+#quali-table td.q-pos {
+    opacity: 0.6;
+    font-size: 13px;
+}
+
+#quali-table td.q-driver {
+    text-align: left;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+#quali-table td.q-gap {
+    opacity: 0.75;
+    font-size: 13px;
+}
+
+#quali-table tr.q-pole td.q-gap {
+    color: #4CAF50;
+    opacity: 1;
+    font-weight: bold;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Season recap grid                                                  */
+/* ------------------------------------------------------------------ */
+.season-table {
+    border-collapse: collapse;
+    font-size: 12px;
+    margin: 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.season-table th,
+.season-table td {
+    padding: 3px 7px;
+    text-align: center;
+    border-bottom: 1px solid #333;
+    white-space: nowrap;
+}
+
+.season-table thead th {
+    border-bottom: 1px solid #888;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    opacity: 0.85;
+}
+
+.season-table .sr-win  { background: rgba(255, 215, 0, 0.22); font-weight: bold; }
+.season-table .sr-pod  { background: rgba(76, 175, 80, 0.18); }
+.season-table .sr-dnf  { color: #ef5350; font-size: 10px; }
+.season-table .sr-none { opacity: 0.3; }
+/* Grand Chelem: pole + win + fastest lap + every lap led */
+.gc-star {
+    color: #FFD700;
+    margin-left: 4px;
+    letter-spacing: -1px;
+}
+
+.season-table .gc-star {
+    font-size: 10px;
+    vertical-align: super;
+    line-height: 0;
+    margin-left: 1px;
+}
+
+#champ-legend {
+    font-size: 11px;
+    opacity: 0.7;
+    margin: 2px 0 10px;
+}
+
+/* superscript markers beside a result: P = pole, F = fastest lap */
+.season-table .sr-fl,
+.season-table .sr-pole {
+    font-size: 9px;
+    font-weight: bold;
+    margin-left: 1px;
+    vertical-align: super;
+    line-height: 0;
+}
+.season-table .sr-fl   { color: #ce93d8; }
+.season-table .sr-pole { color: #4fc3f7; }
+
+
+/* --- the season's chassis choice ---------------------------------------- */
+#chassis-screen { min-width: 700px; }
+
+#chassis-options {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+button.chassis-opt {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    width: 100%;
+    margin: 0;
+    padding: 16px 14px 14px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 2px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    color: #fff;
+    font-weight: normal;
+    text-align: left;
+}
+
+button.chassis-opt:hover {
+    background: rgba(255, 255, 255, 0.14);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+}
+
+.chassis-opt .ch-badge {
+    align-self: flex-start;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #08131a;
+    padding: 2px 7px;
+    border-radius: 4px;
+}
+
+.chassis-opt .ch-name { font-size: 21px; font-weight: 900; letter-spacing: 1px; margin-top: 6px; }
+.chassis-opt .ch-line1 { font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; }
+.chassis-opt .ch-line2 { font-size: 12px; opacity: 0.72; line-height: 1.45; margin: 6px 0 12px; min-height: 52px; }
+
+.chassis-opt .ch-stat {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    margin-top: 3px;
+}
+.chassis-opt .ch-k { flex: 0 0 76px; opacity: 0.7; }
+.chassis-opt .ch-v { flex: 0 0 34px; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
+
+/* a bar that grows either side of centre, so "worse" reads as worse */
+.chassis-opt .ch-bar {
+    position: relative;
+    flex: 1 1 auto;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.10);
+    overflow: hidden;
+}
+.chassis-opt .ch-bar::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 0; bottom: 0;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.35);
+}
+.chassis-opt .ch-bar > i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+
+/* the chassis badge, wherever a car is named */
+.ch-pip {
+    display: inline-block;
+    min-width: 26px;
+    padding: 0 3px;
+    height: 13px;
+    line-height: 13px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 0.5px;
+    text-align: center;
+    color: #08131a;
+    vertical-align: middle;
+}
+
+
+/* the 2 in the title: a second version, and it should look like one */
+#menu-two {
+    display: inline-block;
+    font-size: 0.62em;
+    vertical-align: 0.42em;
+    margin-left: 4px;
+    padding: 0 7px;
+    border-radius: 5px;
+    background: #e53935;
+    color: #fff;
+    letter-spacing: 0;
+}
