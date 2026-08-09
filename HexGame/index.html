@@ -13,7 +13,7 @@
     <div class="app-container">
         
         <!-- AUDIO -->
-        <audio id="bg-music" loop>
+        <audio id="bg-music" loop autoplay preload="auto">
             <source src="https://cdn.pixabay.com/audio/2022/05/27/audio_1808fbf07a.mp3" type="audio/mpeg">
         </audio>
         
@@ -52,8 +52,12 @@
         <div class="top-bar">
             <button id="menu-btn" class="btn secondary">Torna al Menu</button>
             <div id="turn-indicator" class="current-player p1">Turno: Giocatore 1</div>
-            <button id="music-toggle" class="btn secondary">🎵 Usa Audio</button>
             <button id="restart-btn" class="btn secondary">Ricomincia</button>
+        </div>
+        <div id="contemplate-bar" class="contemplate-bar view-hidden">
+            <select id="timelapse-player" class="timelapse-select"></select>
+            <button id="timelapse-btn" class="btn primary">▶ Time Lapse Partita</button>
+            <button id="back-to-summary-btn" class="btn secondary">Torna al Riepilogo</button>
         </div>
         <div class="game-layout">
             <div class="game-container" id="game-container">
@@ -75,6 +79,7 @@
                 <div class="modal-buttons">
                 <button id="modal-restart-btn" class="btn primary">Gioca Ancora</button>
                 <button id="modal-contemplate-btn" class="btn secondary">Contemplate board</button>
+                <button id="modal-timelapse-btn" class="btn secondary">▶ Time Lapse Partita</button>
                 <button id="modal-menu-btn" class="btn secondary">Menu Principale</button>
             </div>
             </div>
@@ -84,12 +89,3 @@
     <script src="app.js"></script>
 </body>
 </html>
-<script id='test-script'>
-setTimeout(() => {
-  document.getElementById('start-game-btn').click();
-  setTimeout(() => {
-    const hex = document.querySelector('.hexagon');
-    if(hex) hex.dispatchEvent(new Event('click'));
-  }, 1000);
-}, 1000);
-</script>

@@ -10,7 +10,11 @@ document.addEventListener('DOMContentLoaded', () => {
         { id: 4, type: 'ai', difficulty: 3, color: '#ffea4b' }
     ];
     
-    let activePlayers = []; 
+    // Nomi dei livelli di difficoltà dell'IA (indice = valore di difficulty)
+    const DIFFICULTY_NAMES = ['Facile', 'Media', 'Difficile', 'Impossibile'];
+    const difficultyName = (d) => DIFFICULTY_NAMES[d] || `Livello ${d}`;
+
+    let activePlayers = [];
     let cells = []; // The board
     let currentPlayerIdx = 0; 
     let gameOver = false;
@@ -28,22 +32,46 @@ document.addEventListener('DOMContentLoaded', () => {
     // Audio
     const bgMusic = document.getElementById('bg-music');
     const musicToggle = document.getElementById('music-toggle');
-    let isMusicPlaying = false;
+    let isMusicPlaying = true; // audio attivo di default
     let isPlayingAudio = false;
     let audioContext;
-    
+
     let globalTurnCounter = 1;
     let isContemplating = false;
-    
+
+    bgMusic.volume = 0.4;
+    musicToggle.textContent = '🔇 Muta Audio';
+
+    // I browser bloccano l'autoplay finché non c'è un'interazione dell'utente:
+    // proviamo subito e, se viene bloccato, riproviamo al primo click/tasto.
+    function tryPlayMusic() {
+        if (!isMusicPlaying) return;
+        const p = bgMusic.play();
+        if (p && p.catch) p.catch(() => {});
+    }
+
+    function unlockAudio() {
+        if (isMusicPlaying && bgMusic.paused) tryPlayMusic();
+        if (!bgMusic.paused) {
+            document.removeEventListener('pointerdown', unlockAudio);
+            document.removeEventListener('keydown', unlockAudio);
+        }
+    }
+
+    document.addEventListener('pointerdown', unlockAudio);
+    document.addEventListener('keydown', unlockAudio);
+    tryPlayMusic();
+
     musicToggle.addEventListener('click', () => {
         if (isMusicPlaying) {
             bgMusic.pause();
             musicToggle.textContent = '🎵 Usa Audio';
+            isMusicPlaying = false;
         } else {
-            bgMusic.play().catch(e => console.log('Audio autoplay blocked'));
+            isMusicPlaying = true;
+            tryPlayMusic();
             musicToggle.textContent = '🔇 Muta Audio';
         }
-        isMusicPlaying = !isMusicPlaying;
     });
     
     // Menu controls
@@ -59,7 +87,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const restartGameBtn = document.getElementById('restart-game-btn');
     const modalMenuBtn = document.getElementById('modal-menu-btn');
     const contemplateBtn = document.getElementById('modal-contemplate-btn');
-    
+    const modalTimelapseBtn = document.getElementById('modal-timelapse-btn');
+    const contemplateBar = document.getElementById('contemplate-bar');
+    const timelapseBtn = document.getElementById('timelapse-btn');
+    const timelapsePlayerSelect = document.getElementById('timelapse-player');
+    const backToSummaryBtn = document.getElementById('back-to-summary-btn');
+
     function renderPlayerConfigs() {
         playersConfigContainer.innerHTML = '';
         playersConfigContainer.className = 'players-config-grid';
@@ -79,10 +112,10 @@ document.addEventListener('DOMContentLoaded', () => {
             select.className = 'player-select';
             select.innerHTML = `
                 <option value="human" ${p.type === 'human' ? 'selected' : ''}>Umano</option>
-                <option value="0" ${p.type === 'ai' && p.difficulty === 0 ? 'selected' : ''}>AI - Easy</option>
-                <option value="1" ${p.type === 'ai' && p.difficulty === 1 ? 'selected' : ''}>AI - Medium</option>
-                <option value="2" ${p.type === 'ai' && p.difficulty === 2 ? 'selected' : ''}>AI - Hard</option>
-                <option value="3" ${p.type === 'ai' && p.difficulty === 3 ? 'selected' : ''}>AI - Impossible</option>
+                <option value="0" ${p.type === 'ai' && p.difficulty === 0 ? 'selected' : ''}>IA - Facile</option>
+                <option value="1" ${p.type === 'ai' && p.difficulty === 1 ? 'selected' : ''}>IA - Media</option>
+                <option value="2" ${p.type === 'ai' && p.difficulty === 2 ? 'selected' : ''}>IA - Difficile</option>
+                <option value="3" ${p.type === 'ai' && p.difficulty === 3 ? 'selected' : ''}>IA - Impossibile</option>
             `;
             select.addEventListener('change', (e) => {
                 const val = e.target.value;
@@ -149,6 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function showMenu() {
+        exitContemplation();
         gameView.classList.add('view-hidden');
         startMenuView.classList.remove('view-hidden');
     }
@@ -159,13 +193,179 @@ document.addEventListener('DOMContentLoaded', () => {
         showMenu();
     });
     
-    if(contemplateBtn) {
-        contemplateBtn.addEventListener('click', () => {
-            winnerModal.classList.add('modal-hidden');
-            isContemplating = true;
-            turnIndicator.textContent = "Contemplazione (clicca su un esagono)";
-            turnIndicator.className = "current-player";
+    function buildTimelapsePlayerOptions() {
+        if (!timelapsePlayerSelect) return;
+        timelapsePlayerSelect.innerHTML =
+            '<option value="0">Tutti i giocatori</option>' +
+            activePlayers.map(p => `<option value="${p.id}">Solo Giocatore ${p.id}</option>`).join('');
+        timelapsePlayerSelect.value = String(replayFilter);
+        applySelectColor();
+    }
+
+    function applySelectColor() {
+        if (!timelapsePlayerSelect) return;
+        const p = activePlayers.find(pl => pl.id === replayFilter);
+        timelapsePlayerSelect.style.color = p ? p.color : '';
+    }
+
+    function enterContemplation() {
+        winnerModal.classList.add('modal-hidden');
+        isContemplating = true;
+        replayFilter = 0;
+        buildTimelapsePlayerOptions();
+        paintBoard();
+        if (contemplateBar) contemplateBar.classList.remove('view-hidden');
+        turnIndicator.textContent = "Contemplazione (clicca su un esagono)";
+        turnIndicator.className = "current-player";
+    }
+
+    function exitContemplation() {
+        stopTimeLapse();
+        isContemplating = false;
+        if (replayFilter !== 0) {
+            replayFilter = 0;
+            applySelectColor();
+            paintBoard();
+        }
+        if (contemplateBar) contemplateBar.classList.add('view-hidden');
+    }
+
+    if (contemplateBtn) {
+        contemplateBtn.addEventListener('click', enterContemplation);
+    }
+
+    if (modalTimelapseBtn) {
+        modalTimelapseBtn.addEventListener('click', () => {
+            enterContemplation();
+            startTimeLapse();
         });
+    }
+
+    if (timelapseBtn) {
+        timelapseBtn.addEventListener('click', () => {
+            if (isReplaying) stopTimeLapse();
+            else startTimeLapse();
+        });
+    }
+
+    if (backToSummaryBtn) {
+        backToSummaryBtn.addEventListener('click', () => {
+            exitContemplation();
+            winnerModal.classList.remove('modal-hidden');
+        });
+    }
+
+    // --- TIME LAPSE (replay della partita) ---
+    const TIMELAPSE_DURATION_MS = 6000; // durata complessiva del replay
+    const TIMELAPSE_MIN_STEP_MS = 60;   // per partite molto lunghe
+    const TIMELAPSE_MAX_STEP_MS = 350;  // per partite molto corte
+    let isReplaying = false;
+    let replayTimer = null;
+    let replayFilter = 0; // 0 = tutti i giocatori, altrimenti l'id del giocatore
+
+    function hexElementFor(cell) {
+        return hexGrid.querySelector(`.hexagon[data-id="${cell.id}"]`);
+    }
+
+    // Disegna lo stato finale, mostrando solo il giocatore filtrato se richiesto
+    function paintBoard() {
+        for (let cell of cells) {
+            const el = hexElementFor(cell);
+            if (!el) continue;
+            el.classList.remove('p1', 'p2', 'p3', 'p4', 'replay-last');
+            if (cell.player !== 0 && (replayFilter === 0 || cell.player === replayFilter)) {
+                el.classList.add(`p${cell.player}`);
+            }
+        }
+    }
+
+    function contemplationHint() {
+        return replayFilter === 0
+            ? "Contemplazione (clicca su un esagono)"
+            : `Contemplazione — solo le mosse del Giocatore ${replayFilter}`;
+    }
+
+    if (timelapsePlayerSelect) {
+        timelapsePlayerSelect.addEventListener('change', (e) => {
+            replayFilter = parseInt(e.target.value, 10) || 0;
+            applySelectColor();
+            if (isReplaying) stopTimeLapse();
+            else {
+                paintBoard();
+                turnIndicator.textContent = contemplationHint();
+            }
+        });
+    }
+
+    function stopTimeLapse() {
+        if (replayTimer) {
+            clearTimeout(replayTimer);
+            replayTimer = null;
+        }
+        if (!isReplaying) return;
+        isReplaying = false;
+        paintBoard();
+        if (timelapseBtn) timelapseBtn.textContent = '▶ Time Lapse Partita';
+        if (isContemplating) {
+            turnIndicator.textContent = contemplationHint();
+            turnIndicator.className = "current-player";
+        }
+    }
+
+    function startTimeLapse() {
+        const moves = cells
+            .filter(c => c.player !== 0 && c.turnPlaced)
+            .filter(c => replayFilter === 0 || c.player === replayFilter)
+            .sort((a, b) => a.turnPlaced - b.turnPlaced);
+
+        if (moves.length === 0) return;
+
+        isReplaying = true;
+        if (timelapseBtn) timelapseBtn.textContent = '⏹ Ferma Time Lapse';
+        turnIndicator.className = "current-player";
+
+        const step = Math.min(
+            TIMELAPSE_MAX_STEP_MS,
+            Math.max(TIMELAPSE_MIN_STEP_MS, Math.round(TIMELAPSE_DURATION_MS / moves.length))
+        );
+
+        // Svuota la scacchiera
+        for (let cell of cells) {
+            const el = hexElementFor(cell);
+            if (el) el.classList.remove('p1', 'p2', 'p3', 'p4', 'replay-last');
+        }
+
+        let i = 0;
+        let prevEl = null;
+
+        function nextFrame() {
+            if (!isReplaying) return;
+            if (i >= moves.length) {
+                replayTimer = setTimeout(() => {
+                    if (prevEl) prevEl.classList.remove('replay-last');
+                    isReplaying = false;
+                    replayTimer = null;
+                    if (timelapseBtn) timelapseBtn.textContent = '▶ Time Lapse Partita';
+                    turnIndicator.textContent = contemplationHint();
+                }, 700);
+                return;
+            }
+
+            const cell = moves[i];
+            const el = hexElementFor(cell);
+            if (prevEl) prevEl.classList.remove('replay-last');
+            if (el) {
+                el.classList.add(`p${cell.player}`, 'replay-last');
+                prevEl = el;
+            }
+            turnIndicator.textContent = replayFilter === 0
+                ? `Time Lapse — mossa ${i + 1} / ${moves.length} (Giocatore ${cell.player})`
+                : `Time Lapse Giocatore ${replayFilter} — mossa ${i + 1} / ${moves.length} (turno ${cell.turnPlaced})`;
+            i++;
+            replayTimer = setTimeout(nextFrame, step);
+        }
+
+        nextFrame();
     }
 
     if (restartBtn) restartBtn.addEventListener('click', startNewGame);
@@ -371,7 +571,7 @@ document.addEventListener('DOMContentLoaded', () => {
             card.innerHTML = `
                 <strong style="color: ${p.color}">Giocatore ${p.id}</strong>
                 <span>Tipo: ${p.type === 'human' ? 'Umano' : 'IA'}</span>
-                ${p.type === 'ai' ? `<span>Difficoltà: ${p.difficulty}</span>` : ''}
+                ${p.type === 'ai' ? `<span>Difficoltà: ${difficultyName(p.difficulty)}</span>` : ''}
                 ${p.eliminated ? '<span style="color: #ff4444; font-weight: bold; margin-top: 5px">ELIMINATO</span>' : ''}
             `;
             container.appendChild(card);
@@ -380,7 +580,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function startNewGame() {
         globalTurnCounter = 1;
-        isContemplating = false;
+        exitContemplation();
         for (let p of activePlayers) {
             p.eliminated = false;
         }
@@ -407,6 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function handleHexClick(cell, element) {
+        if (isReplaying) return;
         if (isContemplating) {
             if (cell.turnPlaced) {
                 turnIndicator.textContent = "Mossa del turno: " + cell.turnPlaced;
