@@ -325,13 +325,38 @@ class SegmentedTrack {
         return Math.max(this.grassWidth - 12, this.trackWidth + 2);
     }
 
-    // The barrier as geometry: the set of points at exactly wallRadius() from
-    // the nearest stretch of centre line, i.e. every place a car can be
-    // stopped. Nothing paints it any more - see draw() - but the tests use it
-    // to check that the barrier goes where a driver would expect it to.
-    getWalls() {
-        if (this._walls) return this._walls;
-        const R = this.wallRadius();
+    // How far outside the stopping line the armco is painted: one car radius,
+    // so that a stopped car is touching it rather than buried in it.
+    //
+    // This is an OFFSET, not a second radius, and that distinction was a bug.
+    // The first version asked for the level set at wallRadius() + 12 - a wider
+    // barrier, computed from scratch. Near anything re-entrant the two sets are
+    // not parallel curves: where the road doubles back on itself the wider set
+    // closes over the notch and simply is not there, while the physics is still
+    // stopping cars inside it. Measured, that left Pettine with 996 grid spots
+    // where a car is stopped and the nearest painted barrier is up to 171px
+    // away - between the teeth of the comb there was no barrier at all - and
+    // Lombard with 16 at up to 30px, which is the one Nicola drove into.
+    //
+    // Building it as an offset of the physics boundary instead makes a ghost
+    // impossible by construction: every point that stops a car is 12px inside
+    // a painted barrier, because the paint IS that point pushed outwards.
+    barrierOffset() {
+        return 12;
+    }
+    barrierRadius() {
+        return this.wallRadius() + this.barrierOffset();
+    }
+
+    // The barrier as geometry: the set of points at exactly R from the nearest
+    // stretch of centre line, each pushed `out` further along its own outward
+    // normal. `out` moves the curve without changing which points are ON it.
+    getWalls(R, out) {
+        if (R === undefined) R = this.wallRadius();
+        out = out || 0;
+        this._wallCache = this._wallCache || {};
+        const key = R + ':' + out;
+        if (this._wallCache[key]) return this._wallCache[key];
         const step = 2;
         const runs = [];
 
@@ -420,16 +445,19 @@ class SegmentedTrack {
                 // Is this point really on the boundary? It is exactly R from
                 // the centre line it came from; if anything else is closer,
                 // the car can still drive here and there is no wall.
+                // NOTE the test is on the point at R, never on the offset one:
+                // that is what keeps the painted curve tied to the physics.
                 if (this.getClosestPoint(wx, wy).dist < R - 0.75) { flush(); continue; }
+                const ox = wx + p.nx * side * out, oy = wy + p.ny * side * out;
                 // A jump means the offset has come back somewhere else - round
                 // the far side of a hairpin, most often. Joining the two would
                 // draw a wall straight across the road, which is worse than
                 // drawing none: break the run instead.
                 if (cur.length >= 2) {
                     const px = cur[cur.length - 2], py = cur[cur.length - 1];
-                    if (Math.hypot(wx - px, wy - py) > step * 4) flush();
+                    if (Math.hypot(ox - px, oy - py) > (step + out * 0.35) * 4) flush();
                 }
-                cur.push(wx, wy);
+                cur.push(ox, oy);
             }
             flush();
         }
@@ -439,8 +467,104 @@ class SegmentedTrack {
         // matter, and enough to exhaust a recording context in the tests.
         // Douglas-Peucker at half a pixel keeps the shape and throws away
         // nine tenths of the points.
-        this._walls = runs.map(r => simplifyRun(r, 0.5));
-        return this._walls;
+        this._wallCache[key] = runs.map(r => simplifyRun(r, 0.5));
+        return this._wallCache[key];
+    }
+
+    // The armco: green, white and red, in that order, all the way round.
+    //
+    // It is painted at barrierRadius(), so it stands one car radius outside
+    // the line where a car is stopped - which means it is the thing your car
+    // is touching when it stops, not a stripe lying on the verge. The green is
+    // NOT the green of the grass: the verge is #2e7d32 and the field beyond it
+    // #3f8f45, both muted, and the flag's own #009246 next to them would read
+    // as more grass. It is lifted to a saturated emerald that neither of them
+    // can be mistaken for.
+    drawBarrier(ctx) {
+        const runs = this.getWalls(this.wallRadius(), this.barrierOffset());
+        const COLS = ['#00d152', '#f7f7f7', '#e02b2b'];
+
+        ctx.save();
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'round';
+
+        // A shadow along the foot, so the armco stands up off the grass
+        ctx.lineWidth = 9;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.30)';
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (const r of runs) {
+            ctx.moveTo(r[0], r[1] + 2);
+            for (let i = 2; i < r.length; i += 2) ctx.lineTo(r[i], r[i + 1] + 2);
+        }
+        ctx.stroke();
+
+        // Then the panels, one colour after another along the run.
+        //
+        // The cut points are found by ARC LENGTH and interpolated, not taken
+        // from the run's own vertices. The runs come out of Douglas-Peucker,
+        // so a straight is two points however long it is: cutting at vertices
+        // painted the whole of a straight in a single colour, which is how the
+        // first version of this came out - one green line down the inside of
+        // every straight and the tricolour only in the corners.
+        //
+        // The panels are collected by colour and stroked three times rather
+        // than once each: Zipper is four hundred panels, and four hundred
+        // stroke() calls a frame is a cost worth not paying.
+        ctx.lineCap = 'butt';
+        ctx.lineWidth = 6;
+        const bands = [[], [], []];
+        for (const r of runs) {
+            // Panel length is per RUN, not global. A fixed 26px meant a short
+            // run - the inside of a comb tooth at Pettine, the neck between two
+            // lobes at Lombard - got one panel and a stub, came out solid
+            // green, and solid green against grass reads as no barrier at all.
+            // Every run now shows all three colours however short it is.
+            let L = 0;
+            for (let i = 2; i < r.length; i += 2)
+                L += Math.hypot(r[i] - r[i - 2], r[i + 1] - r[i - 1]);
+            const SEG = Math.max(3.5, Math.min(26, L / 3));
+            let band = 0, cur = [r[0], r[1]], left = SEG;
+            for (let i = 2; i < r.length; i += 2) {
+                let x0 = r[i - 2], y0 = r[i - 1];
+                const x1 = r[i], y1 = r[i + 1];
+                let seg = Math.hypot(x1 - x0, y1 - y0);
+                while (seg > left) {
+                    const t = left / seg;
+                    const mx = x0 + (x1 - x0) * t, my = y0 + (y1 - y0) * t;
+                    cur.push(mx, my);
+                    bands[band % 3].push(cur);
+                    band++;
+                    cur = [mx, my];
+                    x0 = mx; y0 = my;
+                    seg -= left;
+                    left = SEG;
+                }
+                left -= seg;
+                cur.push(x1, y1);
+            }
+            if (cur.length >= 4) bands[band % 3].push(cur);
+        }
+        for (let b = 0; b < 3; b++) {
+            ctx.strokeStyle = COLS[b];
+            ctx.beginPath();
+            for (const p of bands[b]) {
+                ctx.moveTo(p[0], p[1]);
+                for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
+            }
+            ctx.stroke();
+        }
+
+        // a thin dark rail along the top edge ties the panels together
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(20, 20, 24, 0.55)';
+        ctx.beginPath();
+        for (const r of runs) {
+            ctx.moveTo(r[0], r[1] - 2.4);
+            for (let i = 2; i < r.length; i += 2) ctx.lineTo(r[i], r[i + 1] - 2.4);
+        }
+        ctx.stroke();
+        ctx.restore();
     }
 
     // Width of the kerb band lining the inside of the corners.
@@ -448,12 +572,23 @@ class SegmentedTrack {
         return Math.min(26, Math.max(14, this.trackWidth * 0.30));
     }
 
-    // How much of it actually fits on a given corner. On a hairpin whose
-    // radius is barely wider than the track there is almost no inside run-off,
-    // so the kerb is whatever will fit - possibly nothing at all.
+    // How much of it actually fits on a given corner. Two limits, and the
+    // second one was missing.
+    //
+    // 1. On a hairpin whose radius is barely wider than the track there is
+    //    almost no inside run-off, so the kerb is whatever will fit.
+    // 2. It has to stop before the BARRIER. kerbWidth is 30% of the road, and
+    //    on several circuits that is wider than the whole verge: Peanut runs a
+    //    70px road with an 85px verge and a 21px kerb, so the kerb reached 91
+    //    from the middle of the road while the armco stands at 85 - the two
+    //    were painted on top of one another. Nobody noticed while there was no
+    //    barrier drawn there. Four pixels of clearance, and the cap is applied
+    //    here rather than in draw() so that getSurface() agrees with the paint.
     kerbWidthFor(seg) {
         if (!seg || seg.type !== 'arc') return 0;
-        return Math.min(this.kerbWidth, Math.max(0, seg.r - this.trackWidth - 2));
+        return Math.min(this.kerbWidth,
+                        Math.max(0, seg.r - this.trackWidth - 2),
+                        Math.max(0, this.barrierRadius() - this.trackWidth - 4));
     }
 
     getSurface(x, y) {
@@ -506,8 +641,8 @@ class SegmentedTrack {
                 const intoWall = car.velocity.x * nx + car.velocity.y * ny;
                 // The player gets a wider free band as well as the damage
                 // scale in takeDamage - see PLAYER_FREE_IMPACT in car.js.
-                const free = 60 + (car.isPlayer && typeof PLAYER_FREE_IMPACT !== 'undefined'
-                    ? PLAYER_FREE_IMPACT : 0);
+                const free = 60 + (car.isPlayer && typeof playerFreeImpact === 'function'
+                    ? playerFreeImpact() : 0);
                 if (intoWall > free) {
                     // ONE impact may not finish a healthy car.
                     //
@@ -530,8 +665,8 @@ class SegmentedTrack {
                     // the same thing for the player - whose damage is scaled
                     // down in takeDamage - as for everybody else: at most 62%
                     // of a full car, from any one impact.
-                    const scale = (car.isPlayer && typeof PLAYER_DAMAGE_SCALE !== 'undefined')
-                        ? PLAYER_DAMAGE_SCALE : 1;
+                    const scale = (car.isPlayer && typeof playerDamageScale === 'function')
+                        ? playerDamageScale() : 1;
                     const cap = (car.maxHealth * 0.62) / scale;
                     car.takeDamage(Math.min(raw, cap));
                 }
@@ -1091,21 +1226,22 @@ class SegmentedTrack {
         ctx.lineCap = 'butt'; // Crucial for segmented drawing without huge overlap
         ctx.lineJoin = 'round';
         
-        // Nothing white and red is painted outside the road. There were two
-        // such things and both are gone: the old tricolour band (a stroke
-        // wider than the grass, drawn under it, which the round joins at the
-        // corners bulged out into detached bars on the verge), and the wall
-        // markings that replaced it - a 5px white line with red dashes drawn
-        // along the barrier. The second was worse than the first, because it
-        // was correct: it ran exactly where a car is stopped. But a thin
-        // dashed line lying flat on the grass reads as PAINT, as something to
-        // run over, and that is what it looked like. The barrier sits within
-        // 12px of the outer edge of the green on all seventeen circuits, so
-        // the edge of the green is the honest signal and needs no line on it.
+        // The tricolour barrier is back, and this time it is where a barrier
+        // belongs. Two earlier attempts were not: the original was a stroke
+        // wider than the grass drawn UNDERNEATH it, so only a ring showed and
+        // the round joins at the corners bulged it into detached bars lying on
+        // the verge; the second was a thin dashed line painted along the line
+        // where a car stops, which was geometrically right but read as paint.
+        // This one is drawn last, as panels, at barrierRadius() - one car
+        // radius outside the stopping line, so it is the thing you are
+        // touching when you stop.
 
-        // 1. Grass Margin (Dark Green)
+        // 1. Grass Margin (Dark Green), out as far as the barrier. On fifteen
+        //    circuits that is grassWidth exactly; Pettine and Crown have a
+        //    verge narrower than their own barrier and get the few pixels they
+        //    were missing, so the armco never floats on the background.
         this.drawPath(ctx);
-        ctx.lineWidth = this.grassWidth * 2;
+        ctx.lineWidth = Math.max(this.grassWidth, this.barrierRadius()) * 2;
         ctx.strokeStyle = '#2e7d32';
         ctx.stroke();
 
@@ -1142,13 +1278,7 @@ class SegmentedTrack {
         ctx.stroke();
 
         this.drawStartLine(ctx);
-        // No barrier is painted any more. getWalls() puts the wall within 12px
-        // of the outer edge of the grass on every circuit in the game, so the
-        // edge of the green already tells you where you stop - and a 5px
-        // white-and-red dashed line drawn on top of the grass read as PAINT,
-        // as something you could run over, which is exactly what it looked
-        // like to Nicola. The wall is still there in the physics; it just no
-        // longer draws a line across the scenery to say so.
+        this.drawBarrier(ctx);
         // On top of the asphalt, under the cars.
         this.drawPuddles(ctx);
     }
@@ -1677,56 +1807,63 @@ class CrossoverTrack extends SegmentedTrack {
     }
 }
 
-// LOMBARD. The Camunian rose off the Lombard flag - with three arms instead
-// of the flag's four, because four is undriveable.
+// =========================================================================
+//  KART  -  Circus Maximus, three times over.
+// -------------------------------------------------------------------------
+//  Circus Maximus is one straight driven twice: out along one side of a
+//  central wall, round the far end, back along the other. Kart stacks three
+//  of them. Four horizontal roads - three straights with a spina between each
+//  pair, and a return that carries you from the end of the third back to the
+//  start of the first:
 //
-// The four-armed original was built first, straight from the flag's own SVG
-// path: eight arcs, a reflex hook alternating with a long lobe, joints closing
-// to 0.0000px. It is the shape, exactly. It is also a corridor: four arms 90
-// degrees apart in a square box leave so little between them that the road can
-// only be 32 wide, and at that width nobody can race.
+//      y1  --------------------->     driven right
+//          ======= spina =======
+//      y2  <---------------------     driven left
+//          ======= spina =======
+//      y3  --------------------->     driven right
+//          ======= spina =======
+//      y4  <---------------------     the return
 //
-// So the rose is rebuilt PARAMETRICALLY from the flag's proportions rather
-// than redrawn, and given three arms:
+//  The two ends are what make it work. On the RIGHT, two ordinary hairpins:
+//  y1 to y2 and y3 to y4. On the LEFT, two CONCENTRIC semicircles about the
+//  same centre - a small one taking y2 to y3, and a big one taking the return
+//  all the way back up to y1. Concentric, and exactly one spina apart, which
+//  is why the left end comes out as tidy as the right.
 //
-//   * N lobes on a ring of radius A, one every 360/N degrees;
-//   * N hooks on a ring of radius B, halfway between them;
-//   * every junction an EXTERNAL tangency between a lobe circle and a hook
-//     circle - that is what reverses the curvature and makes a hook a hook, so
-//     the lobes all run one way round and the hooks the other, and every joint
-//     is smooth by construction.
+//  Turning: +180 -180 +180 +180 = +360. It closes, and it had to.
 //
-// Tangency fixes the size: A^2 + B^2 - 2AB cos(pi/N) = (Rlobe + Rhook)^2.
-// Checked against the flag itself - at N=4 with the flag's ratios this
-// reproduces it arc for arc, lobes 281 degrees and hooks -191.
+//  The numbers are not typed in, they are solved (kart2.js). Joint gaps come
+//  out at 0.0000px and the tangent breaks at 0.0000 degrees, because every
+//  hairpin radius IS half the spacing and the two left arcs share a centre.
+//  The spacing of 152 is chosen against Circus Maximus itself: with a 58px
+//  wall radius it leaves a 31.8px strip of infield between two lanes, against
+//  32.8 there. Below about 120 there would be no wall between the lanes at all
+//  and you could drive straight across the spina.
 //
-// At N=3 the centres are 120 degrees apart instead of 90, too far for the
-// flag's own radii to reach: the equation has no root, and the circles have to
-// grow. Fewer, bigger arms - which is exactly why there is room for a road.
-// The last free choice is how deep the hooks curl, and it is a straight trade
-// against width, measured rather than guessed (lombard.js sweep):
-//
-//      hook sweep 187 deg -> no road fits at all
-//                 167     -> 34
-//                 154     -> 46
-//                 148     -> 52   <= chosen
-//
-// so this is the widest road the rose can carry while still being a rose.
-class LombardTrack extends SegmentedTrack {
+//  At 3769px it is the longest circuit in the game - Pettine, the previous
+//  longest, is 3053. That is the point of it: three long straights, and the
+//  straights are as long as the arena allows once the return arc on the left
+//  has taken its 228px.
+// =========================================================================
+class KartTrack extends SegmentedTrack {
     constructor() {
         super();
-        this.trackWidth = 52;
-        this.grassWidth = 66;
+        this.trackWidth = 50;
+        this.grassWidth = 70;
         this.segments = [
-            { type: 'arc', cx: 890.19, cy: 360, r: 120.35, start: -2.336959, end: 2.336959, ccw: false },
-            { type: 'arc', cx: 769.2, cy: 485.74, r: 54.16, start: -0.8046337, end: 2.8990288, ccw: true },
-            { type: 'arc', cx: 599.81, cy: 527.65, r: 120.35, start: -0.2425639, end: -1.8518312, ccw: false },
-            { type: 'arc', cx: 551.41, cy: 360, r: 54.16, start: 1.2897614, end: -1.2897614, ccw: true },
-            { type: 'arc', cx: 599.81, cy: 192.35, r: 120.35, start: 1.8518312, end: 0.2425639, ccw: false },
-            { type: 'arc', cx: 769.2, cy: 234.26, r: 54.16, start: -2.8990288, end: 0.8046337, ccw: true }
+            { type: 'line', x1: 529, y1: 132, x2: 1113, y2: 132 },
+            { type: 'arc', cx: 1113, cy: 208, r: 76, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 1113, y1: 284, x2: 529, y2: 284 },
+            { type: 'arc', cx: 529, cy: 360, r: 76, start: -1.5708, end: 1.5708, ccw: true },
+            { type: 'line', x1: 529, y1: 436, x2: 1113, y2: 436 },
+            { type: 'arc', cx: 1113, cy: 512, r: 76, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 1113, y1: 588, x2: 529, y2: 588 },
+            { type: 'arc', cx: 529, cy: 360, r: 228, start: 1.5708, end: 4.7124, ccw: false }
         ];
-        this.startX = 885.75;
-        this.startY = 239.74;
+        // On the top straight, which is the only thing crossing this x going
+        // left to right inside the band the lap counter watches.
+        this.startX = 891.08;
+        this.startY = 132;
 
         this.waypoints = this.generateWaypoints();
     }

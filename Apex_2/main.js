@@ -349,8 +349,22 @@ function schemeOf(seat) { return KEY_SCHEMES[schemeName(seat)]; }
 
 function clearKeys() {
     for (const d of KEY_DIRS) { keys[d] = false; keys2[d] = false; }
-    // and the analogue pair, or a touch throttle would survive a grid reset
-    keys.throttle = 0; keys.brake = 0;
+    // The analogue pair has to go too, or a touch throttle would survive a grid
+    // reset - but it must be DELETED, not set to zero.
+    //
+    // The whole scheme rests on one invariant: a keyboard never defines
+    // keys.throttle, so `k.throttle !== undefined ? k.throttle : (k.up ? 1 : 0)`
+    // falls back to the arrow keys. Writing 0 broke that invariant permanently.
+    // From the first clearKeys() onwards the throttle was defined-and-zero, the
+    // fallback stopped firing, and the car ignored the accelerator for the rest
+    // of the session however hard the arrow was held. The steering still worked,
+    // because that reads the booleans - which is why it presents as "the
+    // controls stopped working" rather than "the throttle died".
+    //
+    // It has always been wrong; pausing with the space bar is simply the first
+    // thing that made it easy to hit, because clearKeys() runs on every pause.
+    delete keys.throttle; delete keys.brake;
+    delete keys2.throttle; delete keys2.brake;
     if (typeof renderDrive === 'function') renderDrive(0);
 }
 
@@ -486,6 +500,224 @@ document.getElementById('log-download-btn').addEventListener('click', () => {
     RaceLog.download();
 });
 
+// ---------------------------------------------------------------------------
+//  THE PAUSE PANEL
+//
+//  A pause screen that only says PAUSED is a wasted screen: the one moment the
+//  game is not moving is the one moment you can actually read something off it.
+//  So it carries the numbers you cannot take in at racing speed - how far the
+//  car ahead really is, what the tyre has left, how your best lap compares with
+//  the quickest of the session - and it says different things in a race and in
+//  qualifying, because they are different questions.
+//
+//  It is rebuilt on every pause rather than kept live: the game is stopped, so
+//  there is nothing to update, and a snapshot cannot drift out of step with the
+//  frozen picture behind it.
+// ---------------------------------------------------------------------------
+const pauseStats = document.getElementById('pause-stats');
+// Set by startGame/startQualifying, read by the pause panel: which circuit is
+// under us, and the classification as of the last frame. sortedCars is a local
+// inside the loop, so it has to be handed out deliberately.
+let currentTrackKey = null;
+let lastRunningOrder = [];
+
+function pzRow(k, v, cls) {
+    return `<div class="pz-row"><span class="k">${k}</span>` +
+           `<span class="v${cls ? ' ' + cls : ''}">${v}</span></div>`;
+}
+function pzBar(frac, colour) {
+    const f = Math.max(0, Math.min(1, frac));
+    return `<div class="pz-bar"><i style="width:${(f * 100).toFixed(0)}%;` +
+           `background:${colour};"></i></div>`;
+}
+function pzCol(head, body) {
+    return `<div class="pz-col"><div class="pz-h">${head}</div>${body}</div>`;
+}
+// Green while there is plenty, amber past halfway, red near the end.
+function pzWearClass(left) {
+    return left > 0.5 ? 'pz-good' : (left > 0.22 ? 'pz-warn' : 'pz-bad');
+}
+function pzWearColour(left) {
+    return left > 0.5 ? '#7fe08a' : (left > 0.22 ? '#ffd54f' : '#ff5252');
+}
+
+// The car's own condition: the same three facts in a race and in qualifying.
+function pauseCarCol(car) {
+    const ch = car.chassis || CHASSIS[CHASSIS_DEFAULT];
+    const tyreLeft = Math.max(0, Math.min(1, 1 - (car.tyreWear || 0)));
+    const hp = car.maxHealth ? Math.max(0, car.health / car.maxHealth) : 1;
+    const speed = Math.hypot(car.velocity.x, car.velocity.y);
+    let body = '';
+    body += pzRow('Car', `<span style="color:${ch.accent};">${ch.label}</span>`);
+    body += pzRow('Tyre', car.tyre
+        ? `<span style="color:${car.tyre.colour};">${car.tyre.label}</span>`
+        : '&mdash;');
+    body += pzRow('Life left', (tyreLeft * 100).toFixed(0) + '%', pzWearClass(tyreLeft));
+    body += pzBar(tyreLeft, pzWearColour(tyreLeft));
+    body += pzRow('Condition', (hp * 100).toFixed(0) + '%', pzWearClass(hp));
+    body += pzBar(hp, pzWearColour(hp));
+    body += pzRow('Speed', speed.toFixed(0));
+    return pzCol('Your car', body);
+}
+
+// Everyone's best lap of the session so far, and whose it is.
+function pauseFastest() {
+    let best = null, who = null;
+    for (const c of cars) {
+        if (c.bestLapTime !== null && c.bestLapTime !== undefined &&
+            (best === null || c.bestLapTime < best)) { best = c.bestLapTime; who = c; }
+    }
+    if (raceMode === 'qualifying') {
+        for (const q of qualiTimes) {
+            if (q.lap !== null && (best === null || q.lap < best)) {
+                best = q.lap; who = q.p;
+            }
+        }
+    }
+    return { ms: best, who: who };
+}
+
+function renderPausePanel() {
+    if (!pauseStats) return;
+    const cols = [];
+    const humans = typeof humanCars === 'function' ? humanCars() : [];
+    const fast = pauseFastest();
+    const fastName = fast.who
+        ? (fast.who.isPlayer ? 'you' : (driverCode(fast.who) ||
+           (fast.who.driverName || '').slice(0, 3).toUpperCase()))
+        : '';
+
+    // ---- qualifying -----------------------------------------------------
+    if (raceMode === 'qualifying') {
+        const order = qualiOrder();
+        const pole = order.length ? order[0] : null;
+        for (const car of humans) {
+            const seat = car.playerIndex || 1;
+            const idx = order.findIndex(r => r.isPlayer && r.p &&
+                (r.p.playerIndex || 1) === seat);
+            const mine = idx >= 0 ? order[idx] : null;
+            const myLap = mine ? mine.lap : car.bestLapTime;
+            let body = '';
+            body += pzRow('Provisional', idx >= 0 ? 'P' + (idx + 1) + ' of ' + order.length : '&mdash;',
+                'big');
+            body += pzRow('Your best', fmtLapMs(myLap), 'big');
+            if (pole && pole.lap !== null && myLap !== null && myLap !== undefined) {
+                const d = (myLap - pole.lap) / 1000;
+                body += pzRow('Gap to pole', d <= 0 ? 'POLE' : '+' + d.toFixed(3),
+                    d <= 0 ? 'pz-good' : (d < 0.25 ? 'pz-warn' : ''));
+            } else {
+                body += pzRow('Gap to pole', 'no time yet');
+            }
+            body += pzRow('Last lap', fmtLapMs(car.lastLapTime));
+            body += pzRow('Lap', car.qualiDone ? 'session over'
+                : Math.min(car.lap + 1, QUALI_LAPS) + ' of ' + QUALI_LAPS);
+            if (humans.length > 1) {
+                // one column each, same reason as the race panel below
+                const tyreLeft = Math.max(0, Math.min(1, 1 - (car.tyreWear || 0)));
+                body += pzRow('Tyre', (tyreLeft * 100).toFixed(0) + '% left', pzWearClass(tyreLeft));
+                body += pzBar(tyreLeft, pzWearColour(tyreLeft));
+                cols.push(pzCol(humanLabel(car), body));
+                continue;
+            }
+            cols.push(pzCol('Your lap', body));
+            cols.push(pauseCarCol(car));
+        }
+        let sess = '';
+        sess += pzRow('On pole', pole && pole.p
+            ? (pole.isPlayer ? 'you' : (DRIVER_CODES[pole.p.driverName] || pole.p.driverName || '&mdash;'))
+            : '&mdash;');
+        sess += pzRow('Pole time', pole ? fmtLapMs(pole.lap) : '&mdash;');
+        sess += pzRow('Runners in', order.filter(r => r.lap !== null).length + ' of ' + order.length);
+        sess += pzRow('Circuit', TRACK_LABELS[currentTrackKey] || currentTrackKey || '&mdash;');
+        sess += pzRow('Weather', isRaining ? 'wet' : 'dry', isRaining ? 'pz-warn' : '');
+        cols.push(pzCol('Session', sess));
+        pauseStats.innerHTML = cols.join('');
+        return;
+    }
+
+    // ---- a race ---------------------------------------------------------
+    const order = lastRunningOrder.length ? lastRunningOrder : cars.slice();
+    const lapLen = (track && track.getRacingLine)
+        ? track.getRacingLine('standard').length : 1;
+
+    for (const car of humans) {
+        const pos = order.indexOf(car) + 1;
+        const ahead = pos > 1 ? order[pos - 2] : null;
+        const behind = pos > 0 && pos < order.length ? order[pos] : null;
+        // Same arithmetic as the timing tower: distance round the circuit over
+        // the pace of the car that has to cover it.
+        const gapTo = (other, mine) => {
+            if (!other) return null;
+            const d = Math.abs((other.trackProgress || 0) - (mine.trackProgress || 0));
+            const laps = Math.floor(d / lapLen);
+            if (laps >= 1) return '+' + laps + ' lap' + (laps > 1 ? 's' : '');
+            const pace = Math.max(60, mine._paceAvg || Math.hypot(mine.velocity.x, mine.velocity.y) || 60);
+            return (d / pace).toFixed(1) + 's';
+        };
+        const grid = (car.gridIndex || 0) + 1;
+        const moved = pos > 0 ? grid - pos : 0;
+
+        let body = '';
+        body += pzRow('Position', pos > 0 ? 'P' + pos + ' of ' + order.length : '&mdash;', 'big');
+        body += pzRow('Lap', Math.min(car.lap + 1, TOTAL_LAPS) + ' of ' + TOTAL_LAPS);
+        body += pzRow('Car ahead', ahead ? driverCode(ahead) + '  ' + gapTo(ahead, car) : 'clear road',
+            ahead ? '' : 'pz-good');
+        body += pzRow('Car behind', behind ? driverCode(behind) + '  ' + gapTo(behind, car) : 'nobody');
+        body += pzRow('From the grid', moved === 0 ? 'held P' + grid
+            : (moved > 0 ? '+' + moved + ' place' + (moved > 1 ? 's' : '')
+                         : moved + ' place' + (moved < -1 ? 's' : '')),
+            moved > 0 ? 'pz-good' : (moved < 0 ? 'pz-bad' : ''));
+        // Two seats means two of everything, and six columns is not a panel it
+        // is a spreadsheet. With a passenger each driver gets one column with
+        // the four things that decide the next lap.
+        if (humans.length > 1) {
+            const tyreLeft = Math.max(0, Math.min(1, 1 - (car.tyreWear || 0)));
+            const hp = car.maxHealth ? Math.max(0, car.health / car.maxHealth) : 1;
+            body += pzRow('Best lap', fmtLapMs(car.bestLapTime));
+            body += pzRow('Tyre', (tyreLeft * 100).toFixed(0) + '% left', pzWearClass(tyreLeft));
+            body += pzBar(tyreLeft, pzWearColour(tyreLeft));
+            body += pzRow('Condition', (hp * 100).toFixed(0) + '%', pzWearClass(hp));
+            body += pzBar(hp, pzWearColour(hp));
+            cols.push(pzCol(humanLabel(car), body));
+            continue;
+        }
+        cols.push(pzCol('Your race', body));
+
+        let pace = '';
+        pace += pzRow('Last lap', fmtLapMs(car.lastLapTime), 'big');
+        pace += pzRow('Your best', fmtLapMs(car.bestLapTime));
+        if (fast.ms !== null && car.bestLapTime) {
+            const d = (car.bestLapTime - fast.ms) / 1000;
+            pace += pzRow('Fastest lap', d <= 0 ? 'yours' : '+' + d.toFixed(3) + ' (' + fastName + ')',
+                d <= 0 ? 'pz-good' : '');
+        } else {
+            pace += pzRow('Fastest lap', fast.ms !== null
+                ? fmtLapMs(fast.ms) + ' (' + fastName + ')' : 'not set');
+        }
+        pace += pzRow('Tyre age', (Math.min(1.25, car.tyreWear || 0) * 100).toFixed(0) + '% used');
+        pace += pzRow('Track', isRaining ? 'wet' : 'dry', isRaining ? 'pz-warn' : '');
+        if (typeof vscActive !== 'undefined' && vscActive)
+            pace += pzRow('Flag', 'SAFETY CAR', 'pz-warn');
+        cols.push(pzCol('Pace', pace));
+        cols.push(pauseCarCol(car));
+    }
+
+    // Spectating: no car of yours, so report the race instead.
+    if (!humans.length) {
+        const ldr = order[0];
+        let body = '';
+        body += pzRow('Leader', ldr ? driverCode(ldr) : '&mdash;', 'big');
+        body += pzRow('Lap', ldr ? Math.min(ldr.lap + 1, TOTAL_LAPS) + ' of ' + TOTAL_LAPS : '&mdash;');
+        body += pzRow('Fastest lap', fast.ms !== null
+            ? fmtLapMs(fast.ms) + ' (' + fastName + ')' : 'not set');
+        body += pzRow('Running', order.filter(c => !c.isBroken).length + ' of ' + order.length);
+        body += pzRow('Weather', isRaining ? 'wet' : 'dry', isRaining ? 'pz-warn' : '');
+        cols.push(pzCol('The race', body));
+    }
+
+    pauseStats.innerHTML = cols.join('');
+}
+
 // Pause works in anything that is actually running: countdown, race,
 // qualifying, practice. It is a no-op on the menus and result screens.
 function setPaused(want) {
@@ -495,6 +727,7 @@ function setPaused(want) {
 
     if (isPaused) {
         pauseStartedAt = performance.now();
+        renderPausePanel();          // a snapshot, taken before the clock stops
         pauseOverlay.style.display = 'flex';
         pauseBtn.innerText = '▶ Resume';
         if (typeof stopAudio === 'function') stopAudio();
@@ -523,7 +756,13 @@ pauseQuitBtn.addEventListener('click', () => {
 });
 
 window.addEventListener('keydown', (e) => {
-    if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+    // Space joins P and Esc. It is safe: neither control scheme binds it -
+    // seat 1 is the arrows or WASD and seat 2 gets the other - so nothing is
+    // being taken away from anybody's car. preventDefault matters here or the
+    // browser scrolls the page under the canvas.
+    const k = e.key;
+    if (k === 'p' || k === 'P' || k === 'Escape' || k === ' ' || k === 'Spacebar') {
+        if (typingInAField(e)) return;
         if (gameState === 'playing' || gameState === 'countdown') {
             e.preventDefault();
             setPaused(!isPaused);
@@ -777,7 +1016,7 @@ function makeTrack(trackType) {
         case 'kettle':       return new KettleTrack();
         case 'harbour':      return new HarbourTrack();
         case 'crossover':    return new CrossoverTrack();
-        case 'lombard':      return new LombardTrack();
+        case 'kart':       return new KartTrack();
         default:             return new OvalTrack();
     }
 }
@@ -897,6 +1136,16 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
 }
 
 // Run through the pending AI drivers, one per frame, while the player drives.
+// The player's damage handicap is a difficulty setting like any other: it is on
+// everywhere except Alien, whose whole premise is that the player is given
+// nothing the field is not. Called once as each session starts, so qualifying
+// and the race agree.
+function applyDifficultyRules(diff) {
+    const prof = (typeof AI_PROFILES !== 'undefined' && AI_PROFILES[diff]) || null;
+    if (typeof playerHandicapOn !== 'undefined')
+        playerHandicapOn = !(prof && prof.noPlayerHandicap);
+}
+
 function qualiTick() {
     if (!qualiQueue.length) return;
     const p = qualiQueue.shift();
@@ -973,6 +1222,7 @@ function startQualifying(forceTrackType) {
     if (isMobile) mobileControls.style.display = 'flex';
 
     raceMode = 'qualifying';
+    lastRunningOrder = [];
     globalSkidMarks = [];
     globalParticles = [];
     document.getElementById('dnf-timer').style.visibility = 'hidden';
@@ -983,6 +1233,7 @@ function startQualifying(forceTrackType) {
     hideSplitHud();
 
     qualiTrackType = forceTrackType || document.getElementById('track-select').value;
+    currentTrackKey = qualiTrackType;            // for the pause panel
     track = makeTrack(qualiTrackType);
     track.getRacingLine();
     track.leaderFinished = false;
@@ -1017,6 +1268,8 @@ function startQualifying(forceTrackType) {
         if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
     }
 
+    applyDifficultyRules(isChampionship ? championshipState.difficulty
+                                       : document.getElementById('difficulty-select').value);
     TOTAL_LAPS = 9999;              // the session ends on lap count, not the flag
     vscActive = false;
     vscEndsAt = null;
@@ -1372,7 +1625,7 @@ const TRACK_LABELS = {
     // 16:9, and calling it Square was misleading.
     circle: 'Circle', serpent: 'Serpent', quadrato: 'Rectangle', triangle: 'Triangle',
     boomerang: 'Boomerang', zipper: 'Zipper', kettle: 'Kettle',
-    harbour: 'Harbour', crossover: 'Crossover', lombard: 'Lombard',
+    harbour: 'Harbour', crossover: 'Crossover', kart: 'Kart',
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown'
 };
 
@@ -1586,8 +1839,11 @@ function startGame(forceTrackType = null) {
     recoveries = [];
     showVscBanner(false);
     const trackType = forceTrackType || document.getElementById('track-select').value;
+    currentTrackKey = trackType;                 // for the pause panel
+    lastRunningOrder = [];
     const color = document.getElementById('color-select').value;
     const difficulty = document.getElementById('difficulty-select').value;
+    applyDifficultyRules(isChampionship ? championshipState.difficulty : difficulty);
 
     track = makeTrack(trackType);
 
@@ -2209,7 +2465,7 @@ function updatePhysics(dt) {
                         // Each car is billed against its own free band, so the
                         // player's wider one does not also let the AI off.
                         const freeOf = (c) => 65 + (c.isPlayer &&
-                            typeof PLAYER_FREE_IMPACT !== 'undefined' ? PLAYER_FREE_IMPACT : 0);
+                            typeof playerFreeImpact === 'function' ? playerFreeImpact() : 0);
                         const dmgOf = (c) => {
                             const f = freeOf(c);
                             return closing <= f ? 0 : 320 * Math.pow((closing - f) / 100, 2);
@@ -3182,6 +3438,8 @@ function updateHUD() {
         if (pa !== pb) return pb - pa;
         return (a.gridIndex || 0) - (b.gridIndex || 0);   // stable at lights-out
     });
+
+    lastRunningOrder = sortedCars;
 
     // ---- lap leaders -------------------------------------------------
     // Each time the leader completes another lap, record who it was. A driver
@@ -4189,7 +4447,7 @@ if (typeof setTimeout === 'function') setTimeout(layoutStage, 0);
 // circuit to the game adds it to the season without touching anything else.
 const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent',
                      'quadrato', 'triangle', 'pettine', 'thunder', 'crown',
-                     'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'lombard'];
+                     'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'kart'];
 const SEASON_DEFAULT = 10;
 
 function seasonRounds() {

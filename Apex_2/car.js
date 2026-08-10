@@ -4,43 +4,68 @@ let __carUid = 0;
 //  TYRE COMPOUNDS
 // -------------------------------------------------------------------------
 //  `grip` is the fresh multiplier, `falloff` how much of it is lost by the
-//  time the tyre is finished, and `life` is the fraction of the RACE the
-//  compound survives.
+//  time the tyre is finished, `life` the fraction of the RACE the compound
+//  survives, and `bite` its own hold on the STEERING RATE.
 //
-//  life is a fraction of the race rather than a number of laps, so a set
-//  lasts proportionally longer the longer the race: a soft is spent after
-//  ~4.5 laps of a 5-lap race and ~9 laps of a 10-lap one.
+//  life is a fraction of the race rather than a number of laps, so a set lasts
+//  proportionally longer the longer the race: a soft is spent after ~4.5 laps
+//  of a 5-lap race and ~9 laps of a 10-lap one. The medium's life came down
+//  from 1.50 to 1.30 as part of this fit: at 1.50 it barely wore at all, which
+//  left it and the hard within 0.2% of each other for a whole stint and meant
+//  the hard's endurance could never buy it anything. It was taken to 1.05
+//  first and that was too far - at Harbour, the tightest of the circuits, the
+//  field lost enough grip late in the race to start running wide, 8.6% of the
+//  sampled frames on the grass against 0.2%, and one car in eight failed to
+//  finish. 1.30 keeps the shape and gives that back. That has a consequence worth
+//  stating, because it decides how these numbers were chosen: if life is a
+//  fraction of the distance then the shape of every stint is identical at
+//  every race length, so race length CANNOT be what makes one compound better
+//  than another, and tuning for "softs win short races" is impossible by
+//  construction. (chooseTyre used to try anyway - see ai.js.)
 //
-//  That has a consequence worth stating, because it decides how these numbers
-//  were chosen. If life is a fraction of the distance then the shape of every
-//  stint is identical at every race length - so race length CANNOT be what
-//  makes one compound better than another, and tuning for "softs win short
-//  races" is impossible by construction.
+//  WHY `bite` HAD TO EXIST. The binding cornering limit in this model is the
+//  steering rate, not the grip - v = maxSteer / (1/R + maxSteer/500) - so grip
+//  is nearly free: measured one knob at a time it is worth -0.012% of lap time
+//  per 1%, against -0.351% for the steering rate. tyrePerf did multiply the
+//  steering rate, but it is the GRIP curve, and nine per cent of it bought the
+//  soft almost nothing while its cliff cost it everything. Measured over a full
+//  solo stint on four circuits: soft +1.8%, medium +0.1%, hard +0.2% off the
+//  best. The soft was not a strategy, it was a trap - never the right call at
+//  any distance, which is why the AI taking it 39% of the time was handing the
+//  player most of a second a lap.
 //
-//  So they are tuned the other way: the three have the same MEAN pace across
-//  a race to within 0.001%, and completely different shapes. Soft starts 10.3%
-//  quicker than hard and finishes 16.6% slower - over its stint it throws away
-//  a quarter of its performance, while the hard loses half a percent. The
-//  first version of these numbers was half as dramatic and the difference was
-//  not noticeable from the driving seat. Nothing is a free win; what
-//  you are choosing is WHEN you want your performance. What then breaks the
-//  tie is situational - track position, how much you slide the car (wear
-//  accrues faster under load), a corner-heavy circuit, and the places-gained
-//  bonus that pays for early aggression.
+//  `bite` multiplies the steering rate directly and FADES WITH THE SET: all of
+//  it on a fresh tyre, none of it on a spent one. So the soft is genuinely the
+//  quickest thing on the road early and genuinely the slowest at the end, and
+//  what you are choosing is WHEN you want your performance. Nothing is a free
+//  win; what breaks the tie is situational - track position, how much you slide
+//  the car (wear accrues faster under load), a corner-heavy circuit, and the
+//  places-gained bonus that pays for early aggression.
 //
-//  The multiplier is applied to the STEERING RATE, not just to grip. In this
-//  car model the binding limit almost everywhere is how fast the car can
-//  change direction, not how much lateral load it can hold - so a compound
-//  that only touched `grip` would have been nearly invisible, the same trap
-//  the rain fell into.
+//  FITTED, not chosen (tyrefit.js sweeps `bite` and the medium's life over full
+//  solo stints). Three things had to be true at once, and every candidate that
+//  satisfied two of them failed the third:
+//
+//    * no compound more than 1.5% better over a full race  -> worst case 1.46%
+//    * the first lap goes  soft < medium < hard
+//    * the last lap goes   hard < medium < soft
+//
+//  The middle one is what killed the earlier candidates: several closed the
+//  overall gap by making the HARD quicker than the medium on a fresh set,
+//  which is nonsense however good the totals look.
+//
+//  Note the fit is done at medium difficulty, not at impossible. At the top of
+//  the ladder the AI is pinned against its own `maxCorner` ceiling, so extra
+//  steering rate is partly thrown away and the soft measures better than it
+//  is; the player has no such ceiling.
 // =========================================================================
 const TYRES = {
     soft:   { key: 'soft',   label: 'Soft',   short: 'S', colour: '#e53935',
-              grip: 1.090, falloff: 0.2285, life: 0.90 },
+              grip: 1.090, falloff: 0.2285, life: 0.90, bite: 1.010 },
     medium: { key: 'medium', label: 'Medium', short: 'M', colour: '#fdd835',
-              grip: 1.000, falloff: 0.0696, life: 1.50 },
+              grip: 1.000, falloff: 0.0696, life: 1.30, bite: 1.000 },
     hard:   { key: 'hard',   label: 'Hard',   short: 'H', colour: '#e0e0e0',
-              grip: 0.988, falloff: 0.0240, life: 2.60 }
+              grip: 0.988, falloff: 0.0240, life: 2.60, bite: 1.005 }
 };
 const TYRE_KEYS = ['soft', 'medium', 'hard'];
 
@@ -130,6 +155,12 @@ const CHASSIS_DEFAULT = 'ridge';
 // while learning a corner are genuinely free rather than merely cheap.
 const PLAYER_DAMAGE_SCALE = 0.45;
 const PLAYER_FREE_IMPACT = 28;      // px/s of closing speed added to the free band
+// ...and taken away again at Alien, where the point of the level is that the
+// player is given nothing the field is not. Set by main.js when the session
+// starts; everything that reads the two constants goes through these instead.
+let playerHandicapOn = true;
+function playerDamageScale() { return playerHandicapOn ? PLAYER_DAMAGE_SCALE : 1; }
+function playerFreeImpact() { return playerHandicapOn ? PLAYER_FREE_IMPACT : 0; }
 
 class Car {
     constructor(x, y, color, isPlayer = false) {
@@ -215,6 +246,7 @@ class Car {
         this.tyre = TYRES.medium;
         this.tyreWear = 0;
         this.tyrePerf = 1;
+        this.tyreSteer = 1;
 
         // Blue flag (set each frame by main.js when a car on a higher lap closes in)
         this.blueFlag = false;
@@ -283,6 +315,10 @@ class Car {
         // ^1.6: the first half of a set costs almost nothing, the last of it
         // falls away quickly - the cliff is what makes the choice interesting.
         this.tyrePerf = tyre.grip - tyre.falloff * Math.pow(w, 1.6);
+        // The compound's own hold on the steering rate, fading with the set:
+        // all of it on a fresh tyre, none of it on a spent one.
+        const bite = tyre.bite === undefined ? 1 : tyre.bite;
+        this.tyreSteer = this.tyrePerf * (1 + (bite - 1) * Math.max(0, 1 - w));
 
         // Adjust physics based on surface
         let currentGrip = this.baseGrip * this.condition * this.tyrePerf;
@@ -408,7 +444,7 @@ class Car {
             // tenth of the input reaches the road, so the car carries straight
             // on through the water whatever you ask of it.
             const aqua = 1 - 0.90 * (this.aquaplane || 0);
-            const steerEffectiveness = speedTerm * understeer * (this.tyrePerf || 1) * aqua;
+            const steerEffectiveness = speedTerm * understeer * (this.tyreSteer || this.tyrePerf || 1) * aqua;
             const steerAmount = this.maxSteer * dt * steerEffectiveness;
 
             // Allow reversing steer direction if going backwards
@@ -730,7 +766,7 @@ class Car {
         // contact the AI never has. Scaling the player's damage compensates
         // for that gap rather than making the car tougher: barriers and
         // contact still hurt, they just stop ending a race in one mistake.
-        if (this.isPlayer) amount *= PLAYER_DAMAGE_SCALE;
+        if (this.isPlayer) amount *= playerDamageScale();
         this.health -= amount;
         if (this.health <= 0) {
             this.health = 0;
