@@ -217,36 +217,64 @@ const AI_PROFILES = {
 //  corner-dominated, so the corner/straight split above already creates rain
 //  specialists on its own, and the honest wet-weather ranking is the NET of
 //  the two. These values are the correction that lands the net order where it
-//  is meant to be (Schumacher, Hamilton and Senna strongest; Lauda and Vettel
-//  weakest) with a spread of about four places instead of eight. That is why
-//  a rain expert can carry a number below 1.
+//  is meant to be. That is why a rain expert can carry a number below 1.
+//
+//  REFITTED, and the refit found a bug rather than a balance problem. The
+//  measured order used to be almost exactly reversed - Senna slowest of the ten
+//  in the rain, Lauda quickest, when the profiles say the opposite - and no
+//  value of this column could have fixed it, because the cause was upstream:
+//  ai.js aimed at 0.20 of dry grip in the wet while car.js delivered 0.13. The
+//  AI believed the road was 54% grippier than it was, aimed about 24% past the
+//  limit in every wet corner, and scrubbed - and the higher a driver's wetSkill
+//  the further past the limit it aimed. The drivers meant to be best in the
+//  rain were the ones being punished by it. Both now read WET_GRIP from car.js.
+//
+//  With that fixed the column was refitted by measurement (wetfit.js: solo wet
+//  laps, four circuits, the gap averaged per circuit so the longest lap cannot
+//  decide it). Measured order now, quickest to slowest in the rain:
+//
+//      Hamilton, Senna, Schumacher, Clark, Alonso,
+//      Fangio, Verstappen, Vettel, Lauda, Prost        spread 4.5%
+//
+//  which is what every profile says: the three this file names as strongest in
+//  the rain are the three quickest in it, Clark - "quick in the wet" - is
+//  fourth, and Verstappen, Vettel, Lauda and Prost, the four whose comments say
+//  the rain is not their weather, are the four slowest.
+//
+//  Two things about the fitting itself, both learned the hard way. The error
+//  has to be MEAN-CENTRED before it is stepped on, because both the measurement
+//  and the target are quoted as a gap to whoever is quickest - so the level is
+//  not a real quantity and stepping on the raw error walked nine of the ten
+//  drivers into the same cap in one move. And a single linear extrapolation
+//  from one probe point overshot to a worst error of 3.4 points; iterating with
+//  a damped step got it to 1.2.
 //
 //  Change any personality trait and both columns need refitting.
 const AI_DRIVER_STYLES = {
     // Blinding through the quick stuff and peerless in the rain; gives it back
     // on the straights and lives closest to the edge - by far the most mistakes.
-    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.024, cleanAir: 1, trim: 0.9979 },
+    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.026, cleanAir: 1, trim: 0.9979 },
     // The Professor: never errs, superb alone - and genuinely poor in the wet
     // and reluctant wheel to wheel.
-    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.990, cleanAir: 1.01, trim: 1.0114 },
+    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.988, cleanAir: 1.01, trim: 1.0114 },
     // Relentless metronome, brutal on defence, superb in the rain; nothing
     // special in clean air.
-    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.047, cleanAir: 0.999, trim: 1.0002 },
+    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.050, cleanAir: 0.999, trim: 1.0002 },
     // Latest braker on the grid, never yields - and error-prone with it.
-    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.981, cleanAir: 0.998, trim: 1.0126 },
+    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.949, cleanAir: 0.998, trim: 1.0126 },
     // Thrives in the wet and in a fight; the weakest of the lot on his own.
-    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.007, cleanAir: 0.997, trim: 1.0010 },
+    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.038, cleanAir: 0.997, trim: 1.0010 },
     // Unbeatable wheel to wheel, ordinary once the road is clear.
-    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.010, cleanAir: 0.997, trim: 0.9954 },
+    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.044, cleanAir: 0.997, trim: 0.9954 },
     // Devastating in clean air and on a straight; hates traffic and the rain.
-    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 1.012, cleanAir: 1.014, trim: 0.9973 },
+    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.986, cleanAir: 1.014, trim: 0.9973 },
     // Famously smooth and almost mistake-free; passive in a fight.
-    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.021, cleanAir: 1.005, trim: 0.9928 },
+    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.011, cleanAir: 1.005, trim: 0.9928 },
     // The computer: calculated risk, no heroics, no mistakes - and no pace in
     // the wet.
-    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.020, cleanAir: 1.008, trim: 0.9919 },
+    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.014, cleanAir: 1.008, trim: 0.9919 },
     // Wins at the slowest speed necessary: no weakness, no standout either.
-    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.018, cleanAir: 1.003, trim: 0.9988 }
+    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.015, cleanAir: 1.003, trim: 0.9988 }
 };
 
 // Physics constants mirrored from car.js - keep in sync if the car changes.
@@ -592,7 +620,21 @@ class AI {
 
         let gripScale = condition;
         if (typeof isRaining !== 'undefined' && isRaining) {
-            gripScale = 0.20 * (this.p.wetSkill || 1);   // matches car.js exactly
+            // WET_GRIP is car.js's number, imported rather than copied. It used
+            // to be written out here as 0.20 with a comment saying it matched
+            // car.js exactly. It had not matched for some time: car.js was taken
+            // to 0.13 so that rain would cost real lap time, and this line was
+            // not moved with it.
+            //
+            // The consequence was not a rounding. In the rain the AI believed it
+            // had 0.20/0.13 = 1.54x the grip it actually had, so it aimed at a
+            // corner speed about 24% too high, ran wide of the limit and scrubbed
+            // - and the better a driver's wetSkill, the further past the limit it
+            // aimed. That is why the wet-weather ranking came out inverted, with
+            // the drivers meant to be strongest in the rain slowest in it: the
+            // wet balance could not work while the AI was driving to a circuit
+            // that was 54% grippier than the one underneath it.
+            gripScale = WET_GRIP * (this.p.wetSkill || 1);
         }
         if (onGrass) gripScale *= 0.3;
         else if (onKerb) gripScale *= 0.80;

@@ -492,6 +492,21 @@ logBtn.addEventListener('click', () => {
     logBody.scrollTop = logBody.scrollHeight;
 });
 
+// The two reference screens. They are pure reading - nothing they do can start
+// a session - so they simply swap places with the menu and swap back.
+document.getElementById('explore-tracks-btn')
+    .addEventListener('click', () => showExploreTracks());
+document.getElementById('explore-drivers-btn')
+    .addEventListener('click', () => showExploreDrivers());
+document.getElementById('ex-tracks-back').addEventListener('click', () => {
+    document.getElementById('explore-tracks').style.display = 'none';
+    menu.style.display = 'block';
+});
+document.getElementById('ex-drivers-back').addEventListener('click', () => {
+    document.getElementById('explore-drivers').style.display = 'none';
+    menu.style.display = 'block';
+});
+
 document.getElementById('log-close-btn').addEventListener('click', () => {
     logScreen.style.display = 'none';
 });
@@ -1538,30 +1553,73 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
 // GRAND PRIX PREVIEW (championship)
 // ===========================================================================
 
-// Corners from the racing line: signed heading change per node, grouped into
-// runs of consistent sign. In canvas coordinates y points down, so a positive
-// heading change is a RIGHT-hand corner.
-function countCorners(line) {
-    const N = line.count, nodes = line.nodes, ds = line.ds;
-    const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
-    let left = 0, right = 0;
-    let runSign = 0, runTurn = 0, gap = 0;
-    const close = () => {
-        // 0.35 rad ~ 20 degrees: kinks smaller than that are not corners
-        if (Math.abs(runTurn) > 0.35) { if (runSign > 0) right++; else left++; }
-        runSign = 0; runTurn = 0; gap = 0;
+// Corners, counted from the circuit's own SEGMENTS rather than from the racing
+// line. In canvas coordinates y points down, so a positive sweep is a RIGHT.
+//
+// The first version read the racing line and only counted a node as "curved
+// enough to matter" if its local radius was under 500px. That is a threshold on
+// the RACING LINE, and the racing line is precisely the thing that straightens
+// corners out: it brakes wide, clips the apex and exits wide, so on a broad
+// circuit a real 90-degree corner comes out with a radius well over 500 and was
+// not counted at all. Rectangle - four square corners, and nobody would argue -
+// was reported as having two, because two of its four had been relaxed past the
+// threshold and two had not. It was not off by a rounding, it was silently
+// dropping half the circuit.
+//
+// The segments have no such problem: they are the design. An arc is a corner. A
+// run of arcs bending the same way with nothing between them is ONE corner, the
+// way a double-apex is one corner; put a straight between them and they are
+// two. The only judgement left is how much bend counts, and how long a straight
+// has to be to separate two corners - and both of those are honest questions
+// about the shape rather than artefacts of the measurement.
+const CORNER_MIN_TURN = 0.35;   // ~20 degrees; less than that is a kink
+const CORNER_SPLIT_RUN = 25;    // px of straight that separates two corners
+
+function countCorners(track) {
+    const segs = (track && track.segments) || [];
+    if (!segs.length) return { left: 0, right: 0 };
+
+    // signed heading change of an arc, which is its sweep
+    const sweepOf = (g) => {
+        let d = g.end - g.start;
+        if (!g.ccw) { while (d <= 0) d += Math.PI * 2; while (d > Math.PI * 2) d -= Math.PI * 2; }
+        else { while (d >= 0) d -= Math.PI * 2; while (d < -Math.PI * 2) d += Math.PI * 2; }
+        return d;
     };
-    for (let i = 0; i < N; i++) {
-        const dh = wrap(nodes[(i + 1) % N].heading - nodes[i].heading);
-        const R = Math.abs(dh) > 1e-6 ? ds / Math.abs(dh) : Infinity;
-        const sign = Math.sign(dh);
-        if (R < 500 && sign !== 0) {           // curved enough to matter
-            if (runSign === 0) runSign = sign;
-            if (sign === runSign) { runTurn += dh; gap = 0; }
-            else { close(); runSign = sign; runTurn = dh; }
-        } else if (runSign !== 0 && ++gap > 4) {
-            close();
+
+    // Start the walk on a straight wherever there is one, so a corner is never
+    // cut in half by the seam. If the circuit is all arcs - Circle, Peanut -
+    // the seam is closed at the end instead.
+    let startAt = segs.findIndex(g => g.type === 'line' &&
+        Math.hypot(g.x2 - g.x1, g.y2 - g.y1) >= CORNER_SPLIT_RUN);
+    const allArcs = startAt < 0;
+    if (allArcs) startAt = 0;
+
+    let left = 0, right = 0, runTurn = 0, runSign = 0;
+    let firstTurn = 0, firstSign = 0, opened = false;
+    const close = () => {
+        if (Math.abs(runTurn) > CORNER_MIN_TURN) { if (runSign > 0) right++; else left++; }
+        runTurn = 0; runSign = 0;
+    };
+    for (let n = 0; n < segs.length; n++) {
+        const g = segs[(startAt + n) % segs.length];
+        if (g.type === 'line') {
+            if (Math.hypot(g.x2 - g.x1, g.y2 - g.y1) >= CORNER_SPLIT_RUN) close();
+            continue;
         }
+        const d = sweepOf(g);
+        const sign = Math.sign(d) || runSign;
+        if (runSign !== 0 && sign !== runSign) close();
+        if (runSign === 0) runSign = sign;
+        runTurn += d;
+        if (!opened) { opened = true; }
+        if (n === 0) { firstTurn = runTurn; firstSign = runSign; }
+    }
+    // On an all-arc circuit the walk starts inside a corner, so the run still
+    // open at the end is the same corner the walk began in - joining them, not
+    // counting them twice, is what makes Circle one corner and not two.
+    if (allArcs && runSign !== 0 && runSign === firstSign) {
+        // already accumulated together, since nothing closed the run
     }
     close();
     return { left, right };
@@ -1644,7 +1702,7 @@ function showGpPreview(trackType) {
 
     const pTrack = makeTrack(trackType);
     const line = pTrack.getRacingLine();
-    const corners = countCorners(line);
+    const corners = countCorners(pTrack);
     const stats = measureTrackStats(pTrack, wet);
 
     document.getElementById('gp-title').innerText =
@@ -1684,6 +1742,438 @@ function showGpPreview(trackType) {
     document.getElementById('gp-start-btn').innerText =
         qualifyingEnabled() ? 'Start Qualifying' : 'Start Race';
     document.getElementById('gp-preview').style.display = 'block';
+}
+
+// ===========================================================================
+//  EXPLORE  -  two reference screens off the menu.
+//
+//  Everything on them is COMPUTED, never a table typed alongside the game and
+//  left to rot: the circuit numbers come from the circuit, the driver bars come
+//  from AI_DRIVER_STYLES, and the lap records are measured by running the
+//  game's own qualifying simulation when you open a card. A record that is
+//  measured cannot disagree with the build it is printed in.
+// ===========================================================================
+
+const EX_DRIVER_NAMES = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton',
+    'Max Verstappen', 'Fernando Alonso', 'Sebastian Vettel', 'Alain Prost',
+    'Jim Clark', 'Niki Lauda', 'Juan Manuel Fangio'];
+
+// A line of prose per driver. The numbers below it are the truth; this is what
+// the numbers add up to.
+//
+// These have been rewritten twice, and the second rewrite is the interesting
+// one. Written first from the comments in AI_DRIVER_STYLES, they were then
+// contradicted by the measurement - Senna slowest in the rain, Lauda quickest,
+// the exact reverse of every profile - so they were rewritten to match the
+// stopwatch. Then the cause turned up: ai.js was aiming at 0.20 of dry grip in
+// the wet while car.js delivered 0.13, so the AI drove every wet corner 24%
+// past the limit and the drivers who lean hardest on the car suffered most.
+// With the two numbers agreeing and the wet column refitted on top, the
+// original descriptions are true again, and these are them.
+const EX_DRIVER_BLURB = {
+    'Ayrton Senna': 'Blinding through the quick stuff and second to nobody but Schumacher in the rain. He gives it back on the straights, and he lives closer to the edge than anybody: by a distance the most mistakes on the grid.',
+    'Alain Prost': 'The Professor. Almost never errs and is superb with the road to himself — and genuinely poor in the wet, and the most reluctant on the grid to go wheel to wheel.',
+    'Michael Schumacher': 'A relentless metronome. Brutal on defence, brakes later than almost anyone, and the quickest of the ten when it rains. Nothing special once the road is clear, which is where the others take it back.',
+    'Max Verstappen': 'The latest braker on the grid and he never yields an inch. That commitment is not free: he makes real mistakes, and he is mid-field at best in the wet.',
+    'Lewis Hamilton': 'Thrives in a fight and reads the circuit further ahead than anyone else. Handy in the rain and the weakest of the ten with the road to himself: a racer rather than a time-triallist.',
+    'Fernando Alonso': 'Unbeatable wheel to wheel. He will sit closer to your gearbox than anyone, will not be moved off a line, and is one of the three quickest in the wet. Ordinary once the road is clear.',
+    'Sebastian Vettel': 'Devastating in clean air and down a straight. Give him the lead and he disappears; put him in traffic and he would rather wait than fight. The rain is not his weather.',
+    'Jim Clark': 'Famously smooth — the gentlest hands here — and almost mistake-free, which is why he is quick in the wet. Passive in a fight, and that is what it costs him.',
+    'Niki Lauda': 'The computer. Calculated risk, no heroics, no mistakes, and real speed down a straight. He has no pace at all in the rain, and he will not fight you for a place he can take later.',
+    'Juan Manuel Fangio': 'Wins at the slowest speed necessary. No weakness anywhere and no standout either, which over a long calendar is its own kind of weapon.'
+};
+
+// The bars. Each is a value from the style table turned into a 0..1 fill, with
+// the range chosen so the ten drivers actually spread across it - a bar where
+// everyone sits at 80% tells you nothing. `inv` means low is good.
+const EX_BARS = [
+    { k: 'corner',   label: 'Cornering',  lo: 0.980, hi: 1.035 },
+    { k: 'straight', label: 'Straights',  lo: 0.975, hi: 1.030 },
+    { k: 'brake',    label: 'Late braking', lo: 0.86, hi: 1.20 },
+    { k: 'cleanAir', label: 'Clean air',  lo: 0.995, hi: 1.016 },
+    { k: 'overtake', label: 'Attacking',  lo: 0.68, hi: 1.02 },
+    { k: 'defend',   label: 'Defending',  lo: 0.52, hi: 1.02 },
+    { k: 'gap',      label: 'Sits close', lo: 1.28, hi: 0.70 },   // inverted on purpose
+    { k: 'err',      label: 'Consistency', lo: 1.95, hi: 0.20 },  // inverted: fewer mistakes is better
+    { k: 'steerTau', label: 'Smooth hands', lo: 0.68, hi: 1.48 }
+];
+
+function exBarFrac(v, b) {
+    const f = (v - b.lo) / (b.hi - b.lo);
+    return Math.max(0, Math.min(1, f));
+}
+function exBarColour(f) {
+    // one hue ramp, so a long bar always reads as "more of this"
+    return f > 0.72 ? '#7fe08a' : (f > 0.38 ? '#c9d36a' : '#e0a76a');
+}
+
+// WET WEATHER IS MEASURED, not read off the table.
+//
+// There is a `wet` column in AI_DRIVER_STYLES and it would be the obvious thing
+// to put a bar on. It would also be wrong. That column is a CORRECTION, not an
+// ability: a wet race is corner-dominated, so the corner/straight split already
+// makes rain specialists on its own, and the column is only what lands the NET
+// order where it is meant to be - which is why a rain expert can carry a number
+// below 1. Ranking the drivers by it puts Prost near the top, and Prost is the
+// one the profile calls poor in the rain.
+//
+// So the screen runs the laps instead: a dry one and a wet one for every
+// driver, and ranks them on the wet time itself. See exWetFrac for why the
+// wet-to-dry RATIO, which is the obvious measure, is also the wrong one.
+//
+// FOUR circuits, and they are the same four the wet balance was fitted on
+// (wetfit.js). Two - Circle, one long corner, and Oval, mostly straight - were
+// enough to show the shape, but not to agree with the fit: Clark came out
+// fourth in the rain over four circuits and seventh over those two, because
+// which circuits you pick is itself a wet-weather bias. A screen that reports
+// a different order from the one the balance was set to is a screen arguing
+// with the game.
+const EX_WET_TRACKS = ['circle', 'oval', 'f1', 'serpent'];
+const exWet = { done: 0, total: EX_DRIVER_NAMES.length * EX_WET_TRACKS.length * 2, by: {} };
+
+// What the bar shows is ABSOLUTE pace in the rain, not the ratio of wet to dry.
+//
+// The ratio was the first thing tried and it is a trap: in the wet the corners
+// collapse and the straights do not, so whoever spends most of the lap flat out
+// keeps the highest fraction of their dry time. It ranked Lauda and Prost - the
+// two straight-line specialists, and the two the profiles call poor in the rain
+// - at the top, and Senna and Schumacher at the bottom. It was measuring how
+// much straight a driver's lap contains.
+//
+// Who is quickest when it rains is the question a driver card is being asked,
+// so that is what it answers: the wet lap time itself, over both circuits, as a
+// gap to whoever is fastest.
+// The gap is averaged PER CIRCUIT, not summed across them. Adding the two lap
+// times together weights whichever circuit is longer, and the two are chosen
+// precisely because they disagree - so the Oval, being the slower lap, would
+// have quietly decided the ranking on its own and the answer would have been
+// "who is quick on a straight" all over again.
+function exWetGap(name) {
+    const r = exWet.by[name];
+    if (!r) return null;
+    const gaps = [];
+    for (const tk of EX_WET_TRACKS) {
+        const mine = r[tk] && r[tk].wet;
+        if (!mine) return null;
+        const all = EX_DRIVER_NAMES.map(n => exWet.by[n] && exWet.by[n][tk] && exWet.by[n][tk].wet)
+            .filter(Boolean);
+        if (all.length < EX_DRIVER_NAMES.length) return null;
+        const best = Math.min(...all);
+        gaps.push((mine - best) / best);
+    }
+    return gaps.reduce((a, x) => a + x, 0) / gaps.length;
+}
+function exWetFrac(name) {
+    const mine = exWetGap(name);
+    if (mine === null) return null;
+    const all = EX_DRIVER_NAMES.map(exWetGap);
+    if (all.some(x => x === null)) return null;
+    const best = Math.min(...all), worst = Math.max(...all);
+    return { gap: mine, frac: worst > best ? (worst - mine) / (worst - best) : 0.5 };
+}
+
+function exMeasureWet(done) {
+    if (exWet.done >= exWet.total) { if (done) done(); return; }
+    const jobs = [];
+    for (const tk of EX_WET_TRACKS)
+        for (const wet of [false, true])
+            for (const name of EX_DRIVER_NAMES) jobs.push({ name, wet, tk });
+    const tracks = {};
+    for (const tk of EX_WET_TRACKS) { tracks[tk] = makeTrack(tk); tracks[tk].getRacingLine(); }
+    let i = 0;
+    const step = () => {
+        if (document.getElementById('explore-drivers').style.display === 'none') return;
+        const t0 = performance.now();
+        while (i < jobs.length && performance.now() - t0 < 45) {
+            const j = jobs[i++];
+            // pinned for the same reason as the records, on the middle
+            // compound because this is a comparison between drivers rather
+            // than a record attempt
+            const ms = exPinnedTyre('medium', () =>
+                simulateQualifyingLap(tracks[j.tk], j.name, 'alien', 1.1, j.wet, 'ridge'));
+            exWet.done++;
+            if (ms) {
+                const r = exWet.by[j.name] = exWet.by[j.name] || {};
+                (r[j.tk] = r[j.tk] || {})[j.wet ? 'wet' : 'dry'] = ms;
+            }
+        }
+        exRenderDrivers();
+        if (i < jobs.length) setTimeout(step, 0); else if (done) done();
+    };
+    setTimeout(step, 0);
+}
+
+// Strengths and weaknesses are not written down either: they are whatever this
+// driver is furthest from the field on, in each direction.
+function exDriverTags(name) {
+    const s = AI_DRIVER_STYLES[name];
+    if (!s) return { up: [], down: [] };
+    const scored = EX_BARS.map(b => {
+        const mine = exBarFrac(s[b.k], b);
+        const others = EX_DRIVER_NAMES.filter(n => n !== name)
+            .map(n => exBarFrac(AI_DRIVER_STYLES[n][b.k], b));
+        const avg = others.reduce((a, x) => a + x, 0) / others.length;
+        return { label: b.label, d: mine - avg };
+    });
+    // and the measured one, once it exists
+    const w = exWetFrac(name);
+    if (w) {
+        const all = EX_DRIVER_NAMES.map(exWetFrac).filter(Boolean).map(x => x.frac);
+        const avg = all.reduce((a, x) => a + x, 0) / all.length;
+        scored.push({ label: 'Wet weather', d: w.frac - avg });
+    }
+    scored.sort((a, b) => b.d - a.d);
+    return {
+        up: scored.filter(x => x.d > 0.16).slice(0, 3).map(x => x.label),
+        down: scored.filter(x => x.d < -0.16).slice(-3).map(x => x.label)
+    };
+}
+
+function exDriverCardHtml(name) {
+    const s = AI_DRIVER_STYLES[name];
+    const tags = exDriverTags(name);
+    const code = DRIVER_CODES[name] || name.slice(0, 3).toUpperCase();
+    const bars = EX_BARS.map(b => {
+        const f = exBarFrac(s[b.k], b);
+        return `<div class="ex-bar-row"><span class="lab">${b.label}</span>` +
+            `<span class="ex-bar"><i style="width:${(f * 100).toFixed(0)}%;` +
+            `background:${exBarColour(f)};"></i></span>` +
+            `<span class="num">${s[b.k].toFixed(b.hi > 1.1 || b.lo > 1.1 ? 2 : 3)}</span></div>`;
+    }).join('');
+    // the measured wet row sits with the others, marked as what it is
+    const w = exWetFrac(name);
+    const wetRow = w
+        ? `<div class="ex-bar-row"><span class="lab">Wet weather</span>` +
+          `<span class="ex-bar"><i style="width:${(w.frac * 100).toFixed(0)}%;` +
+          `background:#64b5f6;"></i></span>` +
+          `<span class="num">${w.gap < 0.0005 ? 'best' : '+' + (100 * w.gap).toFixed(1) + '%'}</span></div>`
+        : `<div class="ex-bar-row"><span class="lab">Wet weather</span>` +
+          `<span class="ex-bar"></span><span class="num" style="opacity:0.4;">&hellip;</span></div>`;
+    return `<div class="ex-driver" style="border-left-color:${exDriverHue(name)};">` +
+        `<div class="ex-code">${code}</div>` +
+        `<h3>${name}</h3>` +
+        `<div class="ex-blurb">${EX_DRIVER_BLURB[name] || ''}</div>` +
+        `<div class="ex-tags">` +
+        tags.up.map(t => `<span class="ex-tag up">${t}</span>`).join('') +
+        tags.down.map(t => `<span class="ex-tag down">${t}</span>`).join('') +
+        `</div>${bars}${wetRow}</div>`;
+}
+// A stable colour per driver, so a card is recognisable at a glance.
+function exDriverHue(name) {
+    const i = EX_DRIVER_NAMES.indexOf(name);
+    return `hsl(${(i * 36 + 12) % 360}, 62%, 58%)`;
+}
+
+function exRenderDrivers() {
+    const grid = document.getElementById('ex-driver-grid');
+    if (!grid) return;
+    const head = exWet.done < exWet.total
+        ? `<div style="grid-column:1/-1;font-size:11px;opacity:0.5;">` +
+          `running wet and dry laps to rank the rain &mdash; ${exWet.done} of ${exWet.total}</div>`
+        : '';
+    grid.innerHTML = head + EX_DRIVER_NAMES.map(exDriverCardHtml).join('');
+}
+
+function showExploreDrivers() {
+    menu.style.display = 'none';
+    document.getElementById('explore-drivers').style.display = 'block';
+    exRenderDrivers();
+    exMeasureWet();
+}
+
+// --- the circuits ----------------------------------------------------------
+
+// Draw a circuit into a canvas, scaled to the arena. Used by both the little
+// cards and the opened page.
+function exDrawTrack(canvas, track) {
+    const ctx = canvas.getContext('2d');
+    const aw = ARENA_X1 - ARENA_X0, ah = ARENA_Y1 - ARENA_Y0;
+    const sc = Math.min(canvas.width / aw, canvas.height / ah);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(sc, 0, 0, sc,
+        (canvas.width - aw * sc) / 2 - ARENA_X0 * sc,
+        (canvas.height - ah * sc) / 2 - ARENA_Y0 * sc);
+    ctx.fillStyle = '#2f6f36';
+    ctx.fillRect(ARENA_X0, ARENA_Y0, aw, ah);
+    track._stands = [];        // no crowd on a thumbnail
+    track.puddles = [];
+    track.draw(ctx);
+}
+
+// Measured records, kept for the session so reopening a circuit is instant.
+const exRecords = {};          // key -> { dry: {ms, who}, wet: {...}, done, total }
+
+// Run something with every driver on the same rubber. Both measurements on
+// these screens compare drivers with each other, and chooseTyre is random by
+// design, so without this the comparison is partly a coin toss.
+function exPinnedTyre(key, fn) {
+    const real = AI.chooseTyre;
+    AI.chooseTyre = () => key;
+    try { return fn(); } finally { AI.chooseTyre = real; }
+}
+
+function exTrackStats(track) {
+    const line = track.getRacingLine();
+    const corners = countCorners(track);
+    return { line, corners };
+}
+
+function exShowTrackList() {
+    const grid = document.getElementById('ex-track-grid');
+    const detail = document.getElementById('ex-track-detail');
+    if (detail) detail.style.display = 'none';
+    if (!grid) return;
+    grid.style.display = 'grid';
+    grid.innerHTML = '';
+    for (const key of SEASON_POOL) {
+        const btn = document.createElement('button');
+        btn.className = 'ex-card';
+        const cv = document.createElement('canvas');
+        cv.width = 200; cv.height = 140;
+        btn.appendChild(cv);
+        const t = makeTrack(key);
+        exDrawTrack(cv, t);
+        const line = t.getRacingLine();
+        const name = document.createElement('div');
+        name.className = 'ex-name';
+        name.innerText = TRACK_LABELS[key] || key;
+        const meta = document.createElement('div');
+        meta.className = 'ex-meta';
+        meta.innerText = (line.length / 1000).toFixed(2) + ' km';
+        btn.appendChild(name);
+        btn.appendChild(meta);
+        btn.addEventListener('click', () => exOpenTrack(key));
+        grid.appendChild(btn);
+    }
+}
+
+function exOpenTrack(key) {
+    const grid = document.getElementById('ex-track-grid');
+    const detail = document.getElementById('ex-track-detail');
+    if (!detail) return;
+    grid.style.display = 'none';
+    detail.style.display = 'block';
+
+    const track = makeTrack(key);
+    const { line, corners } = exTrackStats(track);
+    const dry = measureTrackStats(track, false);
+    const wet = measureTrackStats(track, true);
+
+    const cells = [
+        ['Length', (line.length / 1000).toFixed(2) + ' km'],
+        ['Corners', String(corners.left + corners.right)],
+        ['Left / Right', corners.left + ' L / ' + corners.right + ' R'],
+        ['Road width', Math.round(track.trackWidth * 2) + ' m'],
+        ['Top speed', Math.round(dry.vmax * 0.5) + ' km/h'],
+        ['Est. lap', dry.lap ? (dry.lap / 1000).toFixed(1) + 's' : '—'],
+        ['In the wet', wet.lap ? (wet.lap / 1000).toFixed(1) + 's' : '—'],
+        ['Wet penalty', (dry.lap && wet.lap)
+            ? '+' + (100 * (wet.lap - dry.lap) / dry.lap).toFixed(0) + '%' : '—'],
+        ['Tightest corner', Math.round(exTightest(track)) + ' m']
+    ];
+
+    detail.innerHTML =
+        `<div class="ex-d-head"><h2>${TRACK_LABELS[key] || key}</h2>` +
+        `<button id="ex-track-list-btn" style="width:auto;margin:0;padding:6px 14px;` +
+        `font-size:12px;background:#37474f;color:#cfd8dc;">All circuits</button></div>` +
+        `<div class="ex-d-body">` +
+        `<canvas id="ex-d-map" width="380" height="266"></canvas>` +
+        `<div class="ex-d-side">` +
+        `<div class="ex-grid">` +
+        cells.map(c => `<div class="ex-cell"><div class="ex-k">${c[0]}</div>` +
+            `<div class="ex-v">${c[1]}</div></div>`).join('') +
+        `</div>` +
+        `<div class="ex-rec" id="ex-rec"></div>` +
+        `</div></div>`;
+
+    exDrawTrack(document.getElementById('ex-d-map'), track);
+    document.getElementById('ex-track-list-btn')
+        .addEventListener('click', exShowTrackList);
+    exRenderRecords(key);
+    exMeasureRecords(key);
+}
+
+// The tightest corner on the circuit, as a radius. Read off the racing line,
+// because that is the radius a car actually has to take.
+function exTightest(track) {
+    const line = track.getRacingLine();
+    let r = Infinity;
+    for (let i = 0; i < line.count; i++) {
+        const v = line.nodes[i].radius;
+        if (v < r) r = v;
+    }
+    return Math.min(r, 9999);
+}
+
+function exRenderRecords(key) {
+    const box = document.getElementById('ex-rec');
+    if (!box) return;
+    const rec = exRecords[key];
+    const row = (cls, label, r) => {
+        if (!r || !r.ms) return `<div class="ex-rec-row ${cls}"><span class="who">${label}</span>` +
+            `<span class="t">—</span></div>`;
+        return `<div class="ex-rec-row ${cls}"><span class="who">${label} &mdash; ` +
+            `${r.who}</span><span class="t">${(r.ms / 1000).toFixed(3)}</span></div>`;
+    };
+    let html = `<div class="ex-rec-h">Lap record</div>` +
+        row('ex-rec-dry', 'Dry', rec && rec.dry) +
+        row('ex-rec-wet', 'Wet', rec && rec.wet);
+    if (!rec || rec.done < rec.total) {
+        const f = rec ? rec.done / rec.total : 0;
+        html += `<div class="ex-progress"><i style="width:${(f * 100).toFixed(0)}%"></i></div>` +
+            `<div style="font-size:10px;opacity:0.5;margin-top:5px;">` +
+            `running qualifying &mdash; ${rec ? rec.done : 0} of ${rec ? rec.total : 20} laps</div>`;
+    } else {
+        html += `<div style="font-size:10px;opacity:0.5;margin-top:6px;">` +
+            `every driver, one flying lap each, dry and wet</div>`;
+    }
+    box.innerHTML = html;
+}
+
+// Run the game's own qualifying simulation for every driver, in both
+// conditions, a few at a time so the page stays alive while it works. The
+// record is whatever this build actually produces - not a number typed here.
+function exMeasureRecords(key) {
+    if (exRecords[key] && exRecords[key].done >= exRecords[key].total) return;
+    const jobs = [];
+    for (const wet of [false, true])
+        for (const name of EX_DRIVER_NAMES) jobs.push({ name, wet });
+    const rec = exRecords[key] = { dry: null, wet: null, done: 0, total: jobs.length };
+    const qTrack = makeTrack(key);
+    qTrack.getRacingLine();
+    let i = 0;
+    const step = () => {
+        // still on this circuit's page?
+        if (document.getElementById('explore-tracks').style.display === 'none') return;
+        const t0 = performance.now();
+        while (i < jobs.length && performance.now() - t0 < 45) {
+            const j = jobs[i++];
+            // THE COMPOUND IS PINNED. simulateQualifyingLap normally lets
+            // chooseTyre draw one, and chooseTyre is deliberately random - which
+            // is right in a session and wrong here. A record that depends on
+            // which rubber a driver happened to draw is not a record, it is a
+            // lottery, and it showed: the same circuit gave a different holder
+            // and a different order from one open to the next. Everyone runs the
+            // soft, which is what a single-lap record would be set on anyway.
+            const ms = exPinnedTyre('soft', () =>
+                simulateQualifyingLap(qTrack, j.name, 'alien', 1.1, j.wet, 'ridge'));
+            rec.done++;
+            if (ms) {
+                const slot = j.wet ? 'wet' : 'dry';
+                if (!rec[slot] || ms < rec[slot].ms) rec[slot] = { ms, who: j.name };
+            }
+        }
+        exRenderRecords(key);
+        if (i < jobs.length) setTimeout(step, 0);
+    };
+    setTimeout(step, 0);
+}
+
+function showExploreTracks() {
+    exShowTrackList();
+    menu.style.display = 'none';
+    document.getElementById('explore-tracks').style.display = 'block';
 }
 
 // You sit this one out. The race still happens: the AI field runs the full

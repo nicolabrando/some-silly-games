@@ -531,7 +531,50 @@ Il rottame è escluso dalle collisioni fra vetture da quando è distrutto, e `Ca
 ## 4ter. Modalità e log
 
 - **Free Practice** (`raceMode === 'practice'`): circuito e meteo scelti, nessun avversario, `TOTAL_LAPS` a 9999, niente qualifiche né bandiera. Ogni giro finisce in `car.lapTimes`; il pulsante **Stop Session** chiude e mostra la tabella dei tempi con il migliore evidenziato.
-### 4ter-bis La pausa (Apex 2)
+### 4ter-ter Explore: circuiti e piloti (Apex 2)
+
+Due schermate di consultazione dal menu. **Niente di quello che mostrano è una tabella scritta a mano accanto al gioco**: i numeri dei circuiti vengono dai circuiti, le barre dei piloti da `AI_DRIVER_STYLES`, e i record sul giro vengono **misurati** facendo girare la simulazione di qualifica del gioco quando apri una scheda. Un record misurato non può essere in disaccordo con la build in cui è stampato.
+
+**Explore the circuits.** Una griglia di schede, ognuna col proprio tracciato disegnato in scala e la lunghezza. Cliccandone una si apre una pagina con la mappa grande e: lunghezza, curve, sinistre/destre, larghezza della strada, velocità massima, giro stimato asciutto, giro stimato bagnato, penalità del bagnato in percentuale, e il raggio della curva più stretta. Sotto, il **record sul giro** asciutto e bagnato con il nome di chi l'ha fatto — venti giri per circuito (dieci piloti × due condizioni) a livello Alien, eseguiti a pezzi di 45ms per volta così la pagina resta viva, con una barra di avanzamento. Il risultato resta in cache per la sessione.
+
+**Explore the drivers.** Una scheda per pilota: codice, una riga di prosa, i punti di forza e di debolezza, e dieci barre coi valori numerici accanto. I punti di forza **non sono scritti da nessuna parte**: sono le voci su cui quel pilota si scosta di più dalla media del campo, in ciascuna direzione. Gli estremi di ogni barra sono scelti perché i dieci piloti si distribuiscano davvero sull'intervallo — una barra su cui stanno tutti all'80% non dice niente — e c'è un test che verifica che ogni barra usi almeno il 60% della sua corsa.
+
+**Il bagnato è misurato, non letto da un parametro.** C'è una colonna `wet` in `AI_DRIVER_STYLES` e sarebbe la cosa ovvia su cui mettere una barra. Sarebbe anche sbagliata: quella colonna è una **correzione**, non un'abilità — una gara bagnata è dominata dalle curve, quindi lo split curva/rettilineo crea già gli specialisti della pioggia da solo. Quindi la schermata i giri li fa: uno asciutto e uno bagnato per ogni pilota, sui **quattro circuiti su cui il bilanciamento è stato tarato**, ordinati sul **tempo bagnato assoluto** col divario mediato **per circuito** e non sommato (sommare i tempi pesa il circuito più lungo).
+
+Due trappole, entrambe scoperte misurando:
+
+- il primo tentativo usava il **rapporto** bagnato/asciutto. Sul bagnato le curve crollano e i rettilinei no, quindi chi passa più tempo a tavoletta conserva la frazione più alta del proprio tempo asciutto: misurava quanto rettilineo contiene il giro di un pilota, non quanto va sotto la pioggia;
+- e la **mescola va fissata**. `simulateQualifyingLap` normalmente lascia scegliere a `chooseTyre`, che è casuale per progetto — giusto in una sessione, sbagliato qui. Un record che dipende dalla gomma che il pilota ha pescato non è un record, è una lotteria, e si vedeva: stesso circuito, detentore e ordine diversi a ogni apertura. Ora tutti girano sulla stessa gomma (soft per i record, medium per il confronto fra piloti).
+
+### 6ter. Il bilanciamento del bagnato, e il bug che lo rendeva impossibile (Apex 2)
+
+La classifica misurata sul bagnato usciva **quasi esattamente al contrario** di quello che il commento in `ai.js` dichiara: Senna il più lento dei dieci sotto la pioggia, Lauda il più veloce, quando i profili dicono l'opposto.
+
+**Nessun valore della colonna `wet` avrebbe potuto sistemarlo, perché la causa stava a monte.** `ai.js` mirava a **0.20** del grip asciutto sul bagnato — con un commento che diceva «matches car.js exactly» — mentre `car.js` ne consegnava **0.13**. Erano andati fuori sincrono quando car.js fu portato a 0.13 perché la pioggia costasse tempo vero, e quella riga non fu spostata con lui.
+
+La conseguenza non era un arrotondamento: sotto la pioggia l'IA credeva di avere `0.20/0.13 = 1.54×` il grip che aveva davvero, quindi puntava a una velocità in curva **circa il 24% troppo alta**, usciva dal limite e strisciava — e **più alto era il `wetSkill` di un pilota, più lontano dal limite puntava**. I piloti destinati a essere i più forti sotto la pioggia erano esattamente quelli che la pioggia puniva.
+
+Ora è una costante sola, `WET_GRIP`, definita in `car.js` e letta da entrambi. Sistemato quello, la sola correzione ha già quasi raddrizzato l'ordine da sola, e la colonna è stata **rifatta per misura** (`wetfit.js`).
+
+Due cose sul fit, imparate sbagliando:
+
+- l'errore va **centrato sulla media** prima di farci un passo sopra. Sia la misura sia il bersaglio sono espressi come divario dal più veloce, quindi il livello non è una grandezza reale: solo le differenze lo sono. Facendo il passo sull'errore grezzo, nove piloti su dieci sono finiti contro lo stesso limite in una mossa sola;
+- una singola estrapolazione lineare da un punto di sonda ha sbagliato di **3.4 punti** nel caso peggiore. Iterando con passo smorzato si scende a 1.2.
+
+Ordine finale, dal più veloce al più lento sotto la pioggia, su quattro circuiti:
+
+| | | |
+|---|---|---|
+| 1. Senna | 2. Schumacher | 3. Hamilton |
+| 4. Alonso | 5. Clark | 6. Fangio |
+| 7. Verstappen | 8. Prost | 9. Vettel |
+| 10. Lauda | | spread 4.9% |
+
+che è quello che dicono i profili: i tre che `ai.js` nomina come i più forti sotto la pioggia sono i tre più veloci, Clark — «quick in the wet» — è quinto, e i quattro i cui commenti dicono che la pioggia non è il loro tempo sono i quattro più lenti.
+
+Anche le descrizioni sulle schede piloti sono state riscritte due volte: una prima per allinearle al cronometro quando contraddiceva i profili, e di nuovo — tornando all'originale — quando il cronometro ha ricominciato a dare loro ragione.
+
+### 4ter-bis La pausa (Apex 2)### 4ter-bis La pausa (Apex 2)
 
 **Si mette in pausa con Spazio, P o Esc**, o col pulsante nell'angolo, in qualsiasi cosa stia girando davvero: griglia, gara, qualifica, prova libera. Spazio è sicuro perché nessuno dei due schemi di comando lo usa — il posto 1 ha frecce o WASD e il posto 2 prende l'altro — e c'è un test che lo verifica invece di darlo per scontato. `preventDefault` è obbligatorio o il browser scrolla la pagina sotto il canvas.
 
@@ -638,3 +681,7 @@ Gli attrezzi di misura sono nella cartella di lavoro e non nel gioco: `logscan.j
 - **[Apex 2] Una barriera dipinta va costruita come SCOSTAMENTO del confine fisico, mai come un secondo insieme di livello più largo.** I due coincidono solo dove il bordo è liscio; vicino a una rientranza quello largo si richiude sopra la tacca e sparisce, e resta un muro invisibile. `ghost.js` (e la sezione 8 di `apex2_newtracks.js`) misurano la proprietà giusta: trova i punti dove un'auto si ferma e chiedi quanto è lontana la vernice più vicina. Deve essere un raggio d'auto, ovunque.
 - **[Apex 2] Se una cosa si dipinge sul tracciato, il suo limite va messo dove lo legge anche la fisica.** Il cordolo di Peanut finiva sotto l'armco perché il limite stava in `draw()`; ora sta in `kerbWidthFor()`, che usano sia il disegno sia `getSurface()`.
 - **[Apex 2] `keys.throttle` non va mai messo a zero su una tastiera: va cancellato.** L'intero instradamento dei comandi poggia sull'invariante «una tastiera non definisce la coppia analogica», e uno zero definito lo rompe per sempre: l'acceleratore muore e lo sterzo no, quindi sembra tutt'altro problema. Vale per qualsiasi cosa in futuro voglia azzerare i comandi.
+- **[Apex 2] Non contare le curve dalla traiettoria ideale.** La traiettoria è precisamente la cosa che raddrizza le curve — frena largo, tocca l'apice, esce largo — quindi qualsiasi soglia sul suo raggio locale lascia cadere le curve larghe. Rectangle veniva dichiarato di due curve quando ne ha quattro. Si contano dai **segmenti**, che sono il progetto.
+- **[Apex 2] Una statistica mostrata a schermo va misurata, non letta da un parametro che le somiglia.** La colonna `wet` è una correzione fitted, non un'abilità: ordinarci i piloti dava l'opposto del vero. Vale per qualsiasi barra futura — se il numero non predice il comportamento, non è quel numero che va mostrato.
+- **[Apex 2] Se due file devono usare lo stesso numero, devono leggerlo dallo stesso posto.** `ai.js` mirava a 0.20 di grip sul bagnato con un commento che diceva «matches car.js exactly» mentre `car.js` usava 0.13: un'IA che crede la strada il 54% più grippante di com'è passa il limite a ogni curva. Ora è `WET_GRIP`, una costante sola. Un commento non è un vincolo.
+- **[Apex 2] Fissa la mescola quando confronti piloti fra loro.** `chooseTyre` è casuale per progetto; qualsiasi misura che confronti due piloti senza pinnarla sta in parte tirando i dadi.

@@ -69,6 +69,11 @@ const TYRES = {
 };
 const TYRE_KEYS = ['soft', 'medium', 'hard'];
 
+// How much of its dry grip a car keeps on a wet road. Read by car.js for the
+// physics and by ai.js for the speed the AI aims at - the two must be the same
+// number or the AI drives to a circuit that is not there.
+const WET_GRIP = 0.13;
+
 // =========================================================================
 //  CHASSIS  -  chosen once, for a whole season
 // -------------------------------------------------------------------------
@@ -330,7 +335,12 @@ class Car {
             // almost everywhere, so the wet grip clamp only bites well below
             // the value you would expect. 0.13 rather than 0.20: rain now
             // costs real lap time instead of a few km/h of top speed.
-            currentGrip *= 0.13;
+            //
+            // It is a named constant because ai.js has to aim at the same
+            // number. It did not, for a while - see the note there - and an AI
+            // that thinks the road is 54% grippier than it is drives straight
+            // past the limit every corner.
+            currentGrip *= WET_GRIP;
             // Wet-weather skill, from the driver style table in ai.js.
             if (this.wetGripBonus) currentGrip *= this.wetGripBonus;
         }

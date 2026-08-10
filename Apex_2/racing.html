@@ -219,6 +219,10 @@
                     <button id="practice-btn">Practice</button>
                     <button id="log-btn">Race Log</button>
                 </div>
+                <div class="menu-btn-row">
+                    <button id="explore-tracks-btn">Explore the circuits</button>
+                    <button id="explore-drivers-btn">Explore the drivers</button>
+                </div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -446,6 +450,30 @@
                 <button id="gp-start-btn" style="background: #4CAF50; color: #002;">Start Qualifying</button>
                 <button id="gp-skip-btn" style="margin-top: 10px; background: #37474f; color: #ddd;">Skip this Grand Prix</button>
             </div>
+            <!-- Explore: the circuits. A grid of cards, and a card opens into a
+                 full page with a map, the numbers, and the records - which are
+                 measured on demand rather than shipped as a table, so they are
+                 always the times this build actually produces. -->
+            <div id="explore-tracks" style="display: none;">
+                <h1 class="ex-title">The circuits</h1>
+                <div class="ex-sub" id="ex-tracks-sub">Seventeen of them. Pick one.</div>
+                <div id="ex-track-grid"></div>
+                <div id="ex-track-detail" style="display: none;"></div>
+                <button id="ex-tracks-back" class="ex-back">Back</button>
+            </div>
+
+            <!-- Explore: the drivers. -->
+            <div id="explore-drivers" style="display: none;">
+                <h1 class="ex-title">The drivers</h1>
+                <div class="ex-sub">
+                    Ten of them, and none is better than the rest. Every strength
+                    is paid for somewhere else &mdash; that is the rule the numbers
+                    below are fitted to.
+                </div>
+                <div id="ex-driver-grid"></div>
+                <button id="ex-drivers-back" class="ex-back">Back</button>
+            </div>
+
             <div id="quali-screen" style="display: none;">
                 <h1 id="quali-title" style="margin: 0 0 4px; font-size: 26px;">Qualifying</h1>
                 <div style="font-size: 12px; opacity: 0.6; margin-bottom: 16px;">

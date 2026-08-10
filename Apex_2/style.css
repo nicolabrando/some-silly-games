@@ -41,7 +41,7 @@ canvas {
 /* Every centred panel must be listed here: #ui-layer is pointer-events:none,
    so a panel left out of this rule renders unstyled AND its buttons are dead. */
 #menu, #game-over, #championship-final, #quali-screen, #gp-preview, #tyre-screen,
-#chassis-screen {
+#chassis-screen, #explore-tracks, #explore-drivers {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -1345,3 +1345,92 @@ button.chassis-opt:hover {
     display: inline-block;
     margin: 5px 0 0;
 }
+
+/* ---- Explore ------------------------------------------------------------
+   Two reference screens off the menu: the circuits and the drivers. They are
+   wide - a grid of cards is the point - and they scroll, because seventeen
+   circuits and ten drivers do not fit on a phone otherwise. */
+#explore-tracks, #explore-drivers {
+    min-width: 720px;
+    max-width: 92vw;
+    text-align: left;
+}
+.ex-title { margin: 0 0 4px; font-size: 26px; letter-spacing: 1px; }
+.ex-sub { font-size: 13px; opacity: 0.65; margin-bottom: 18px; max-width: 640px; }
+.ex-back { margin-top: 18px; background: #37474f; color: #ddd; }
+
+#ex-track-grid, #ex-driver-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+}
+#ex-driver-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+
+/* a circuit in the grid: its own outline, drawn to scale, and its name */
+.ex-card {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+    text-align: center;
+    color: #eee;
+    font: inherit;
+    transition: background 0.12s, border-color 0.12s;
+}
+.ex-card:hover { background: rgba(255, 255, 255, 0.13); border-color: rgba(255, 255, 255, 0.35); }
+.ex-card canvas { display: block; width: 100%; height: auto; border-radius: 5px; background: #2f6f36; }
+.ex-card .ex-name { font-size: 13px; font-weight: 700; margin-top: 6px; }
+.ex-card .ex-meta { font-size: 11px; opacity: 0.6; font-variant-numeric: tabular-nums; }
+
+/* the opened circuit */
+#ex-track-detail .ex-d-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+#ex-track-detail h2 { margin: 0; font-size: 22px; }
+#ex-track-detail .ex-d-body { display: flex; gap: 16px; flex-wrap: wrap; }
+#ex-track-detail canvas {
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 6px;
+    background: #388E3C;
+    flex: 0 0 auto;
+}
+.ex-d-side { flex: 1 1 320px; min-width: 280px; }
+.ex-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+}
+.ex-cell { background: rgba(255, 255, 255, 0.06); border-radius: 6px; padding: 8px 6px; }
+.ex-k { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.55; margin-bottom: 3px; }
+.ex-v { font-size: 15px; font-weight: bold; font-variant-numeric: tabular-nums; }
+
+/* the records, measured on demand */
+.ex-rec { background: rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px 12px; }
+.ex-rec-h { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.5; margin-bottom: 8px; }
+.ex-rec-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; line-height: 1.9; }
+.ex-rec-row .t { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 15px; }
+.ex-rec-row .who { opacity: 0.75; }
+.ex-rec-wet .t { color: #64b5f6; }
+.ex-progress { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; margin-top: 8px; }
+.ex-progress > i { display: block; height: 100%; background: #4CAF50; width: 0; transition: width 0.2s; }
+
+/* a driver card */
+.ex-driver {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-left-width: 4px;
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.ex-driver h3 { margin: 0 0 2px; font-size: 16px; }
+.ex-driver .ex-code { font-size: 11px; letter-spacing: 2px; opacity: 0.55; }
+.ex-driver .ex-blurb { font-size: 12px; opacity: 0.8; margin: 8px 0 10px; line-height: 1.5; }
+.ex-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.ex-tag { font-size: 10px; padding: 2px 7px; border-radius: 10px; letter-spacing: 0.5px; }
+.ex-tag.up { background: rgba(127, 224, 138, 0.18); color: #7fe08a; }
+.ex-tag.down { background: rgba(255, 138, 128, 0.18); color: #ff8a80; }
+.ex-bar-row { display: grid; grid-template-columns: 92px 1fr 42px; align-items: center; gap: 8px; font-size: 11px; line-height: 1.9; }
+.ex-bar-row .lab { opacity: 0.6; }
+.ex-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; position: relative; }
+.ex-bar > i { display: block; height: 100%; border-radius: 3px; }
+.ex-bar-row .num { text-align: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
