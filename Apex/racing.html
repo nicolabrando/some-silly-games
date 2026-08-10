@@ -59,12 +59,18 @@
                  text does not shrink with the window. -->
             <div id="pause-overlay" style="display: none;">
                 <div id="pause-panel">
-                    <div style="font-size: 30px; font-weight: 900; letter-spacing: 4px;">PAUSED</div>
-                    <div style="font-size: 13px; opacity: 0.6; margin: 8px 0 22px;">
-                        P or Esc to resume
+                    <div id="pause-head">
+                        <div id="pause-title">PAUSED</div>
+                        <div id="pause-sub">Space, P or Esc to resume</div>
                     </div>
-                    <button id="resume-btn" style="background: #4CAF50; color: #002;">Resume</button>
-                    <button id="pause-quit-btn" style="background: #37474f; color: #ddd;">Quit to menu</button>
+                    <!-- Filled by renderPausePanel() every time the game is
+                         paused: what it says depends on whether this is a race
+                         or a qualifying session. -->
+                    <div id="pause-stats"></div>
+                    <div id="pause-buttons">
+                        <button id="resume-btn" style="background: #4CAF50; color: #002;">Resume</button>
+                        <button id="pause-quit-btn" style="background: #37474f; color: #ddd;">Quit to menu</button>
+                    </div>
                 </div>
             </div>
 
@@ -96,7 +102,7 @@
                                 <option value="kettle">Kettle</option>
                                 <option value="harbour">Harbour</option>
                                 <option value="crossover">Crossover &mdash; bridge</option>
-                                <option value="lombard">Lombard</option>
+                                <option value="kart">Kart</option>
                             </select>
                         </div>
                         <div class="menu-row">
@@ -224,9 +230,10 @@
                             <li><b>Left / Right</b> steer &nbsp;·&nbsp; on a phone, use the on-screen pad</li>
                             <li>Arrow keys or <b>W A S D</b> &mdash; pick either in the menu. Left&#8209;handers
                                 and anyone who would rather keep a hand on the mouse can swap.</li>
-                            <li><b>P</b> or <b>Esc</b> pause &mdash; or the Pause button in the corner. Works
-                                any time: on the grid, mid&#8209;race, in qualifying. The clock stops with
-                                you, so a pause costs you nothing.</li>
+                            <li><b>Space</b>, <b>P</b> or <b>Esc</b> pause &mdash; or the Pause button in the
+                                corner. Works any time: on the grid, mid&#8209;race, in qualifying. The clock
+                                stops with you, so a pause costs you nothing &mdash; and the screen shows
+                                you where you stand while it is stopped.</li>
                         </ul>
 
                         <h3>Two players, one keyboard</h3>

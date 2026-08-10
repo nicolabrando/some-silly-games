@@ -1807,56 +1807,63 @@ class CrossoverTrack extends SegmentedTrack {
     }
 }
 
-// LOMBARD. The Camunian rose off the Lombard flag - with three arms instead
-// of the flag's four, because four is undriveable.
+// =========================================================================
+//  KART  -  Circus Maximus, three times over.
+// -------------------------------------------------------------------------
+//  Circus Maximus is one straight driven twice: out along one side of a
+//  central wall, round the far end, back along the other. Kart stacks three
+//  of them. Four horizontal roads - three straights with a spina between each
+//  pair, and a return that carries you from the end of the third back to the
+//  start of the first:
 //
-// The four-armed original was built first, straight from the flag's own SVG
-// path: eight arcs, a reflex hook alternating with a long lobe, joints closing
-// to 0.0000px. It is the shape, exactly. It is also a corridor: four arms 90
-// degrees apart in a square box leave so little between them that the road can
-// only be 32 wide, and at that width nobody can race.
+//      y1  --------------------->     driven right
+//          ======= spina =======
+//      y2  <---------------------     driven left
+//          ======= spina =======
+//      y3  --------------------->     driven right
+//          ======= spina =======
+//      y4  <---------------------     the return
 //
-// So the rose is rebuilt PARAMETRICALLY from the flag's proportions rather
-// than redrawn, and given three arms:
+//  The two ends are what make it work. On the RIGHT, two ordinary hairpins:
+//  y1 to y2 and y3 to y4. On the LEFT, two CONCENTRIC semicircles about the
+//  same centre - a small one taking y2 to y3, and a big one taking the return
+//  all the way back up to y1. Concentric, and exactly one spina apart, which
+//  is why the left end comes out as tidy as the right.
 //
-//   * N lobes on a ring of radius A, one every 360/N degrees;
-//   * N hooks on a ring of radius B, halfway between them;
-//   * every junction an EXTERNAL tangency between a lobe circle and a hook
-//     circle - that is what reverses the curvature and makes a hook a hook, so
-//     the lobes all run one way round and the hooks the other, and every joint
-//     is smooth by construction.
+//  Turning: +180 -180 +180 +180 = +360. It closes, and it had to.
 //
-// Tangency fixes the size: A^2 + B^2 - 2AB cos(pi/N) = (Rlobe + Rhook)^2.
-// Checked against the flag itself - at N=4 with the flag's ratios this
-// reproduces it arc for arc, lobes 281 degrees and hooks -191.
+//  The numbers are not typed in, they are solved (kart2.js). Joint gaps come
+//  out at 0.0000px and the tangent breaks at 0.0000 degrees, because every
+//  hairpin radius IS half the spacing and the two left arcs share a centre.
+//  The spacing of 152 is chosen against Circus Maximus itself: with a 58px
+//  wall radius it leaves a 31.8px strip of infield between two lanes, against
+//  32.8 there. Below about 120 there would be no wall between the lanes at all
+//  and you could drive straight across the spina.
 //
-// At N=3 the centres are 120 degrees apart instead of 90, too far for the
-// flag's own radii to reach: the equation has no root, and the circles have to
-// grow. Fewer, bigger arms - which is exactly why there is room for a road.
-// The last free choice is how deep the hooks curl, and it is a straight trade
-// against width, measured rather than guessed (lombard.js sweep):
-//
-//      hook sweep 187 deg -> no road fits at all
-//                 167     -> 34
-//                 154     -> 46
-//                 148     -> 52   <= chosen
-//
-// so this is the widest road the rose can carry while still being a rose.
-class LombardTrack extends SegmentedTrack {
+//  At 3769px it is the longest circuit in the game - Pettine, the previous
+//  longest, is 3053. That is the point of it: three long straights, and the
+//  straights are as long as the arena allows once the return arc on the left
+//  has taken its 228px.
+// =========================================================================
+class KartTrack extends SegmentedTrack {
     constructor() {
         super();
-        this.trackWidth = 52;
-        this.grassWidth = 66;
+        this.trackWidth = 50;
+        this.grassWidth = 70;
         this.segments = [
-            { type: 'arc', cx: 890.19, cy: 360, r: 120.35, start: -2.336959, end: 2.336959, ccw: false },
-            { type: 'arc', cx: 769.2, cy: 485.74, r: 54.16, start: -0.8046337, end: 2.8990288, ccw: true },
-            { type: 'arc', cx: 599.81, cy: 527.65, r: 120.35, start: -0.2425639, end: -1.8518312, ccw: false },
-            { type: 'arc', cx: 551.41, cy: 360, r: 54.16, start: 1.2897614, end: -1.2897614, ccw: true },
-            { type: 'arc', cx: 599.81, cy: 192.35, r: 120.35, start: 1.8518312, end: 0.2425639, ccw: false },
-            { type: 'arc', cx: 769.2, cy: 234.26, r: 54.16, start: -2.8990288, end: 0.8046337, ccw: true }
+            { type: 'line', x1: 529, y1: 132, x2: 1113, y2: 132 },
+            { type: 'arc', cx: 1113, cy: 208, r: 76, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 1113, y1: 284, x2: 529, y2: 284 },
+            { type: 'arc', cx: 529, cy: 360, r: 76, start: -1.5708, end: 1.5708, ccw: true },
+            { type: 'line', x1: 529, y1: 436, x2: 1113, y2: 436 },
+            { type: 'arc', cx: 1113, cy: 512, r: 76, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 1113, y1: 588, x2: 529, y2: 588 },
+            { type: 'arc', cx: 529, cy: 360, r: 228, start: 1.5708, end: 4.7124, ccw: false }
         ];
-        this.startX = 885.75;
-        this.startY = 239.74;
+        // On the top straight, which is the only thing crossing this x going
+        // left to right inside the band the lap counter watches.
+        this.startX = 891.08;
+        this.startY = 132;
 
         this.waypoints = this.generateWaypoints();
     }

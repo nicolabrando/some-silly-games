@@ -1031,13 +1031,20 @@ button.tyre-opt:hover {
 /* ---- pause -------------------------------------------------------- */
 /* Sits over the whole canvas. #ui-layer is pointer-events:none, so the
    overlay has to opt back in or its buttons are dead. */
+/* ---- pause -------------------------------------------------------------
+   Deliberately see-through. A pause you cannot see past tells you nothing
+   about the situation you are pausing in - where the car ahead is, which way
+   the next corner goes - which is exactly what you stopped to look at. The
+   backdrop is a light wash rather than a curtain, and the panel itself is
+   translucent with a blur behind it so the circuit reads through without the
+   numbers becoming hard work. */
 #pause-overlay {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.62);
+    background: rgba(0, 0, 0, 0.28);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1046,13 +1053,73 @@ button.tyre-opt:hover {
 }
 
 #pause-panel {
-    background: rgba(0, 0, 0, 0.9);
-    border: 2px solid #555;
-    border-radius: 10px;
-    padding: 32px 44px;
+    background: rgba(10, 12, 16, 0.62);
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
+    padding: 20px 26px 22px;
     text-align: center;
-    min-width: 240px;
+    min-width: 420px;
+    max-width: 560px;
 }
+
+#pause-head { margin-bottom: 14px; }
+#pause-title {
+    font-size: 26px;
+    font-weight: 900;
+    letter-spacing: 5px;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+}
+#pause-sub { font-size: 12px; opacity: 0.65; margin-top: 4px; }
+
+#pause-stats {
+    display: flex;
+    gap: 10px;
+    text-align: left;
+    margin-bottom: 16px;
+}
+.pz-col {
+    flex: 1 1 0;
+    min-width: 0;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.pz-h {
+    font-size: 10px;
+    letter-spacing: 2px;
+    opacity: 0.55;
+    margin-bottom: 7px;
+    text-transform: uppercase;
+}
+.pz-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 1.65;
+    white-space: nowrap;
+}
+.pz-row .k { opacity: 0.62; }
+.pz-row .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pz-row .v.big { font-size: 15px; }
+.pz-good { color: #7fe08a; }
+.pz-warn { color: #ffd54f; }
+.pz-bad  { color: #ff8a80; }
+/* a thin bar for the things that are really a fraction: tyre and health */
+.pz-bar {
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.14);
+    overflow: hidden;
+    margin: 3px 0 6px;
+}
+.pz-bar > i { display: block; height: 100%; border-radius: 3px; }
+#pause-buttons { display: flex; gap: 8px; justify-content: center; }
 
 /* ---- qualifying classification ----------------------------------- */
 #quali-screen {

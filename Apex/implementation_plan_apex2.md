@@ -150,7 +150,7 @@ Due correzioni, entrambe emerse dalla misura.
 
 *Terza versione:* pannelli verde/bianco/rosso con un'ombra alla base, dipinti **un raggio-auto oltre la linea di arresto**: quando ti fermi la stai toccando. Su 15 circuiti su 17 questo coincide con `grassWidth`, dove il verge è sempre stato disegnato; Pettine e Crown avevano la fascia più stretta della propria barriera e l'erba viene ora disegnata fino a `max(grassWidth, barrierRadius())`, così l'armco non galleggia sullo sfondo (+9px e +4px).
 
-*Quarta versione, e la correzione che conta:* **le barriere fantasma.** La terza chiedeva l'insieme di livello a `wallRadius() + 12` — una barriera *più larga*, ricalcolata da zero. Ma vicino a qualsiasi rientranza i due insiemi non sono curve parallele: dove la strada torna su se stessa quello più largo **si richiude sopra la tacca e semplicemente non c'è**, mentre la fisica continua a fermare le auto lì dentro. Nicola ci è finito dentro a Lombard. Misurato allora: **Pettine aveva 996 punti di griglia** in cui un'auto si ferma e la vernice più vicina era fino a **171px** lontana — fra i denti del pettine non c'era barriera affatto — e Lombard 16 punti fino a 30px.
+*Quarta versione, e la correzione che conta:* **le barriere fantasma.** La terza chiedeva l'insieme di livello a `wallRadius() + 12` — una barriera *più larga*, ricalcolata da zero. Ma vicino a qualsiasi rientranza i due insiemi non sono curve parallele: dove la strada torna su se stessa quello più largo **si richiude sopra la tacca e semplicemente non c'è**, mentre la fisica continua a fermare le auto lì dentro. Nicola ci è finito dentro a Lombard (circuito poi tolto dal calendario e sostituito da Kart — vedi §3.0quater; il difetto era della barriera, non della pista). Misurato allora: **Pettine aveva 996 punti di griglia** in cui un'auto si ferma e la vernice più vicina era fino a **171px** lontana — fra i denti del pettine non c'era barriera affatto — e Lombard 16 punti fino a 30px.
 
 Ora la barriera è uno **scostamento** del confine fisico, non un secondo raggio: si calcola l'insieme di livello a `wallRadius()` e ogni punto viene spinto in fuori di 12 lungo la propria normale. Il test di appartenenza resta sul punto a `wallRadius`, ed è questo che tiene la vernice legata alla fisica. Un fantasma diventa **impossibile per costruzione**: ogni punto che ferma un'auto ha una barriera a 12px, perché la vernice *è* quel punto spostato. Misurato su tutti e 17: peggior scarto **11.9px**.
 
@@ -158,7 +158,7 @@ Due dettagli che il test ha trovato:
 
 - il verde **non** è quello dell'erba. Il verge è `#2e7d32` e il prato `#3f8f45`; il verde della bandiera `#009246` accanto a quelli si legge come altra erba. È `#00d152`, a 101 e 92 punti RGB dai due;
 - i tagli fra un pannello e l'altro si trovano per **lunghezza d'arco** e si interpolano, non si prendono dai vertici del run. I run escono da Douglas-Peucker, quindi un rettilineo è due punti per quanto sia lungo: tagliando sui vertici ogni rettilineo veniva dipinto di un colore solo, e il tricolore compariva solo nelle curve;
-- la lunghezza del pannello è **per run**, `max(3.5, min(26, L/3))`. Con un valore fisso un run corto — l'interno di un dente di Pettine, il collo fra due lobi di Lombard — riceveva un pannello e un mozzicone, usciva tutto verde, e il verde pieno sull'erba si legge come *nessuna barriera*. Ora ogni run mostra tutti e tre i colori per quanto sia corto;
+- la lunghezza del pannello è **per run**, `max(3.5, min(26, L/3))`. Con un valore fisso un run corto — l'interno di un dente di Pettine, il collo fra due lobi di Lombard (allora in calendario) — riceveva un pannello e un mozzicone, usciva tutto verde, e il verde pieno sull'erba si legge come *nessuna barriera*. Ora ogni run mostra tutti e tre i colori per quanto sia corto;
 - **i cordoli non possono finire sotto la barriera.** `kerbWidth` è il 30% della strada, e su parecchi circuiti è più largo di tutto il verge: Peanut ha strada 70, verge 85 e cordolo 21, quindi il cordolo arrivava a 91 dalla mezzeria mentre l'armco sta a 85 — erano dipinti uno sull'altro. Nessuno se n'era accorto finché lì non c'era una barriera. `kerbWidthFor()` ora ha un terzo limite, `barrierRadius() − trackWidth − 4`, applicato lì e non in `draw()` così che anche `getSurface()` sia d'accordo con la vernice. I cordoli restano larghi 8-24px e finiscono 1-3px prima della barriera. La parte *raggiungibile* del cordolo non cambia su nessun circuito: il muro morde comunque prima.
 
 Il test non legge il sorgente: passa al circuito un canvas che **registra ogni tratto**, e poi chiede dove sono finiti il bianco e il rosso. Su tutti e 17 ogni marcatura sta o su un cordolo o sulla barriera, con uno scarto massimo di 0.7px, e niente è dipinto sulla strada.
@@ -239,34 +239,33 @@ Non scrivendo archi a mano: ognuna è un **anello di vertici con un raggio per v
 
 **Dove va il traguardo, e perché non è una scelta libera.** `checkLapCross()` conta un giro quando la x dell'auto passa `startX` andando **verso destra** con `|y - startY| < grassWidth + 100`. Quel test non sa su quale pezzo di strada sei, quindi un traguardo è valido solo se **nessun altro tratto** del circuito attraversa quella x, nella stessa direzione, dentro quella fascia. Zipper l'aveva su un rettilineo percorso da destra a sinistra: zero giri completati da chiunque, per l'intera gara. `fix_starts.js` sceglie il rettilineo — lungo, orizzontale, percorso verso destra e **univoco** — e verifica tutti e 16 i circuiti.
 
-### 3.0quater Lombard, e la lunghezza della stagione
+### 3.0quater Kart, e la lunghezza della stagione
 
-**Il circuito.** È la **rosa camuna** della bandiera lombarda — con **tre** braccia invece delle quattro della bandiera, perché quattro sono inguidabili.
+**Il circuito.** È **Circus Maximus tre volte**. Circus Maximus è un rettilineo percorso due volte: si va all'andata da un lato di un muro centrale, si gira in fondo, si torna dall'altro. Kart ne impila tre.
 
-La versione a quattro è stata costruita per prima, direttamente dal path SVG della bandiera: otto archi, un uncino riflesso alternato a un lobo lungo, giunzioni che chiudono a 0.0000px. È la forma, esatta. Ed è anche un corridoio: quattro braccia a 90° in un riquadro quadrato lasciano così poco spazio fra loro che la carreggiata può essere solo **32**, e a quella larghezza non si corre.
+Quattro strade orizzontali: tre rettilinei con una spina fra una coppia e l'altra, più un ritorno che riporta dalla fine del terzo all'inizio del primo.
 
-Quindi la rosa è stata **ricostruita in forma parametrica** dalle proporzioni della bandiera, invece che ridisegnata:
+```
+  y1  --------------------->     si guida verso destra
+      ======= spina =======
+  y2  <---------------------     verso sinistra
+      ======= spina =======
+  y3  --------------------->     verso destra
+      ======= spina =======
+  y4  <---------------------     il ritorno
+```
 
-- N lobi su un anello di raggio A, uno ogni 360/N gradi;
-- N uncini su un anello di raggio B, a metà strada fra i lobi;
-- ogni giunzione è una **tangenza esterna** fra un cerchio-lobo e un cerchio-uncino: è quella a invertire la curvatura e a fare di un uncino un uncino, quindi i lobi si percorrono tutti in un verso e gli uncini nell'altro, e ogni giunto è liscio per costruzione.
+Sono le **due estremità** a farla funzionare. A **destra** due tornanti normali: da y1 a y2 e da y3 a y4. A **sinistra** due semicerchi **concentrici** attorno allo stesso centro — uno piccolo che porta da y2 a y3, e uno grande che riporta il ritorno fino a y1. Concentrici, e distanti esattamente una spina: è per questo che l'estremità sinistra viene pulita quanto la destra.
 
-La tangenza fissa la dimensione: `A² + B² − 2AB·cos(π/N) = (Rlobo + Runcino)²`. Verificato contro la bandiera stessa: a N=4 con i suoi rapporti la ricostruzione la riproduce arco per arco, lobi 281° e uncini −191°.
+Il conto delle sterzate è la prima cosa da verificare su qualsiasi tracciato chiuso: `+180 −180 +180 +180 = +360`. Chiude, e doveva.
 
-A N=3 i centri sono a 120° invece che a 90°, troppo lontani perché i raggi della bandiera li raggiungano: l'equazione **non ha radice** e i cerchi devono crescere. Meno braccia, più grandi — ed è esattamente per questo che c'è spazio per una strada.
+I numeri non sono scritti a mano, sono **risolti** (`kart2.js`): le giunzioni chiudono a **0.0000px** e le tangenti a **0.0000°**, perché ogni raggio di tornante *è* metà del passo fra le corsie e i due archi di sinistra condividono il centro.
 
-L'ultima scelta libera è quanto profondi siano gli uncini, ed è un baratto diretto con la larghezza, misurato invece che indovinato (`lombard.js sweep`):
+**Il passo di 152 è scelto contro Circus Maximus stesso.** Su una pista con la spina il vincolo non è lo spazio libero: è che il **muro fra le due corsie esista**. Con un raggio di muro di 58, 152 lascia una striscia di 31.8px di prato interno fra due corsie, contro i 32.8 di Circus Maximus. Sotto i ~120 non ci sarebbe muro affatto e si passerebbe dritti attraverso la spina.
 
-| ampiezza uncino | strada più larga possibile |
-|---|---|
-| 187° | nessuna strada ci sta |
-| 167° | 34 |
-| 154° | 46 |
-| **148°** | **52** ← scelta |
+Con 3769px è **il circuito più lungo del gioco** — il precedente, Pettine, sta a 3053. Ed è il punto: tre rettilinei lunghi, lunghi quanto l'arena concede una volta che l'arco di ritorno a sinistra si è preso i suoi 228px. In gara: 8 vetture su 8 al traguardo, 0.9% del tempo fuori pista, giri da 20.2s.
 
-cioè la strada più larga che la rosa può portare restando una rosa. In gara: 8 vetture su 8 al traguardo, 1.7% del tempo fuori pista, giri da 14.3s.
-
-*Un errore di misura da ricordare*: il primo sweep riportava uncini da 142-160° per archi che in realtà erano da 191°, perché la formula ignorava il flag di verso. Era sbagliata la misura, non la forma — e per un attimo sembrava che la costruzione parametrica non producesse affatto una rosa.
+**Ha sostituito Lombard**, la rosa camuna, che è stata rimossa dal calendario su richiesta.
 
 **La lunghezza della stagione.** Il menu ha un menu a tendina *Season Length* (default 10), con la targhetta CHAMPIONSHIP sotto il selettore.
 
@@ -532,6 +531,34 @@ Il rottame è escluso dalle collisioni fra vetture da quando è distrutto, e `Ca
 ## 4ter. Modalità e log
 
 - **Free Practice** (`raceMode === 'practice'`): circuito e meteo scelti, nessun avversario, `TOTAL_LAPS` a 9999, niente qualifiche né bandiera. Ogni giro finisce in `car.lapTimes`; il pulsante **Stop Session** chiude e mostra la tabella dei tempi con il migliore evidenziato.
+### 4ter-bis La pausa (Apex 2)
+
+**Si mette in pausa con Spazio, P o Esc**, o col pulsante nell'angolo, in qualsiasi cosa stia girando davvero: griglia, gara, qualifica, prova libera. Spazio è sicuro perché nessuno dei due schemi di comando lo usa — il posto 1 ha frecce o WASD e il posto 2 prende l'altro — e c'è un test che lo verifica invece di darlo per scontato. `preventDefault` è obbligatorio o il browser scrolla la pagina sotto il canvas.
+
+**Lo schermo di pausa porta dei numeri.** Una schermata che dice solo PAUSA è uno schermo sprecato: l'unico momento in cui il gioco è fermo è l'unico in cui puoi davvero leggere qualcosa. Quindi mostra le cose che a velocità di gara non riesci a registrare, e dice cose diverse in gara e in qualifica perché sono domande diverse.
+
+In **gara**, tre colonne: *La tua gara* (posizione, giro, chi hai davanti e a che distanza, chi hai dietro, quante posizioni hai fatto rispetto alla griglia), *Passo* (ultimo giro, tuo migliore, distacco dal giro più veloce della sessione e di chi è, usura, meteo, bandiera VSC se è fuori) e *La tua auto* (telaio, mescola, vita residua e integrità con due barre, velocità).
+
+In **qualifica**: *Il tuo giro* (posizione provvisoria, tuo migliore, distacco dalla pole, ultimo giro, a che giro sei dei tre), *La tua auto*, e *Sessione* (chi è in pole e con che tempo, quanti hanno già girato, circuito, meteo).
+
+I distacchi usano la stessa aritmetica della torre dei tempi — distanza sul giro divisa per il passo di chi la deve coprire — perché due numeri diversi per la stessa cosa sono peggio di nessun numero. Con **due giocatori** il pannello si comprime a una colonna a testa: sei colonne non sono un pannello, sono un foglio di calcolo.
+
+Il pannello viene ricostruito a ogni pausa e non tenuto vivo: il gioco è fermo, non c'è niente da aggiornare, e un'istantanea non può andare fuori sincrono con l'immagine congelata dietro.
+
+**Ed è trasparente**, perché era la richiesta e ha un senso: una pausa che non lascia vedere la pista non ti dice niente della situazione in cui hai messo in pausa — dov'è l'auto davanti, da che parte gira la prossima curva — che è esattamente quello per cui ti sei fermato. Lo sfondo è passato da `rgba(0,0,0,0.62)` a `0.28` e il pannello da `0.90` a `0.62`, con un `backdrop-filter: blur(3px)` dietro così il circuito si legge senza che i numeri diventino faticosi.
+
+`setPaused()` restituisce esattamente il tempo passato in pausa: `raceStartTime`, `firstFinisherTime` e `vscEndsAt` vengono spostati avanti alla ripresa, quindi una pausa non costa niente. C'è un test che ferma il gioco per 2000ms di orologio a muro e verifica che il tempo di gara trascorso non si muova di un millisecondo.
+
+**Il bug che la pausa ha fatto emergere.** Uscendo dalla pausa le frecce smettevano di far accelerare l'auto. `clearKeys()` — che gira a ogni pausa — faceva `keys.throttle = 0`, uno **zero definito**. Ma tutto lo schema poggia su un solo invariante: *una tastiera non definisce mai la coppia analogica*, perché il routing è
+
+```js
+inputs.throttle = k.throttle !== undefined ? k.throttle : (k.up ? 1 : 0);
+```
+
+Scrivere `0` rompeva l'invariante in modo permanente: dalla prima `clearKeys()` in poi il fallback non scattava più e l'auto ignorava l'acceleratore per il resto della sessione, per quanto tenessi premuto. **Lo sterzo continuava a funzionare**, perché legge i booleani — ed è per questo che si presenta come «i comandi non funzionano più» invece che «l'acceleratore è morto». Ora si fa `delete`, che riporta l'oggetto alla forma con cui nasce.
+
+Il bug c'era da quando esiste la coppia analogica; la barra spaziatrice l'ha solo reso banale da incontrare, perché mettere in pausa è diventato comodo. Il test di regressione è stato prima verificato **contro il codice rotto** — quattro asserzioni falliscono, e una di queste stampa `123 -> 81`, cioè l'auto che rallenta col piede sul gas — perché un test di regressione che non fallisce sul bug non serve a niente.
+
 ### Frame stall (scheda in secondo piano)
 
 `requestAnimationFrame` si ferma quando la scheda non è visibile, ma `performance.now()` no. Al ritorno arriva un frame con `dt` di decine di secondi: `updatePhysics` lo tronca a 50ms, quindi non si corre praticamente nulla, ma `raceStartTime`, `firstFinisherTime` e `vscEndsAt` sono ancore su orologio a muro e quindi credono che la gara sia andata avanti. In un log reale questo ha squalificato dieci vetture su undici per "outside the time limit" mentre erano tutte al quarto giro su cinque e a sei secondi dalla bandiera, senza che nessuna avesse percorso un metro.
@@ -610,3 +637,4 @@ Gli attrezzi di misura sono nella cartella di lavoro e non nel gioco: `logscan.j
 - **[Apex 2] Il limite laterale dell'IA si misura dalla pista, non dalla traiettoria ideale.** `desired` è relativo alla linea, `maxOffset` alla mezzeria: clamparli insieme mandava il punto di mira fuori strada su ogni circuito la cui linea sta incollata al cordolo.
 - **[Apex 2] Una barriera dipinta va costruita come SCOSTAMENTO del confine fisico, mai come un secondo insieme di livello più largo.** I due coincidono solo dove il bordo è liscio; vicino a una rientranza quello largo si richiude sopra la tacca e sparisce, e resta un muro invisibile. `ghost.js` (e la sezione 8 di `apex2_newtracks.js`) misurano la proprietà giusta: trova i punti dove un'auto si ferma e chiedi quanto è lontana la vernice più vicina. Deve essere un raggio d'auto, ovunque.
 - **[Apex 2] Se una cosa si dipinge sul tracciato, il suo limite va messo dove lo legge anche la fisica.** Il cordolo di Peanut finiva sotto l'armco perché il limite stava in `draw()`; ora sta in `kerbWidthFor()`, che usano sia il disegno sia `getSurface()`.
+- **[Apex 2] `keys.throttle` non va mai messo a zero su una tastiera: va cancellato.** L'intero instradamento dei comandi poggia sull'invariante «una tastiera non definisce la coppia analogica», e uno zero definito lo rompe per sempre: l'acceleratore muore e lo sterzo no, quindi sembra tutt'altro problema. Vale per qualsiasi cosa in futuro voglia azzerare i comandi.
