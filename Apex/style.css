@@ -40,7 +40,8 @@ canvas {
 
 /* Every centred panel must be listed here: #ui-layer is pointer-events:none,
    so a panel left out of this rule renders unstyled AND its buttons are dead. */
-#menu, #game-over, #championship-final, #quali-screen, #gp-preview, #tyre-screen {
+#menu, #game-over, #championship-final, #quali-screen, #gp-preview, #tyre-screen,
+#chassis-screen {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -331,10 +332,10 @@ button:hover {
     flex: 0 1 auto;
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     height: 26px;
     min-height: 20px;
-    padding: 0 5px;
+    padding: 0 4px;
     border-radius: 3px;
     background: rgba(255, 255, 255, 0.05);
     border-left: 4px solid transparent;
@@ -347,12 +348,17 @@ button:hover {
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
+/* The badges are the part that must never be cut. This group therefore does
+   NOT shrink and does NOT clip; if the row runs out of room it is the gap
+   text on the right that gives way, because "+1.3" losing its last character
+   is survivable and "RD" instead of "RDG" is not. That was the bug: this
+   group was the flexible one, so the last badge in it was always the casualty. */
 #timing-tower .tt-top {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: 5px;
-    min-width: 0;
-    overflow: hidden;
+    gap: 4px;
+    overflow: visible;
 }
 
 #timing-tower .tt-pos {
@@ -362,7 +368,19 @@ button:hover {
     font-size: 12px;
 }
 
-#timing-tower .tt-name { font-weight: bold; letter-spacing: 0.5px; }
+/* Fixed width, so the compound pips form a straight column instead of
+   stepping in and out with the length of each driver's code. */
+/* Wide enough for three bold capitals with no clipping. 30px was measured
+   against a monospace assumption the page does not actually make - the tower
+   inherits the body font, where "MSC" and "HAM" are wider than "PRO", so some
+   codes lost their last letter and others did not. */
+#timing-tower .tt-name {
+    flex: 0 0 38px;
+    font-weight: bold;
+    letter-spacing: 0.3px;
+    overflow: hidden;
+    white-space: nowrap;
+}
 
 #timing-tower .tt-chip {
     width: 7px;
@@ -375,14 +393,21 @@ button:hover {
 /* pushed to the right-hand edge of the row, so the gaps line up in a column
    you can read down */
 #timing-tower .tt-gap {
+    flex: 1 1 auto;
+    min-width: 0;
     margin-left: auto;
-    padding-left: 6px;
+    padding-left: 5px;
+    text-align: right;
     font-size: 13px;
     opacity: 0.9;
+    overflow: hidden;
+    white-space: nowrap;
 }
 
 #timing-tower .tt-tyre {
     display: inline-block;
+    flex: 0 0 auto;
+    width: 14px;
     min-width: 14px;
     height: 14px;
     line-height: 14px;
@@ -391,6 +416,22 @@ button:hover {
     font-weight: bold;
     text-align: center;
     color: #111;
+}
+
+/* the chassis, immediately right of the compound */
+#timing-tower .tt-ch {
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 24px;
+    height: 14px;
+    line-height: 14px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 0;
+    text-align: center;
+    color: #08131a;
+    overflow: visible;
 }
 
 #timing-tower .tt-note {
@@ -578,42 +619,141 @@ button:hover {
     background-color: #d32f2f;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Touch controls                                                     */
+/*  Steering left, throttle right. Sized for a thumb, not a cursor.     */
+/* ------------------------------------------------------------------ */
 #mobile-controls {
     position: absolute;
-    bottom: 20px;
-    left: 20px;
-    right: 20px;
-    display: flex;
-    justify-content: space-between;
+    inset: 0;
     pointer-events: none;
+    touch-action: none;
 }
 
-#mobile-left-group, #mobile-right-group {
+#mobile-steer {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
     display: flex;
-    gap: 15px;
+    gap: 14px;
 }
 
-#mobile-controls button {
-    width: 60px;
-    height: 60px;
-    border-radius: 30px;
-    background: rgba(0, 0, 0, 0.4);
-    color: white;
+#mobile-steer button {
+    width: 78px;
+    height: 78px;
+    border-radius: 39px;
+    background: rgba(0, 0, 0, 0.42);
+    color: #fff;
     font-weight: bold;
-    font-size: 14px;
+    font-size: 26px;
+    line-height: 1;
     border: 2px solid rgba(255, 255, 255, 0.5);
     pointer-events: auto;
     user-select: none;
     -webkit-user-select: none;
-    touch-action: manipulation;
+    touch-action: none;
     padding: 0;
     margin: 0;
 }
 
-#mobile-controls button:active {
+#mobile-steer button:active {
     background: rgba(0, 0, 0, 0.8);
-    border-color: white;
+    border-color: #fff;
 }
+
+/* the throttle strip: gas above the middle, brake and reverse below */
+#mobile-throttle {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    width: 86px;
+    height: 62vh;
+    max-height: 340px;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#mt-track {
+    position: relative;
+    flex: 1 1 auto;
+    width: 100%;
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.42);
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    overflow: hidden;
+}
+
+#mt-fill {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 0;
+    background: #00e676;
+    opacity: 0.45;
+}
+
+/* the neutral line: where your thumb has to come back to */
+#mt-centre {
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    background: rgba(255, 255, 255, 0.65);
+}
+
+#mt-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 62px;
+    height: 22px;
+    margin-left: -31px;
+    margin-top: -11px;
+    border-radius: 11px;
+    background: #eceff1;
+    border: 2px solid #263238;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+#mt-up, #mt-down {
+    position: absolute;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: rgba(255, 255, 255, 0.55);
+}
+#mt-up { top: 10px; }
+#mt-down { bottom: 10px; }
+
+#mt-read {
+    flex: 0 0 auto;
+    font-size: 15px;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+    color: #b0bec5;
+    text-shadow: 0 1px 2px #000;
+}
+
+/* On a phone the driver's readouts move to the TOP of the HUD column and the
+   tower goes under them, so the bottom-left corner - where the steering
+   buttons live - is empty road instead of the thing you are trying to read. */
+body.is-mobile #hud { order: 2; margin-top: 0; }
+body.is-mobile #hud2 { order: 2; margin-top: 0; }
+body.is-mobile #timing-tower { order: 3; }
+body.is-mobile #vsc-banner { order: 1; }
 
 /* ------------------------------------------------------------------ */
 /*  How to play                                                        */
@@ -1029,3 +1169,112 @@ button.tyre-opt:hover {
 }
 .season-table .sr-fl   { color: #ce93d8; }
 .season-table .sr-pole { color: #4fc3f7; }
+
+
+/* --- the season's chassis choice ---------------------------------------- */
+#chassis-screen { min-width: 700px; }
+
+#chassis-options {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+button.chassis-opt {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    width: 100%;
+    margin: 0;
+    padding: 16px 14px 14px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 2px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    color: #fff;
+    font-weight: normal;
+    text-align: left;
+}
+
+button.chassis-opt:hover {
+    background: rgba(255, 255, 255, 0.14);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+}
+
+.chassis-opt .ch-badge {
+    align-self: flex-start;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #08131a;
+    padding: 2px 7px;
+    border-radius: 4px;
+}
+
+.chassis-opt .ch-name { font-size: 21px; font-weight: 900; letter-spacing: 1px; margin-top: 6px; }
+.chassis-opt .ch-line1 { font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; }
+.chassis-opt .ch-line2 { font-size: 12px; opacity: 0.72; line-height: 1.45; margin: 6px 0 12px; min-height: 52px; }
+
+.chassis-opt .ch-stat {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    margin-top: 3px;
+}
+.chassis-opt .ch-k { flex: 0 0 76px; opacity: 0.7; }
+.chassis-opt .ch-v { flex: 0 0 34px; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
+
+/* a bar that grows either side of centre, so "worse" reads as worse */
+.chassis-opt .ch-bar {
+    position: relative;
+    flex: 1 1 auto;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.10);
+    overflow: hidden;
+}
+.chassis-opt .ch-bar::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 0; bottom: 0;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.35);
+}
+.chassis-opt .ch-bar > i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+
+/* the chassis badge, wherever a car is named */
+.ch-pip {
+    display: inline-block;
+    min-width: 26px;
+    padding: 0 3px;
+    height: 13px;
+    line-height: 13px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 0.5px;
+    text-align: center;
+    color: #08131a;
+    vertical-align: middle;
+}
+
+
+/* the 2 in the title: a second version, and it should look like one */
+#menu-two {
+    display: inline-block;
+    font-size: 0.62em;
+    vertical-align: 0.42em;
+    margin-left: 4px;
+    padding: 0 7px;
+    border-radius: 5px;
+    background: #e53935;
+    color: #fff;
+    letter-spacing: 0;
+}
+
+/* a tag sitting UNDER its control rather than beside its label */
+.tag-under {
+    display: inline-block;
+    margin: 5px 0 0;
+}

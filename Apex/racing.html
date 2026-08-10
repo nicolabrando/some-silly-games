@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Apex</title>
+    <title>Apex 2</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -70,7 +70,7 @@
 
             <div id="menu">
                 <div id="menu-title">
-                    <h1>APEX</h1>
+                    <h1>APEX <span id="menu-two">2</span></h1>
                     <div id="menu-stripe"><span></span><span></span><span></span></div>
                 </div>
 
@@ -91,12 +91,26 @@
                                 <option value="pettine">Comb</option>
                                 <option value="thunder">Thunder</option>
                                 <option value="crown">Crown</option>
+                                <option value="boomerang">Boomerang</option>
+                                <option value="zipper">Zipper</option>
+                                <option value="kettle">Kettle</option>
+                                <option value="harbour">Harbour</option>
+                                <option value="crossover">Crossover &mdash; bridge</option>
+                                <option value="lombard">Lombard</option>
                             </select>
                         </div>
                         <div class="menu-row">
                             <div class="menu-group">
                                 <label>Laps</label>
                                 <input type="number" id="laps-select" min="1" max="100" value="5">
+                            </div>
+                            <div class="menu-group">
+                                <label>Season Length</label>
+                                <!-- filled by main.js from the circuit list, so the
+                                     longest season it offers is always exactly the
+                                     number of circuits there are -->
+                                <select id="rounds-select"></select>
+                                <span class="tag tag-under">championship</span>
                             </div>
                             <div class="menu-group">
                                 <label>Opponents</label>
@@ -121,6 +135,7 @@
                                 <option value="medium" selected>Medium</option>
                                 <option value="hard">Hard</option>
                                 <option value="impossible">Impossible</option>
+                                <option value="alien">Alien</option>
                             </select>
                         </div>
                         <label class="menu-check">
@@ -132,10 +147,13 @@
                             <span>Reverse grid <span class="tag">championship only</span></span>
                         </label>
                         <div class="menu-hint">
-                            The championship visits every circuit &mdash; in a different
-                            order each season &mdash; and rolls its own weather, so Track
+                            A championship draws its calendar at random &mdash; Season
+                            says how many rounds &mdash; and rolls its own weather, so Track
                             and Force Wet only shape a single race or a practice run.
-                            Laps, opponents and difficulty apply everywhere.
+                            Laps, opponents and difficulty apply everywhere. In a
+                            The car is chosen on its own screen when a session
+                            starts &mdash; once for a whole season in the
+                            championship, once per weekend otherwise.
                         </div>
                         <div class="menu-hint">
                             You qualify before every race. Tick Reverse Grid and the
@@ -404,6 +422,15 @@
                     Softer rubber is quicker while it lasts and falls away sharply once it is gone.
                 </div>
             </div>
+            <div id="chassis-screen" style="display: none;">
+                <h1 id="chassis-title" style="margin: 0 0 4px; font-size: 24px;">Pick your car</h1>
+                <div id="chassis-subtitle" style="font-size: 13px; opacity: 0.65; margin-bottom: 18px;"></div>
+                <div id="chassis-options"></div>
+                <div style="font-size: 11px; opacity: 0.5; margin-top: 14px;">
+                    None of the three is the quick one. Aero wants a twisty circuit,
+                    Bolt wants straights, Ridge wants a long race or a wet one.
+                </div>
+            </div>
             <div id="gp-preview" style="display: none;">
                 <h1 id="gp-title" style="margin: 0 0 2px; font-size: 24px;">Round 1</h1>
                 <div id="gp-weather" style="font-size: 14px; opacity: 0.85; margin-bottom: 14px;">Dry</div>
@@ -437,7 +464,8 @@
                     <thead>
                         <tr style="border-bottom: 1px solid #fff;">
                             <th>Pos</th>
-                            <th>Car</th>
+                            <th>Driver</th>
+                            <th title="the chassis this driver took for the season">Car</th>
                             <th>Tyre</th>
                             <th>Laps</th>
                             <th>Time</th>
@@ -515,14 +543,24 @@
             </div>
         </div>
         
+        <!-- Touch controls. Steering on the left, where a thumb rests; the
+             throttle on the right as a strip you slide - up for gas, down for
+             brake and reverse - so the amount is yours to choose rather than
+             all or nothing. Never shown on a desktop, where nothing changes. -->
         <div id="mobile-controls" style="display: none;">
-            <div id="mobile-left-group">
-                <button id="btnUp">Gas</button>
-                <button id="btnDown">Brake</button>
+            <div id="mobile-steer">
+                <button id="btnLeft" aria-label="steer left">&#9664;</button>
+                <button id="btnRight" aria-label="steer right">&#9654;</button>
             </div>
-            <div id="mobile-right-group">
-                <button id="btnLeft">Left</button>
-                <button id="btnRight">Right</button>
+            <div id="mobile-throttle" aria-label="throttle and brake">
+                <div id="mt-track">
+                    <div id="mt-fill"></div>
+                    <div id="mt-centre"></div>
+                    <div id="mt-knob"></div>
+                    <div id="mt-up">GAS</div>
+                    <div id="mt-down">BRAKE</div>
+                </div>
+                <div id="mt-read">0%</div>
             </div>
         </div>
     </div>
