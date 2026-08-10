@@ -63,6 +63,27 @@ body{display:flex;align-items:center;justify-content:center;
 .tb{width:118px;height:118px;border-radius:50%;border:0;background:rgba(255,255,255,.6);
   font-size:48px;font-weight:900;color:#4a3d2b;box-shadow:0 4px 14px rgba(0,0,0,.22);touch-action:none}
 .tb.hit{width:140px;height:140px;background:rgba(255,107,74,.82);color:#fff;font-size:60px}
+/* ---- testi ingranditi su mobile ---- */
+body.touch .overlay{gap:12px}
+body.touch .title{font-size:96px}
+body.touch .sub{font-size:30px}
+body.touch .hint{font-size:22px;padding:10px 24px}
+body.touch .optlab{font-size:26px;width:300px}
+body.touch .seg button{font-size:24px;padding:12px 26px}
+body.touch .big{font-size:36px;padding:20px 46px}
+body.touch .h2{font-size:46px}
+body.touch .win{font-size:76px}
+body.touch .panel{gap:6px;padding:10px 16px 12px}
+body.touch .panel h3{font-size:26px}
+body.touch .panel canvas{width:165px;height:172px}
+body.touch .row{width:350px}
+body.touch .row .lab{font-size:20px;width:116px}
+body.touch .val{font-size:21px}
+body.touch .arrow{width:46px;height:46px;font-size:24px}
+body.touch .dot{width:23px;height:23px}
+body.touch .dice{font-size:21px;padding:10px 26px}
+body.touch #hudBtns button{width:70px;height:70px;font-size:30px}
+body.touch #rotate{font-size:20px;padding:10px 24px}
 </style>
 </head>
 <body>
@@ -157,6 +178,7 @@ const match={phase:'idle', server:0, tossT:0, banner:'', bannerT:0, pointT:0, ti
 const cpuPlan={at:-1};
 let particles=[], confettiT=0;
 const isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
+const TS=isTouch?1.35:1; // scala dei testi disegnati sul canvas per mobile
 
 const MOVSPD=430, P1MIN=725, P1MAX=1210, P2MIN=70, P2MAX=555, HIT_R=66;
 const keys={}, tMove=[0,0];
@@ -327,6 +349,7 @@ segInit($('segDiff'),'diff');
 segInit($('segTouch'),'touchFlip');
 [...$('segTouch').children].forEach(b=>b.addEventListener('click',applyTouchLayout));
 if(isTouch){
+  document.body.classList.add('touch');
   $('btn2p').classList.add('hidden');
   document.querySelector('#menu .hint').textContent='Muoviti con ◀ ▶ e colpisci con ⬆ · puoi invertire i lati qui sopra';
 }else{
@@ -631,27 +654,27 @@ function drawParticles(){
   ctx.globalAlpha=1;
 }
 function drawHud(){
-  const cx=W/2;
+  const cx=W/2,k=TS,top=12;
   ctx.fillStyle='rgba(255,253,243,.93)';
   ctx.strokeStyle='#e3d2ac';ctx.lineWidth=2.5;
-  rr(ctx,cx-170,13,340,62,18);ctx.fill();ctx.stroke();
+  rr(ctx,cx-170*k,top,340*k,62*k,18*k);ctx.fill();ctx.stroke();
   for(let i=0;i<2;i++){
-    const sx=cx+(i===0?125:-125);
+    const sx=cx+(i===0?125:-125)*k;
     ctx.fillStyle=SUITS[chars[i].suit];
-    ctx.beginPath();ctx.arc(sx,36,10,0,7);ctx.fill();
+    ctx.beginPath();ctx.arc(sx,top+23*k,10*k,0,7);ctx.fill();
     ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
-    ctx.fillStyle='#8a7a5e';ctx.font='800 12px "Trebuchet MS",sans-serif';ctx.textAlign='center';
-    ctx.fillText(shortName(i),sx,63);
-    ctx.fillStyle='#4a3d2b';ctx.font='900 34px "Trebuchet MS",sans-serif';
-    ctx.fillText(players[i].score,cx+(i===0?62:-62),49);
+    ctx.fillStyle='#8a7a5e';ctx.font='800 '+Math.round(12*k)+'px "Trebuchet MS",sans-serif';ctx.textAlign='center';
+    ctx.fillText(shortName(i),sx,top+50*k);
+    ctx.fillStyle='#4a3d2b';ctx.font='900 '+Math.round(34*k)+'px "Trebuchet MS",sans-serif';
+    ctx.fillText(players[i].score,cx+(i===0?62:-62)*k,top+36*k);
     if((match.phase==='serve'||match.phase==='point')&&
        ((match.phase==='serve'?match.server:match.lastWinner)===i)){
       ctx.fillStyle='#ff8c3f';
-      ctx.beginPath();ctx.arc(sx,36,4,0,7);ctx.fill();
+      ctx.beginPath();ctx.arc(sx,top+23*k,4*k,0,7);ctx.fill();
     }
   }
-  ctx.fillStyle='#c9b98f';ctx.font='900 26px "Trebuchet MS",sans-serif';
-  ctx.fillText('–',cx,47);
+  ctx.fillStyle='#c9b98f';ctx.font='900 '+Math.round(26*k)+'px "Trebuchet MS",sans-serif';
+  ctx.fillText('–',cx,top+34*k);
   ctx.textAlign='left';
 }
 function drawBanner(){
@@ -661,8 +684,8 @@ function drawBanner(){
   const s=0.65+0.35*easeOutCubic(pop);
   const fade=clamp(match.bannerT*3,0,1);
   ctx.save();ctx.translate(W/2,278);ctx.scale(s,s);ctx.globalAlpha=fade;
-  ctx.font='900 54px "Trebuchet MS",sans-serif';ctx.textAlign='center';
-  ctx.lineWidth=9;ctx.strokeStyle='rgba(70,45,20,.55)';ctx.lineJoin='round';
+  ctx.font='900 '+Math.round(54*TS)+'px "Trebuchet MS",sans-serif';ctx.textAlign='center';
+  ctx.lineWidth=9*TS;ctx.strokeStyle='rgba(70,45,20,.55)';ctx.lineJoin='round';
   ctx.strokeText(match.banner,0,0);
   ctx.fillStyle='#fffdf3';ctx.fillText(match.banner,0,0);
   ctx.restore();ctx.textAlign='left';
@@ -676,8 +699,8 @@ function drawServeHint(t){
   if(isTouch)txt='⬆ PER SERVIRE';
   else txt=(s===1)?'W PER SERVIRE':'↑ PER SERVIRE';
   ctx.globalAlpha=0.55+0.45*Math.sin(t*6.5);
-  ctx.font='900 26px "Trebuchet MS",sans-serif';ctx.textAlign='center';
-  ctx.lineWidth=6;ctx.strokeStyle='rgba(70,45,20,.5)';ctx.lineJoin='round';
+  ctx.font='900 '+Math.round(26*TS)+'px "Trebuchet MS",sans-serif';ctx.textAlign='center';
+  ctx.lineWidth=6*TS;ctx.strokeStyle='rgba(70,45,20,.5)';ctx.lineJoin='round';
   ctx.strokeText(txt,players[s].x,455);
   ctx.fillStyle='#fff';ctx.fillText(txt,players[s].x,455);
   ctx.globalAlpha=1;ctx.textAlign='left';
