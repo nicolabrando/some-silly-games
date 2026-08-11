@@ -475,6 +475,19 @@ Serviva anche accorciare la vita della medium: a `life 1.50` non si consumava qu
 
 Il fit è fatto a difficoltà *medium*, non a impossible: in cima alla scala l'IA è incollata al proprio tetto `maxCorner`, quindi la velocità di sterzata in più viene in parte buttata via e la soft misura meglio di quanto sia. Il giocatore quel tetto non ce l'ha.
 
+**4. Sei mescole, tre assi diversi.** La tabella `TYRES` non è più una scala sola. Soft/medium/hard sono un asse — quanta prestazione adesso contro quanta dopo. **Drift** (§6quater) è fuori da quell'asse: baratta aderenza laterale per rotazione. **Inter** e **Wet** (§6quinquies) sono su un asse che nemmeno esiste finché non piove. `chooseTyre` le tratta come tre decisioni separate: se piove sceglie *solo* fra le due da pioggia e la domanda è quanta acqua c'è; se non piove c'è prima un tiro sulla drift, per temperamento, e solo dopo la scala soft/medium/hard.
+
+| | grip | bite | slide | rainGrip | aqua | dryWear | life |
+|---|---|---|---|---|---|---|---|
+| Soft | 1.090 | 1.010 | — | — | — | — | 0.90 |
+| Medium | 1.000 | 1.000 | — | — | — | — | 1.30 |
+| Hard | 0.988 | 1.005 | — | — | — | — | 2.60 |
+| Drift | 0.780 | 1.344 | **1.55** | — | — | — | 2.00 |
+| Inter | 0.940 | 1.020 | — | **2.50** | 0.10 | **4.5** | 1.15 |
+| Wet | 0.870 | 1.030 | — | **3.55** | **0.60** | **3.4** | 1.55 |
+
+I trattini sono default neutri (`|| 1`, `|| 0`) letti dalla fisica, non voci mancanti in una tabella di lookup: le quattro mescole da asciutto attraversano il codice nuovo e ne escono identiche a prima.
+
 
 ### 4.7 Gestione dei contatti
 Il modello di danno di `main.js` applica 2 HP **per frame** di contatto: 2,5 s di sfregamento continuo distruggono una vettura. L'IA quindi non deve solo evitare gli urti, ma soprattutto non deve *restare* attaccata. Tre meccanismi, tutti nati da bug osservati in simulazione:
@@ -544,7 +557,7 @@ Due schermate di consultazione dal menu. **Niente di quello che mostrano è una 
 Due trappole, entrambe scoperte misurando:
 
 - il primo tentativo usava il **rapporto** bagnato/asciutto. Sul bagnato le curve crollano e i rettilinei no, quindi chi passa più tempo a tavoletta conserva la frazione più alta del proprio tempo asciutto: misurava quanto rettilineo contiene il giro di un pilota, non quanto va sotto la pioggia;
-- e la **mescola va fissata**. `simulateQualifyingLap` normalmente lascia scegliere a `chooseTyre`, che è casuale per progetto — giusto in una sessione, sbagliato qui. Un record che dipende dalla gomma che il pilota ha pescato non è un record, è una lotteria, e si vedeva: stesso circuito, detentore e ordine diversi a ogni apertura. Ora tutti girano sulla stessa gomma (soft per i record, medium per il confronto fra piloti).
+- e la **mescola va fissata**. `simulateQualifyingLap` normalmente lascia scegliere a `chooseTyre`, che è casuale per progetto — giusto in una sessione, sbagliato qui. Un record che dipende dalla gomma che il pilota ha pescato non è un record, è una lotteria, e si vedeva: stesso circuito, detentore e ordine diversi a ogni apertura. Ora tutti girano sulla stessa gomma: **soft** per il record all'asciutto, **medium** per il confronto fra piloti, ed **entrambe** le mescole da pioggia per il record sul bagnato, tenendo la migliore — perché quale delle due sia più veloce è una domanda sul circuito (§6quinquies), e fissarne una avrebbe reso sbagliata metà dei record. Un pallino del colore della mescola accanto al detentore dice quale ha girato.
 
 ### 6ter. Il bilanciamento del bagnato, e il bug che lo rendeva impossibile (Apex 2)
 
@@ -574,7 +587,65 @@ che è quello che dicono i profili: i tre che `ai.js` nomina come i più forti s
 
 Anche le descrizioni sulle schede piloti sono state riscritte due volte: una prima per allinearle al cronometro quando contraddiceva i profili, e di nuovo — tornando all'originale — quando il cronometro ha ricominciato a dare loro ragione.
 
-### 4ter-bis La pausa (Apex 2)### 4ter-bis La pausa (Apex 2)
+### 6quater. La mescola drift, e perché il grip da solo non bastava (Apex 2)
+
+Una gomma «fatta apposta per driftare». Il nome è facile, dimostrare che lo faccia no: `a2/apex_tyres.js` §5 misura se l'oggetto chiamato Drift sia misurabilmente tale, e ci sono voluti tre tentativi perché **le prime due misure erano sbagliate**, in modi che dicono qualcosa sul modello.
+
+**Errore 1 — il picco di `powerOversteer` su una finestra lunga non misura niente.** `demand` divide per la velocità **in avanti**, quindi quando l'auto ha ruotato abbastanza la componente in avanti crolla, `demand` esplode e ogni mescola si incolla allo stesso numero. Novanta frame a sterzo tutto dentro fanno girare l'auto di 180°: soft, medium, hard e drift tornavano tutte **0.721**. La finestra ora è di venti frame, con la velocità tenuta costante perché `demand` sia identico per tutte e resti solo la mescola a fare la differenza.
+
+**Errore 2 — la velocità laterale e i segni di gomma premiano la soft, e giustamente.** Qui lo scivolamento laterale è per lo più il vettore velocità che resta indietro rispetto al muso, quindi *sembra* più di traverso quello che ruota più in fretta — e la soft ha la velocità di sterzata più alta delle quattro (`grip × bite = 1.101` contro 1.048 della drift). Non dice niente sull'aderenza. Quello che distingue una gomma da drift non è quanto in fretta comincia a scivolare ma che **non smette**, quindi lo scivolamento va misurato da solo.
+
+**Errore 3 — e questo era il più istruttivo.** La prova «calcio laterale, poi lascio tutto» dava lo stesso identico risultato a tutte e quattro: 27 frame per raddrizzarsi. Perché `alignStiffness = 3.5 · (1 − slideRelease · powerOversteer)`, e senza gas `powerOversteer` è zero: la forza che raccoglie l'auto è 3.5 secca per tutti. Il limite sulla forza laterale poi non morde nemmeno a quelle velocità (3.5 × 150 = 525 contro un limite di 973 anche sulla drift). **Tutto l'effetto della mescola su uno scivolamento passa per `slipperiness → powerOversteer → alignStiffness`**, quindi il gas va tenuto: un drift si tiene col gas anche nel codice.
+
+Poi il problema vero. `slipperiness = baseGrip / currentGrip`, quindi il carattere si compra abbassando il grip — ma **il grip è anche il limite sulla forza laterale**, e comprarlo così costa tempo in fretta. Misurato (`driftsweep.js`) a velocità di sterzata fresca costante 1.048:
+
+| grip | bite | slipperiness | costo sul giro |
+|---|---|---|---|
+| 0.78 | 1.344 | 1.282 | **+1.65%** |
+| 0.74 | 1.416 | 1.351 | +3.04% |
+| 0.70 | 1.497 | 1.429 | +3.51% |
+| 0.62 | 1.690 | 1.613 | +4.10% |
+
+Il canale è esaurito a 0.78. Da lì in poi si compra solo lentezza. Quindi è stato aggiunto **`slide`**, un attributo generico della tabella gomme come `bite` — default 1.00 su tutte le altre — che moltiplica solo il termine di sovrasterzo:
+
+```js
+powerOversteer = clamp(((demand − 1.45) / 2.2) · slipperiness · tyreSlide, 0, 1)
+```
+
+Con `slide 1.55`: sovrasterzo **+99%** rispetto alla medium, 2.5× il tempo di traverso, 2.5× i segni sull'asfalto. E il costo sul giro **scende** da 1.65% a 1.22%, perché la rotazione in più aiuta davvero nelle curve lente. La fisica non nomina mai una mescola: legge un attributo, come faceva già con `bite`.
+
+Una cosa che il test **fissa apposta**: la soft gira più forte della drift (`grip × bite` 1.101 contro 1.048) e va bene così. Non è la stessa cosa dello scivolare, e dare alla drift più `bite` della soft la renderebbe anche la gomma più veloce del gioco.
+
+### 6quinquies. Le gomme da bagnato (Apex 2)
+
+Due mescole scolpite, **Inter** e **Wet**. Quattro cose dovevano essere vere insieme, e sono tutte misurate in `apex2_wettyres.js` (38 controlli).
+
+**1. Sotto la pioggia non sono una preferenza, sono *la* gomma.** Su stint solitari di 5 giri, ogni mescola da asciutto perde contro ogni mescola da bagnato su ogni circuito: la slick migliore è **17% indietro**. L'IA non porta mai una slick a una gara bagnata.
+
+**2. All'asciutto sono uno sbaglio, e caro.** 12-14% fuori dal passo, ma soprattutto **si distruggono**: `dryWear` 4.5 e 3.4 significa che un set arriva a 3.83 e 2.15 volte la propria vita in una gara di 5 giri. Senza pit stop, questo è ciò che impedisce che «metto le wet e sto tranquillo» sia un'assicurazione gratis. Sotto la pioggia la stessa gomma arriva alla bandiera a 0.68.
+
+**3. Nessuna delle due domina l'altra — e a decidere è l'acqua, non il circuito.** Questo è il punto su cui la prima taratura falliva: con `grip 0.84 / rainGrip 3.30` l'intermedia vinceva 5 volte su 6 e l'unica vittoria della full wet era rumore. La regola dev'essere leggibile. Misurato (`wetsweep.js`) su Oval, Circle e Triangle, a **0.87 / 3.55**:
+
+| | oval | circle | triangle |
+|---|---|---|---|
+| **strada bagnata pulita** | inter +0.2% | inter +1.8% | inter +0.9% |
+| **otto pozzanghere** | wet +1.3% | wet +5.7% | wet +0.9% |
+
+Mezzo punto in una direzione o nell'altra distrugge tutto: 0.84/3.30 dà cinque su sei all'intermedia, 0.90/3.30 dà tutte e sei alla full wet.
+
+Il meccanismo è `aqua`, che toglie il 60% dell'aquaplaning alla full wet. Ha dovuto **alzare il pavimento oltre che appiattire la pendenza** (`(0.45 + 0.30·aqua) − 0.25·aquaplane`): togliere solo il termine dipendente dalla velocità lasciava la full wet appena avanti, perché una pozzanghera dura pochi frame e la differenza non aveva il tempo di vedersi.
+
+**4. L'IA deve mirare alla strada su cui è davvero.** È il bug di `WET_GRIP` (§6ter) disponibile di nuovo, una riga più in là: le mescole da pioggia moltiplicano quella stessa costante, quindi `ai.js` deve leggere `car.tyre.rainGrip` e moltiplicarlo allo stesso modo. C'è un test sul sorgente di entrambi i file.
+
+Qui una misura ha smentito una mia aspettativa e ha avuto ragione lei. Avevo scritto che `gripUse` sulle gomme da bagnato dovesse essere alto come sulle slick, sul presupposto che una gomma che l'IA non sfrutta sia una gomma sprecata. È il contrario: `gripUse` è velocità laterale contro **il limite**, e le mescole da pioggia alzano il limite di 2.4× e 3.1×. Una slick sotto la pioggia sta alta (47%) perché è limitata dall'aderenza; una full wet sta bassa (17%) perché **non lo è più** — e non esserlo è tutto ciò per cui esiste la gomma. Riferimento: una slick all'asciutto sta al 7.7%.
+
+**Scelta dell'IA.** In pioggia `chooseTyre` sceglie fra le due, per temperamento: chi vive sul filo e attacca prende l'intermedia più veloce sperando di schivare l'acqua, chi calcola prende quella che funziona ovunque. La `wetSkill` spinge verso l'intermedia — è la gomma che ti chiede di tenerla in strada nell'acqua alta, e non tutti sanno farlo. Risultato: Senna, Schumacher, Alonso e Hamilton quasi sempre in intermedia, Prost sempre in full wet, Verstappen nel mezzo perché è il più spericolato della griglia ma davvero mediocre sotto la pioggia, e le due cose lo tirano in direzioni opposte. Il 45% della griglia prende la full wet.
+
+**Interfaccia.** Tutte e sei le mescole sono sempre offerte — una slick sotto la pioggia è una scommessa legittima, non una cosa da nascondere — ma l'ordine segue il meteo. Sotto la pioggia il numero in testa non è più `grip × bite` ma `wet grip ×`, perché sul bagnato è il limite di aderenza a mordere e non la velocità di sterzata; e la durata scritta sul pulsante si muove col meteo, o è una bugia: la full wet dice «lasts the distance» sotto la pioggia e «~2.3 di 5 giri» all'asciutto.
+
+**Record in Explore.** Il giro record sul bagnato ora viene simulato su **entrambe** le mescole da pioggia e tiene la migliore, con un pallino del colore della mescola accanto al nome. Fissarne una avrebbe reso sbagliata metà dei record.
+
+### 4ter-bis La pausa (Apex 2)
 
 **Si mette in pausa con Spazio, P o Esc**, o col pulsante nell'angolo, in qualsiasi cosa stia girando davvero: griglia, gara, qualifica, prova libera. Spazio è sicuro perché nessuno dei due schemi di comando lo usa — il posto 1 ha frecce o WASD e il posto 2 prende l'altro — e c'è un test che lo verifica invece di darlo per scontato. `preventDefault` è obbligatorio o il browser scrolla la pagina sotto il canvas.
 
@@ -685,3 +756,8 @@ Gli attrezzi di misura sono nella cartella di lavoro e non nel gioco: `logscan.j
 - **[Apex 2] Una statistica mostrata a schermo va misurata, non letta da un parametro che le somiglia.** La colonna `wet` è una correzione fitted, non un'abilità: ordinarci i piloti dava l'opposto del vero. Vale per qualsiasi barra futura — se il numero non predice il comportamento, non è quel numero che va mostrato.
 - **[Apex 2] Se due file devono usare lo stesso numero, devono leggerlo dallo stesso posto.** `ai.js` mirava a 0.20 di grip sul bagnato con un commento che diceva «matches car.js exactly» mentre `car.js` usava 0.13: un'IA che crede la strada il 54% più grippante di com'è passa il limite a ogni curva. Ora è `WET_GRIP`, una costante sola. Un commento non è un vincolo.
 - **[Apex 2] Fissa la mescola quando confronti piloti fra loro.** `chooseTyre` è casuale per progetto; qualsiasi misura che confronti due piloti senza pinnarla sta in parte tirando i dadi.
+- **[Apex 2] Prima di misurare `powerOversteer`, tieni ferma la velocità.** `demand` divide per la velocità in avanti, quindi qualunque cosa faccia perdere velocità all'auto — più grip, più rotazione, una pozzanghera — alza il sovrasterzo per motivi che non c'entrano con quello che stai misurando. Su una finestra lunga l'auto ruota, la componente in avanti crolla e **tutte le mescole convergono sullo stesso numero**. È successo due volte con valori diversi (0.721 e 0.000) prima che fosse chiaro.
+- **[Apex 2] Uno scivolamento senza gas non distingue niente.** `alignStiffness = 3.5 · (1 − slideRelease · powerOversteer)`: a gas chiuso `powerOversteer` è zero e la rigidezza è 3.5 per tutti. Anche il limite sulla forza laterale non morde alle velocità normali. Tutto l'effetto della mescola su un traverso passa per `slipperiness → powerOversteer → alignStiffness`, quindi il gas resta dentro.
+- **[Apex 2] Un attributo nuovo sulla tabella gomme deve avere un default neutro nella fisica, non una tabella di lookup.** `tyre.rainGrip || 1`, `tyre.aqua || 0`, `tyre.dryWear || 1`: così le mescole vecchie attraversano il codice nuovo e ne escono identiche, e c'è un test che verifica che le quattro da asciutto **non dichiarino** nessuno dei tre.
+- **[Apex 2] Non basta che ognuna delle due opzioni vinca da qualche parte: la regola dev'essere leggibile.** Inter contro full wet vinceva 5-1 e sembrava «bilanciato». Non lo era: era una gomma migliore più un circuito rumoroso. La taratura giusta è quella in cui si può dire *perché* — strada pulita l'intermedia, acqua alta la full wet, su tutti i circuiti.
+- **[Apex 2] `gripUse` basso non vuol dire gomma sprecata.** È velocità laterale contro **il limite**, quindi una mescola che alza il limite abbassa il numero. Una slick sotto la pioggia sta al 47% perché è limitata dall'aderenza; la full wet sta al 17% perché non lo è più, ed è esattamente per questo che esiste. Avevo scritto il test con l'aspettativa opposta.

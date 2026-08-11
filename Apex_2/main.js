@@ -1489,9 +1489,26 @@ function renderSplitHud(sortedCars) {
     }
 }
 
+// One line of character per compound, for the choice screen. The numbers above
+// it say how quick; this says what it will feel like.
+const TYRE_NOTE = {
+    soft:   'quickest early, gone by the flag',
+    medium: 'holds its shape',
+    hard:   'slowest, and still there at the end',
+    drift:  'no grip, all rotation \u2014 it slides',
+    inter:  'the quick wet tyre \u2014 no answer to a puddle',
+    wet:    'slower, but it drives through standing water'
+};
+
 function tyreLapsText(key, laps) {
     const t = TYRES[key];
-    const life = t.life * laps;
+    // Wear runs dryWear times faster on a road this tyre was not built for, so
+    // the number on the button has to depend on the weather. A full wet reads
+    // "lasts the distance" in the rain and "~1.5 of 5 laps" in the dry, which
+    // is the whole of what makes choosing it a decision.
+    const dry = !(typeof isRaining !== 'undefined' && isRaining);
+    const rate = dry ? (t.dryWear || 1) : 1;
+    const life = t.life * laps / rate;
     return life >= laps ? 'lasts the distance'
                         : '~' + life.toFixed(1) + ' of ' + laps + ' laps';
 }
@@ -1526,14 +1543,36 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
 
     tyreTitle.innerText = title;
     tyreSubtitle.innerText = subtitle;
-    tyreOptions.innerHTML = TYRE_KEYS.map(k => {
+    // In the rain the treaded compounds lead, in the dry the slicks do. Nothing
+    // is hidden either way - a slick in the wet is a legitimate gamble and a
+    // wet tyre in the dry is a legitimate mistake - but the list should not
+    // open with the wrong half of it.
+    const wetNow = typeof isRaining !== 'undefined' && isRaining;
+    const order = wetNow ? RAIN_TYRE_KEYS.concat(DRY_TYRE_KEYS)
+                         : DRY_TYRE_KEYS.concat(RAIN_TYRE_KEYS);
+    tyreOptions.innerHTML = order.map(k => {
         const t = TYRES[k];
-        const pace = ((t.grip - 1) * 100);
+        // The headline number used to be (grip - 1), and grip is the wrong
+        // number to put on a button: it is nearly free in the dry, because the
+        // binding cornering limit is the STEERING RATE. It also libelled the
+        // drift compound, which reads -30% on grip and is level with the medium
+        // on the stopwatch. What sets corner speed on a fresh set is grip x
+        // bite, so that is what the button says.
+        const pace = ((t.grip * (t.bite === undefined ? 1 : t.bite)) - 1) * 100;
+        // And in the rain grip x bite is the wrong headline too. On a wet road
+        // the lateral clamp really does bind - 0.13 of dry grip is low enough
+        // that it is the limit rather than the steering rate - so what decides
+        // corner speed is the tread, and that is what the button says.
+        const head = wetNow
+            ? 'wet grip ×' + (t.rainGrip || 1).toFixed(2)
+            : (pace >= 0 ? '+' : '') + pace.toFixed(1) + '% pace';
+        const note = TYRE_NOTE[k] || '';
         return '<button class="tyre-opt" data-tyre="' + k + '">' +
             '<span class="tyre-dot" style="background:' + t.colour + ';"></span>' +
             '<span class="tyre-name">' + t.label + '</span>' +
-            '<span class="tyre-stat">' + (pace >= 0 ? '+' : '') + pace.toFixed(1) + '% pace</span>' +
+            '<span class="tyre-stat">' + head + '</span>' +
             '<span class="tyre-stat">' + tyreLapsText(k, laps) + '</span>' +
+            (note ? '<span class="tyre-stat">' + note + '</span>' : '') +
             '</button>';
     }).join('');
     Array.prototype.forEach.call(tyreOptions.querySelectorAll('.tyre-opt'), (b) => {
@@ -2113,8 +2152,11 @@ function exRenderRecords(key) {
     const row = (cls, label, r) => {
         if (!r || !r.ms) return `<div class="ex-rec-row ${cls}"><span class="who">${label}</span>` +
             `<span class="t">—</span></div>`;
+        const t = TYRES[r.tyre];
+        const dot = t ? `<span class="ex-rec-tyre" style="background:${t.colour};" ` +
+            `title="${t.label}"></span>` : '';
         return `<div class="ex-rec-row ${cls}"><span class="who">${label} &mdash; ` +
-            `${r.who}</span><span class="t">${(r.ms / 1000).toFixed(3)}</span></div>`;
+            `${r.who}${dot}</span><span class="t">${(r.ms / 1000).toFixed(3)}</span></div>`;
     };
     let html = `<div class="ex-rec-h">Lap record</div>` +
         row('ex-rec-dry', 'Dry', rec && rec.dry) +
@@ -2126,7 +2168,8 @@ function exRenderRecords(key) {
             `running qualifying &mdash; ${rec ? rec.done : 0} of ${rec ? rec.total : 20} laps</div>`;
     } else {
         html += `<div style="font-size:10px;opacity:0.5;margin-top:6px;">` +
-            `every driver, one flying lap each, dry and wet</div>`;
+            `every driver, one flying lap each &mdash; soft in the dry, ` +
+            `both rain compounds in the wet</div>`;
     }
     box.innerHTML = html;
 }
@@ -2136,9 +2179,18 @@ function exRenderRecords(key) {
 // record is whatever this build actually produces - not a number typed here.
 function exMeasureRecords(key) {
     if (exRecords[key] && exRecords[key].done >= exRecords[key].total) return;
+    // One job per driver per compound that could plausibly set the record.
+    // Dry: the soft, which is what a single lap is run on. Wet: BOTH rain
+    // compounds, because which of them is quicker is a circuit question - the
+    // intermediate keeps more steering rate, the full wet more grip, and in the
+    // rain grip is the binding limit rather than the steering rate. Measured
+    // over five-lap stints the intermediate wins at the Oval and the full wet
+    // at Circle, so pinning one of them would have made half the wet records
+    // wrong. The record is the better of the two, and it says which.
     const jobs = [];
-    for (const wet of [false, true])
-        for (const name of EX_DRIVER_NAMES) jobs.push({ name, wet });
+    for (const name of EX_DRIVER_NAMES) jobs.push({ name, wet: false, tyre: 'soft' });
+    for (const tyre of RAIN_TYRE_KEYS)
+        for (const name of EX_DRIVER_NAMES) jobs.push({ name, wet: true, tyre });
     const rec = exRecords[key] = { dry: null, wet: null, done: 0, total: jobs.length };
     const qTrack = makeTrack(key);
     qTrack.getRacingLine();
@@ -2154,14 +2206,14 @@ function exMeasureRecords(key) {
             // is right in a session and wrong here. A record that depends on
             // which rubber a driver happened to draw is not a record, it is a
             // lottery, and it showed: the same circuit gave a different holder
-            // and a different order from one open to the next. Everyone runs the
-            // soft, which is what a single-lap record would be set on anyway.
-            const ms = exPinnedTyre('soft', () =>
+            // and a different order from one open to the next.
+            const ms = exPinnedTyre(j.tyre, () =>
                 simulateQualifyingLap(qTrack, j.name, 'alien', 1.1, j.wet, 'ridge'));
             rec.done++;
             if (ms) {
                 const slot = j.wet ? 'wet' : 'dry';
-                if (!rec[slot] || ms < rec[slot].ms) rec[slot] = { ms, who: j.name };
+                if (!rec[slot] || ms < rec[slot].ms)
+                    rec[slot] = { ms, who: j.name, tyre: j.tyre };
             }
         }
         exRenderRecords(key);

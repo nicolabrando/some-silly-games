@@ -59,15 +59,102 @@ let __carUid = 0;
 //  steering rate is partly thrown away and the soft measures better than it
 //  is; the player has no such ceiling.
 // =========================================================================
+//  Numbers per compound, all independent, all with a neutral default so a
+//  compound that says nothing about one behaves exactly as before:
+//    grip     - how hard it holds, and (through tyrePerf) how fast it steers
+//    bite     - steering rate bought back on a fresh set only
+//    slide    - how readily the tail steps out, multiplying powerOversteer
+//    rainGrip - multiplier on WET_GRIP: what the tread is worth in the rain
+//    aqua     - 0..1, how much of the aquaplaning penalty the tread clears
+//    dryWear  - wear multiplier on a dry road, for rubber not meant to be there
+//  `slide` exists because grip cannot do that job on its own. Grip is also the
+//  clamp on lateral force, so buying slide with grip costs lap time steeply:
+//  measured (driftsweep.js) at a constant fresh steering rate, walking grip
+//  from 0.78 to 0.74 doubles the deficit, 1.65% to 3.04%. A tyre meant to be
+//  loose rather than slow needs the two separated.
 const TYRES = {
     soft:   { key: 'soft',   label: 'Soft',   short: 'S', colour: '#e53935',
-              grip: 1.090, falloff: 0.2285, life: 0.90, bite: 1.010 },
+              grip: 1.090, falloff: 0.2285, life: 0.90, bite: 1.010, slide: 1.00 },
     medium: { key: 'medium', label: 'Medium', short: 'M', colour: '#fdd835',
-              grip: 1.000, falloff: 0.0696, life: 1.30, bite: 1.000 },
+              grip: 1.000, falloff: 0.0696, life: 1.30, bite: 1.000, slide: 1.00 },
     hard:   { key: 'hard',   label: 'Hard',   short: 'H', colour: '#e0e0e0',
-              grip: 0.988, falloff: 0.0240, life: 2.60, bite: 1.005 }
+              grip: 0.988, falloff: 0.0240, life: 2.60, bite: 1.005, slide: 1.00 },
+    // ---- DRIFT ----------------------------------------------------------
+    //  A compound that gives up lateral grip on purpose. In this model that is
+    //  not just "worse": grip is what feeds three separate things, and giving
+    //  it away buys all three.
+    //
+    //    * slipperiness = baseGrip / currentGrip, and it multiplies
+    //      powerOversteer directly. At grip 0.70 that is 1.43x, so the tail
+    //      steps out on a throttle input that would not have moved it at all
+    //      on a medium.
+    //    * alignStiffness = 3.5 * (1 - slideRelease * powerOversteer), so a
+    //      bigger slide is also a slide the tyres fight less. It keeps going
+    //      instead of being caught.
+    //    * the lateral force is clamped to currentGrip, so once it is sideways
+    //      it stays sideways.
+    //
+    //  What it costs and what it buys, and why `bite` is so much larger here
+    //  than anywhere else: tyrePerf multiplies the STEERING RATE as well as
+    //  the grip, so a compound that halves its grip halves its turn-in with
+    //  it. The drift tyre has to buy that back explicitly - 1.45 x 0.70 is
+    //  1.015, a steering rate a shade above the medium's. So it turns in
+    //  slightly better than anything else and holds on far worse, which is the
+    //  definition of the thing.
+    //
+    //  Where that is quick and where it is not is a real circuit question. The
+    //  yaw boost in powerOversteer is worth most below 160 px/s, so a hairpin
+    //  is where a slide beats grip; a long fast sweeper is where it does not.
+    //  Measured (tyrecost.js, 5-lap solo stints): quicker than the medium at
+    //  Circle and Kart, slower at F1 and the Oval.
+    //
+    //  Grip stops at 0.78 because that is where the lateral-force clamp starts
+    //  costing real time (driftsweep.js: 0.78 is 1.65% off, 0.74 is 3.04%).
+    //  The rest of the character comes from `slide`, which touches nothing but
+    //  the oversteer term. 1.282 of slipperiness times 1.55 of slide is a tail
+    //  that steps out twice as readily as the medium's.
+    drift:  { key: 'drift',  label: 'Drift',  short: 'D', colour: '#ab47bc',
+              grip: 0.780, falloff: 0.0150, life: 2.00, bite: 1.344, slide: 1.55 },
+    // ---- RAIN -----------------------------------------------------------
+    //  Two treaded compounds. What separates them is not simply "more wet
+    //  grip": the wet road and the standing water on it are two different
+    //  problems, and each tyre is built for one of them.
+    //
+    //    intermediate - a lot of the dry tyre's steering rate kept (grip 0.94,
+    //      so tyrePerf and with it the steering rate stay high) and 2.5x the
+    //      wet grip. Quick on a merely wet road. It has no answer to a puddle.
+    //    full wet - slower in the corners (grip 0.87 is a real steering-rate
+    //      cost) but 3.55x the wet grip and, decisively, it clears water:
+    //      `aqua` takes out 60% of the aquaplaning. It is the tyre that can be
+    //      driven through the standing water rather than surviving it.
+    //
+    //  So the choice is a reading of the circuit, not a strategy on a scale:
+    //  how much of this lap is puddle? main.js scatters 4-6 of them per wet
+    //  race and they land where the racing line goes, so the answer changes
+    //  from race to race - which is the point.
+    //
+    //  The two numbers were set by measuring exactly that (wetsweep.js, 5-lap
+    //  wet stints at Oval, Circle and Triangle). At 0.87/3.55 the intermediate
+    //  wins all three circuits on a clean wet road, by 0.2 to 1.8%, and the
+    //  full wet wins all three with eight puddles down, by 0.9 to 5.7%. Half a
+    //  point either way collapses that: 0.84/3.30 hands five of six to the
+    //  intermediate, 0.90/3.30 hands all six to the full wet.
+    //
+    //  On a dry road both are wrong, and wrong in the way rain tyres are wrong:
+    //  not merely slow but destroying themselves. dryWear 4.5 and 3.4 against a
+    //  life of 1.15 means a set is finished around a third of the way in.
+    inter:  { key: 'inter',  label: 'Inter',  short: 'I', colour: '#43a047',
+              grip: 0.940, falloff: 0.1400, life: 1.15, bite: 1.020, slide: 1.00,
+              rainGrip: 2.50, aqua: 0.10, dryWear: 4.5, rain: true },
+    wet:    { key: 'wet',    label: 'Wet',    short: 'W', colour: '#1e88e5',
+              grip: 0.870, falloff: 0.0900, life: 1.55, bite: 1.030, slide: 1.00,
+              rainGrip: 3.55, aqua: 0.60, dryWear: 3.4, rain: true }
 };
-const TYRE_KEYS = ['soft', 'medium', 'hard'];
+const TYRE_KEYS = ['soft', 'medium', 'hard', 'drift', 'inter', 'wet'];
+// The two treaded compounds, kept as a list so nothing has to test a key by
+// name to ask "is this a rain tyre?".
+const RAIN_TYRE_KEYS = TYRE_KEYS.filter(k => TYRES[k].rain);
+const DRY_TYRE_KEYS = TYRE_KEYS.filter(k => !TYRES[k].rain);
 
 // How much of its dry grip a car keeps on a wet road. Read by car.js for the
 // physics and by ai.js for the speed the AI aims at - the two must be the same
@@ -252,6 +339,7 @@ class Car {
         this.tyreWear = 0;
         this.tyrePerf = 1;
         this.tyreSteer = 1;
+        this.tyreSlide = 1;
 
         // Blue flag (set each frame by main.js when a car on a higher lap closes in)
         this.blueFlag = false;
@@ -314,7 +402,13 @@ class Car {
             // high-downforce car loads the tyre far more than one running
             // little wing.
             const chassisWear = this.tyreWearScale || 1;
-            this.tyreWear += lapFrac * abuse * chassisWear / Math.max(0.05, tyre.life * laps);
+            // Rain rubber on a dry road tears itself apart. This is the reason
+            // a wet tyre is not simply a safe default: get the call wrong and
+            // the set is gone a third of the way in, and there are no stops.
+            const dry = !(typeof isRaining !== 'undefined' && isRaining);
+            const surfaceWear = dry ? (tyre.dryWear || 1) : 1;
+            this.tyreWear += lapFrac * abuse * chassisWear * surfaceWear /
+                             Math.max(0.05, tyre.life * laps);
         }
         const w = Math.max(0, Math.min(1.25, this.tyreWear));
         // ^1.6: the first half of a set costs almost nothing, the last of it
@@ -324,6 +418,9 @@ class Car {
         // all of it on a fresh tyre, none of it on a spent one.
         const bite = tyre.bite === undefined ? 1 : tyre.bite;
         this.tyreSteer = this.tyrePerf * (1 + (bite - 1) * Math.max(0, 1 - w));
+        // How willingly the tail steps out on this compound. Unlike bite it
+        // does not fade with the set - a loose carcass is loose fresh or spent.
+        this.tyreSlide = tyre.slide === undefined ? 1 : tyre.slide;
 
         // Adjust physics based on surface
         let currentGrip = this.baseGrip * this.condition * this.tyrePerf;
@@ -340,7 +437,7 @@ class Car {
             // number. It did not, for a while - see the note there - and an AI
             // that thinks the road is 54% grippier than it is drives straight
             // past the limit every corner.
-            currentGrip *= WET_GRIP;
+            currentGrip *= WET_GRIP * (tyre.rainGrip || 1);
             // Wet-weather skill, from the driver style table in ai.js.
             if (this.wetGripBonus) currentGrip *= this.wetGripBonus;
         }
@@ -357,9 +454,21 @@ class Car {
             // almost nothing to steer with. It builds with speed - crawl
             // through and you keep some control, arrive at racing speed and
             // you are a passenger until you are through the other side.
-            this.aquaplane = Math.max(0, Math.min(1, (speedForKerb - 55) / 150));
-            currentGrip *= 0.45 - 0.25 * this.aquaplane;
-            currentFriction *= 2.2;
+            // A treaded tyre pumps the water out from under itself. `aqua` is
+            // the fraction of the aquaplaning it clears - not of the puddle's
+            // grip loss, of the SPEED-dependent part, because that is the part
+            // that makes a puddle undriveable rather than merely slow.
+            //
+            // It lifts the floor as well as flattening the slope. Only taking
+            // out the speed term left the full wet barely ahead - a puddle is
+            // over in a few frames, so the difference had almost no time to
+            // show - and the choice between the two rain compounds came down to
+            // steering rate on every circuit, which is not a choice.
+            const aqua = tyre.aqua || 0;
+            this.aquaplane = Math.max(0, Math.min(1, (speedForKerb - 55) / 150)) *
+                             (1 - aqua);
+            currentGrip *= (0.45 + 0.30 * aqua) - 0.25 * this.aquaplane;
+            currentFriction *= 2.2 - 0.9 * (tyre.aqua || 0);
             if (speedForKerb > 90 && Math.random() < 0.5) {
                 const spray = (Math.random() - 0.5) * 16 * (speedForKerb / 300);
                 this.velocity.x += -Math.sin(this.angle) * spray;
@@ -475,7 +584,8 @@ class Car {
             // how you keep the rear behind you
             const demand = (this.enginePower * this.condition * thr) / Math.max(70, speed);
             const slipperiness = Math.max(1, Math.min(2.4, this.baseGrip / Math.max(1, currentGrip)));
-            powerOversteer = Math.max(0, Math.min(1, ((demand - 1.45) / 2.2) * slipperiness));
+            powerOversteer = Math.max(0, Math.min(1,
+                ((demand - 1.45) / 2.2) * slipperiness * (this.tyreSlide || 1)));
         }
         this.powerOversteer = powerOversteer;
 

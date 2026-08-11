@@ -634,7 +634,12 @@ class AI {
             // the drivers meant to be strongest in the rain slowest in it: the
             // wet balance could not work while the AI was driving to a circuit
             // that was 54% grippier than the one underneath it.
-            gripScale = WET_GRIP * (this.p.wetSkill || 1);
+            // The compound's own contribution has to be here for the same
+            // reason: an AI on full wets that aims at intermediate speeds is
+            // throwing away most of what the tyre is for, and an AI on slicks
+            // in the rain that does not know it will drive off the road.
+            const rainGrip = (car.tyre && car.tyre.rainGrip) || 1;
+            gripScale = WET_GRIP * rainGrip * (this.p.wetSkill || 1);
         }
         if (onGrass) gripScale *= 0.3;
         else if (onKerb) gripScale *= 0.80;
@@ -1098,6 +1103,41 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
 AI.chooseTyre = function (driverName, laps, raining) {
     const s = AI_DRIVER_STYLES[driverName];
 
+    // ---- RAIN ------------------------------------------------------------
+    // With treaded rubber available, a slick in the rain is not a strategy,
+    // it is a mistake: 0.13 of dry grip against the intermediate's 0.33 and
+    // the full wet's 0.43. So the wet race is a choice between the two rain
+    // compounds, and it is a reading of the circuit rather than of the driver.
+    //
+    // The intermediate keeps most of the dry tyre's steering rate and is the
+    // quicker thing on a merely wet road. The full wet clears standing water -
+    // 60% of the aquaplaning taken out - and a puddle taken at speed on
+    // intermediates is a passenger ride. Circuits are scattered with 4-6
+    // puddles per wet race, so how much of the lap is water varies, and the
+    // field should not all guess the same way about it.
+    //
+    // Temperament decides who errs which way: a driver who lives on the edge
+    // backs the quicker tyre and hopes to miss the water, a calculating one
+    // takes the tyre that works everywhere. Wet skill pushes the same way -
+    // the intermediate is the tyre that asks you to keep it on the road
+    // through standing water, and that is a thing only some drivers can do.
+    //
+    // What comes out: Senna, Hamilton, Schumacher and Alonso mostly on
+    // intermediates, Prost and Lauda mostly on full wets, and Verstappen in
+    // between - the biggest risk-taker on the grid but genuinely poor in the
+    // rain, and the two pull him in opposite directions.
+    if (raining) {
+        let full = 0.50;
+        if (s) {
+            full -= (s.err - 0.7) * 0.30;          // risk-taker -> intermediate
+            full -= (s.overtake - 0.85) * 0.30;    // attacker -> intermediate
+            full += (s.cleanAir - 1.0) * 4.0;      // long-game -> full wet
+            full -= ((s.wet || 1) - 1) * 5.0;      // rainmasters back themselves
+        }
+        full += (Math.random() - 0.5) * 0.50;
+        return full > 0.5 ? 'wet' : 'inter';
+    }
+
     // 0 = wants the hard, 1 = wants the soft
     let want = 0.5;
     if (s) {
@@ -1129,6 +1169,26 @@ AI.chooseTyre = function (driverName, laps, raining) {
     if (raining) want += 0.10;
 
     want += (Math.random() - 0.5) * 0.42;      // genuine spread, race to race
+
+    // THE DRIFT COMPOUND is not on that scale at all. Soft, medium and hard are
+    // one axis - how much performance now against how much later - and the
+    // drift tyre is off it: it trades lateral grip for turn-in and for a tail
+    // that steps out. Measured over full solo stints it is level with the
+    // medium on average and wins outright on the tight circuits, so it is a
+    // real choice rather than a novelty.
+    //
+    // Who takes it is a question of temperament, not of strategy. A driver who
+    // is happy with the car moving around underneath them - nervous hands, a
+    // lot of mistakes, always attacking - will have a go; the smooth,
+    // calculating ones never will. Senna and Verstappen take it about one race
+    // in five, Prost and Clark not at all.
+    if (s) {
+        let drift = 0.06;
+        drift += (s.err - 0.7) * 0.05;          // lives on the edge
+        drift += (1 - s.steerTau) * 0.18;       // sharp, nervous hands
+        drift += (s.overtake - 0.85) * 0.25;    // always on the attack
+        if (Math.random() < Math.max(0, Math.min(0.30, drift))) return 'drift';
+    }
 
     if (want > 0.66) return 'soft';
     if (want < 0.36) return 'hard';

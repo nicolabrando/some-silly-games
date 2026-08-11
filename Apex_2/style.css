@@ -1411,6 +1411,10 @@ button.chassis-opt:hover {
 .ex-rec-row .t { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 15px; }
 .ex-rec-row .who { opacity: 0.75; }
 .ex-rec-wet .t { color: #64b5f6; }
+/* which compound the record was set on */
+.ex-rec-tyre { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+               margin-left: 6px; vertical-align: baseline;
+               box-shadow: 0 0 0 1px rgba(0,0,0,0.45); }
 .ex-progress { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; margin-top: 8px; }
 .ex-progress > i { display: block; height: 100%; background: #4CAF50; width: 0; transition: width 0.2s; }
 
