@@ -498,7 +498,14 @@ document.getElementById('explore-tracks-btn')
     .addEventListener('click', () => showExploreTracks());
 document.getElementById('explore-drivers-btn')
     .addEventListener('click', () => showExploreDrivers());
+// Back is one step back, not all the way out. From a circuit's card it returns
+// to the wall of circuits - which is where you were, and where you almost
+// certainly want to go next - and only from the wall does it leave for the
+// menu. It used to drop you at the menu from either, so looking at two
+// circuits in a row meant walking in through the front door twice.
 document.getElementById('ex-tracks-back').addEventListener('click', () => {
+    const detail = document.getElementById('ex-track-detail');
+    if (detail && detail.style.display !== 'none') { exShowTrackList(); return; }
     document.getElementById('explore-tracks').style.display = 'none';
     menu.style.display = 'block';
 });
@@ -2040,8 +2047,163 @@ function exDrawTrack(canvas, track) {
     track.draw(ctx);
 }
 
-// Measured records, kept for the session so reopening a circuit is instant.
-const exRecords = {};          // key -> { dry: {ms, who}, wet: {...}, done, total }
+// ===========================================================================
+//  EXPLORE: THE RECORD BOOK
+// ===========================================================================
+//
+//  Every lap time on these screens is measured by this build, not typed in.
+//  It used to be measured LAZILY - open a circuit, watch thirty qualifying
+//  laps run - which is wrong twice over: you wait every time, and the numbers
+//  arrive piecemeal so two circuits are never comparable until both finish.
+//
+//  It is now one batch over every circuit, run once, and then kept. What the
+//  batch covers was decided by measuring rather than guessing (qbench.js, six
+//  circuits, ten drivers on each of the six compounds):
+//
+//    * in the DRY the soft sets the record on every circuit, all six of six.
+//      On a single flying lap the tyre is fresh, and fresh is exactly where
+//      `bite` puts the soft ahead of everything else - grip x bite 1.101
+//      against the drift compound's 1.048 and the medium's 1.000. So only the
+//      soft needs all ten drivers.
+//    * in the WET the two rain compounds split it 3-3 - full wet at Oval, F1
+//      and Circle, intermediate at Pettine, Harbour and Kart - because which
+//      one wins is a question about the circuit. Both need all ten drivers.
+//    * the other dry compounds never hold a record, but the ORDER they come in
+//      is worth knowing before you pick one, so they are run once each with a
+//      single driver. Same driver across all four, so the comparison is the
+//      compound and nothing else.
+//
+//  Each job runs EX_RUNS times and keeps the best, because the AI makes
+//  mistakes on purpose (`errorChance`) and one lap of a driver who erred is
+//  not that driver's pace.
+const EX_RUNS = 2;
+const EX_ORDER_DRIVER = 'Ayrton Senna';
+const exRecords = {};   // key -> { dry, wet, byTyre: {}, done, total }
+const exBuild = { jobs: null, i: 0, done: 0, total: 0, running: false, t0: 0 };
+
+// Records survive a reload where the browser allows it. Keyed by a fingerprint
+// of the physics that produced them: change a tyre, a wet constant or an AI
+// profile and the stored book is thrown away rather than quietly shown next to
+// numbers it no longer matches. That has to be automatic - a record book that
+// silently outlives the balance it measured is worse than no record book.
+function exFingerprint() {
+    const bits = [JSON.stringify(TYRES), String(WET_GRIP),
+                  JSON.stringify(AI_PROFILES.alien || {}),
+                  JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS)];
+    let h = 5381;
+    const s = bits.join('|');
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return h.toString(36);
+}
+const EX_STORE_KEY = 'apex2.explore.records';
+
+function exSaveRecords() {
+    try {
+        const out = {};
+        for (const k of Object.keys(exRecords)) {
+            const r = exRecords[k];
+            if (r.done >= r.total) out[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre };
+        }
+        window.localStorage.setItem(EX_STORE_KEY,
+            JSON.stringify({ v: exFingerprint(), tracks: out }));
+    } catch (e) { /* file:// origins, private mode, quota - all fine, just slower */ }
+}
+function exLoadRecords() {
+    try {
+        const raw = window.localStorage.getItem(EX_STORE_KEY);
+        if (!raw) return false;
+        const box = JSON.parse(raw);
+        if (!box || box.v !== exFingerprint()) return false;
+        let n = 0;
+        for (const k of Object.keys(box.tracks || {})) {
+            const r = box.tracks[k];
+            exRecords[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre || {},
+                             done: 1, total: 1 };
+            n++;
+        }
+        return n > 0;
+    } catch (e) { return false; }
+}
+
+// Every lap this build needs to run, for every circuit, in one list.
+function exBuildJobs() {
+    const jobs = [];
+    for (const key of SEASON_POOL) {
+        for (let run = 0; run < EX_RUNS; run++) {
+            for (const name of EX_DRIVER_NAMES)
+                jobs.push({ key, name, wet: false, tyre: 'soft', rec: true });
+            for (const tyre of RAIN_TYRE_KEYS)
+                for (const name of EX_DRIVER_NAMES)
+                    jobs.push({ key, name, wet: true, tyre, rec: true });
+            for (const tyre of DRY_TYRE_KEYS)
+                jobs.push({ key, name: EX_ORDER_DRIVER, wet: false, tyre, rec: false });
+        }
+    }
+    return jobs;
+}
+
+function exStartBuild() {
+    if (exBuild.running) return;
+    if (Object.keys(exRecords).length >= SEASON_POOL.length) return;   // already have it
+    exBuild.jobs = exBuildJobs();
+    exBuild.i = 0; exBuild.done = 0; exBuild.total = exBuild.jobs.length;
+    exBuild.running = true; exBuild.t0 = performance.now();
+    for (const key of SEASON_POOL)
+        exRecords[key] = { dry: null, wet: null, byTyre: {}, done: 0, total: 0 };
+    for (const j of exBuild.jobs) exRecords[j.key].total++;
+    exStep();
+}
+
+// Time-sliced so the page stays alive: this is over a thousand qualifying laps
+// and it runs while you read the cards, not instead of it. 12 ms rather than
+// the 45 the lazy version used - it is background work now, so it should give
+// way to the interface rather than compete with it.
+function exStep() {
+    if (!exBuild.running) return;
+    const t0 = performance.now();
+    const tracks = {};
+    while (exBuild.i < exBuild.jobs.length && performance.now() - t0 < 12) {
+        const j = exBuild.jobs[exBuild.i++];
+        const qt = tracks[j.key] || (tracks[j.key] = (() => {
+            const t = makeTrack(j.key); t.getRacingLine(); return t;
+        })());
+        const ms = exPinnedTyre(j.tyre, () =>
+            simulateQualifyingLap(qt, j.name, 'alien', 1.1, j.wet, 'ridge'));
+        const rec = exRecords[j.key];
+        rec.done++; exBuild.done++;
+        if (!ms) continue;
+        if (j.rec) {
+            const slot = j.wet ? 'wet' : 'dry';
+            if (!rec[slot] || ms < rec[slot].ms)
+                rec[slot] = { ms, who: j.name, tyre: j.tyre };
+        }
+        if (!rec.byTyre[j.tyre] || ms < rec.byTyre[j.tyre]) rec.byTyre[j.tyre] = ms;
+    }
+    exRenderBuildProgress();
+    if (document.getElementById('ex-rec')) exRenderRecords(exOpenKey);
+    if (exBuild.i < exBuild.jobs.length) { setTimeout(exStep, 0); return; }
+    exBuild.running = false;
+    exSaveRecords();
+    exRenderBuildProgress();
+    if (document.getElementById('ex-rec')) exRenderRecords(exOpenKey);
+}
+
+function exRenderBuildProgress() {
+    const el = document.getElementById('ex-tracks-sub');
+    if (!el) return;
+    if (!exBuild.running) {
+        el.innerHTML = SEASON_POOL.length + ' of them. Pick one.' +
+            (exBuild.total ? ' <span style="opacity:0.55;">Record book built from ' +
+                exBuild.total.toLocaleString() + ' qualifying laps.</span>' : '');
+        return;
+    }
+    const f = exBuild.done / Math.max(1, exBuild.total);
+    el.innerHTML = SEASON_POOL.length + ' of them. Pick one. ' +
+        '<span style="opacity:0.6;">Running the record book &mdash; ' +
+        exBuild.done + ' of ' + exBuild.total + ' qualifying laps' +
+        '</span><span class="ex-build-bar"><i style="width:' +
+        (f * 100).toFixed(1) + '%"></i></span>';
+}
 
 // Run something with every driver on the same rubber. Both measurements on
 // these screens compare drivers with each other, and chooseTyre is random by
@@ -2087,10 +2249,13 @@ function exShowTrackList() {
     }
 }
 
+let exOpenKey = null;      // which circuit's card is on screen, for live updates
+
 function exOpenTrack(key) {
     const grid = document.getElementById('ex-track-grid');
     const detail = document.getElementById('ex-track-detail');
     if (!detail) return;
+    exOpenKey = key;
     grid.style.display = 'none';
     detail.style.display = 'block';
 
@@ -2098,15 +2263,27 @@ function exOpenTrack(key) {
     const { line, corners } = exTrackStats(track);
     const dry = measureTrackStats(track, false);
     const wet = measureTrackStats(track, true);
+    // Kept so the record box can put a number on the difference between race
+    // pace and a record lap, on this circuit, rather than leaving the reader to
+    // wonder why the two figures disagree. It is not a constant: Circle, which
+    // is nothing but corners, is +28%, while Kart is +9%.
+    if (exRecords[key]) exRecords[key].pace = dry.lap;
 
+    // "Est. lap" was the wrong name and it showed: the figure reads several
+    // seconds slower than the lap record below it, and nothing said why. They
+    // are not the same measurement and neither is wrong. RACE PACE is what a
+    // hard-difficulty car does on mediums with a stint's worth of fuel in the
+    // tyre; the RECORD is an alien on a fresh soft with nothing to save. The
+    // gap between them is the difference between driving a race and setting a
+    // time, which is a real thing, so both are shown and both are labelled.
     const cells = [
         ['Length', (line.length / 1000).toFixed(2) + ' km'],
         ['Corners', String(corners.left + corners.right)],
         ['Left / Right', corners.left + ' L / ' + corners.right + ' R'],
         ['Road width', Math.round(track.trackWidth * 2) + ' m'],
         ['Top speed', Math.round(dry.vmax * 0.5) + ' km/h'],
-        ['Est. lap', dry.lap ? (dry.lap / 1000).toFixed(1) + 's' : '—'],
-        ['In the wet', wet.lap ? (wet.lap / 1000).toFixed(1) + 's' : '—'],
+        ['Race pace, dry', dry.lap ? (dry.lap / 1000).toFixed(1) + 's' : '—'],
+        ['Race pace, wet', wet.lap ? (wet.lap / 1000).toFixed(1) + 's' : '—'],
         ['Wet penalty', (dry.lap && wet.lap)
             ? '+' + (100 * (wet.lap - dry.lap) / dry.lap).toFixed(0) + '%' : '—'],
         ['Tightest corner', Math.round(exTightest(track)) + ' m']
@@ -2123,6 +2300,10 @@ function exOpenTrack(key) {
         cells.map(c => `<div class="ex-cell"><div class="ex-k">${c[0]}</div>` +
             `<div class="ex-v">${c[1]}</div></div>`).join('') +
         `</div>` +
+        `<div class="ex-note">Race pace is a hard-difficulty car on mediums, ` +
+        `driving a stint. The records below are one flying lap on fresh softs ` +
+        `at alien pace &mdash; a different thing, and quicker by 10 to 30% ` +
+        `depending on the circuit.</div>` +
         `<div class="ex-rec" id="ex-rec"></div>` +
         `</div></div>`;
 
@@ -2130,7 +2311,6 @@ function exOpenTrack(key) {
     document.getElementById('ex-track-list-btn')
         .addEventListener('click', exShowTrackList);
     exRenderRecords(key);
-    exMeasureRecords(key);
 }
 
 // The tightest corner on the circuit, as a radius. Read off the racing line,
@@ -2161,71 +2341,56 @@ function exRenderRecords(key) {
     let html = `<div class="ex-rec-h">Lap record</div>` +
         row('ex-rec-dry', 'Dry', rec && rec.dry) +
         row('ex-rec-wet', 'Wet', rec && rec.wet);
-    if (!rec || rec.done < rec.total) {
-        const f = rec ? rec.done / rec.total : 0;
-        html += `<div class="ex-progress"><i style="width:${(f * 100).toFixed(0)}%"></i></div>` +
-            `<div style="font-size:10px;opacity:0.5;margin-top:5px;">` +
-            `running qualifying &mdash; ${rec ? rec.done : 0} of ${rec ? rec.total : 20} laps</div>`;
+    if (rec && rec.pace && rec.dry && rec.dry.ms) {
+        const gap = 100 * (rec.pace - rec.dry.ms) / rec.dry.ms;
+        html += `<div class="ex-rec-gap">Race pace above is +${gap.toFixed(0)}% ` +
+            `on this circuit &mdash; different car, different tyre, different day.</div>`;
+    }
+
+    // The order the compounds come in on THIS circuit, one driver on each so
+    // the only thing varying is the rubber. The soft holds every dry record in
+    // the game, but by how much is a circuit question, and the drift compound's
+    // place in the order moves about more than anything else.
+    const bt = (rec && rec.byTyre) || {};
+    const have = DRY_TYRE_KEYS.filter(k => bt[k]);
+    if (have.length > 1) {
+        const best = Math.min(...have.map(k => bt[k]));
+        html += `<div class="ex-rec-h" style="margin-top:12px;">One lap, by compound</div>`;
+        html += have.sort((a, b) => bt[a] - bt[b]).map(k => {
+            const d = 100 * (bt[k] - best) / best;
+            return `<div class="ex-tyre-row">` +
+                `<span class="ex-rec-tyre" style="background:${TYRES[k].colour};"></span>` +
+                `<span class="n">${TYRES[k].label}</span>` +
+                `<span class="t">${(bt[k] / 1000).toFixed(3)}</span>` +
+                `<span class="d">${d < 0.001 ? '&mdash;' : '+' + d.toFixed(1) + '%'}</span>` +
+                `</div>`;
+        }).join('');
+    }
+
+    if (exBuild.running) {
+        const f = exBuild.done / Math.max(1, exBuild.total);
+        html += `<div class="ex-progress"><i style="width:${(f * 100).toFixed(1)}%"></i></div>` +
+            `<div class="ex-rec-foot">building the record book &mdash; ` +
+            `${exBuild.done} of ${exBuild.total} qualifying laps, all ` +
+            `${SEASON_POOL.length} circuits at once</div>`;
     } else {
-        html += `<div style="font-size:10px;opacity:0.5;margin-top:6px;">` +
-            `every driver, one flying lap each &mdash; soft in the dry, ` +
+        html += `<div class="ex-rec-foot">` +
+            `every driver, ${EX_RUNS} laps each, best kept &mdash; soft in the dry, ` +
             `both rain compounds in the wet</div>`;
     }
     box.innerHTML = html;
 }
 
-// Run the game's own qualifying simulation for every driver, in both
-// conditions, a few at a time so the page stays alive while it works. The
-// record is whatever this build actually produces - not a number typed here.
-function exMeasureRecords(key) {
-    if (exRecords[key] && exRecords[key].done >= exRecords[key].total) return;
-    // One job per driver per compound that could plausibly set the record.
-    // Dry: the soft, which is what a single lap is run on. Wet: BOTH rain
-    // compounds, because which of them is quicker is a circuit question - the
-    // intermediate keeps more steering rate, the full wet more grip, and in the
-    // rain grip is the binding limit rather than the steering rate. Measured
-    // over five-lap stints the intermediate wins at the Oval and the full wet
-    // at Circle, so pinning one of them would have made half the wet records
-    // wrong. The record is the better of the two, and it says which.
-    const jobs = [];
-    for (const name of EX_DRIVER_NAMES) jobs.push({ name, wet: false, tyre: 'soft' });
-    for (const tyre of RAIN_TYRE_KEYS)
-        for (const name of EX_DRIVER_NAMES) jobs.push({ name, wet: true, tyre });
-    const rec = exRecords[key] = { dry: null, wet: null, done: 0, total: jobs.length };
-    const qTrack = makeTrack(key);
-    qTrack.getRacingLine();
-    let i = 0;
-    const step = () => {
-        // still on this circuit's page?
-        if (document.getElementById('explore-tracks').style.display === 'none') return;
-        const t0 = performance.now();
-        while (i < jobs.length && performance.now() - t0 < 45) {
-            const j = jobs[i++];
-            // THE COMPOUND IS PINNED. simulateQualifyingLap normally lets
-            // chooseTyre draw one, and chooseTyre is deliberately random - which
-            // is right in a session and wrong here. A record that depends on
-            // which rubber a driver happened to draw is not a record, it is a
-            // lottery, and it showed: the same circuit gave a different holder
-            // and a different order from one open to the next.
-            const ms = exPinnedTyre(j.tyre, () =>
-                simulateQualifyingLap(qTrack, j.name, 'alien', 1.1, j.wet, 'ridge'));
-            rec.done++;
-            if (ms) {
-                const slot = j.wet ? 'wet' : 'dry';
-                if (!rec[slot] || ms < rec[slot].ms)
-                    rec[slot] = { ms, who: j.name, tyre: j.tyre };
-            }
-        }
-        exRenderRecords(key);
-        if (i < jobs.length) setTimeout(step, 0);
-    };
-    setTimeout(step, 0);
-}
-
 function showExploreTracks() {
+    // Try the stored book first; if it is missing or was measured by a
+    // different balance, build it - once, for every circuit, in the background
+    // while you read. Opening a card never starts a simulation any more.
+    if (!Object.keys(exRecords).length) exLoadRecords();
     exShowTrackList();
     menu.style.display = 'none';
     document.getElementById('explore-tracks').style.display = 'block';
+    exStartBuild();
+    exRenderBuildProgress();
 }
 
 // You sit this one out. The race still happens: the AI field runs the full

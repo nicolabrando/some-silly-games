@@ -1415,6 +1415,21 @@ button.chassis-opt:hover {
 .ex-rec-tyre { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
                margin-left: 6px; vertical-align: baseline;
                box-shadow: 0 0 0 1px rgba(0,0,0,0.45); }
+.ex-rec-foot { font-size: 10px; opacity: 0.5; margin-top: 6px; line-height: 1.5; }
+.ex-rec-gap { font-size: 11px; opacity: 0.62; margin-top: 7px; line-height: 1.5; }
+/* what a lap on each compound is worth, here */
+.ex-tyre-row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; line-height: 1.8; }
+.ex-tyre-row .n { flex: 1 1 auto; opacity: 0.75; }
+.ex-tyre-row .t { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ex-tyre-row .d { flex: 0 0 46px; text-align: right; opacity: 0.55; font-variant-numeric: tabular-nums; }
+/* the caveat under the stat grid: race pace is not a record attempt */
+.ex-note { font-size: 11px; line-height: 1.55; opacity: 0.55; margin-top: 10px;
+           padding-top: 9px; border-top: 1px solid rgba(255,255,255,0.10); }
+/* the record book building, shown on the circuit wall */
+.ex-build-bar { display: inline-block; vertical-align: middle; width: 120px; height: 4px;
+                margin-left: 9px; border-radius: 2px; background: rgba(255,255,255,0.14);
+                overflow: hidden; }
+.ex-build-bar > i { display: block; height: 100%; background: #4CAF50; width: 0; }
 .ex-progress { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; margin-top: 8px; }
 .ex-progress > i { display: block; height: 100%; background: #4CAF50; width: 0; transition: width 0.2s; }
 
