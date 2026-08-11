@@ -422,9 +422,9 @@ function syncControlsUi() {
 
     if (g2) g2.style.display = two ? 'block' : 'none';
     const l1 = document.getElementById('p1-color-label');
-    if (l1) l1.innerText = two ? 'Player 1 car color:' : 'Choose your car color:';
+    if (l1) l1.innerText = two ? 'Player 1 car' : 'Your car';
     const cl = document.getElementById('controls-label');
-    if (cl) cl.innerText = two ? 'Controls (Player 1):' : 'Controls:';
+    if (cl) cl.innerText = two ? 'Controls — Player 1' : 'Controls';
 
     // Two people, nobody spectating.
     if (spectator) spectator.disabled = two;
@@ -450,6 +450,52 @@ function syncControlsUi() {
     if (el && el.addEventListener) el.addEventListener('change', syncControlsUi);
 });
 syncControlsUi();
+
+// --- menu: the mode tabs -------------------------------------------------
+// The menu grew one control at a time until every setting needed a tag saying
+// which mode it belonged to, and a paragraph to explain the tags. The tabs put
+// each setting under the only mode that reads it, so nothing needs a caveat -
+// and the one Start button on show is always the right one. The buttons and
+// their wiring above do not change; the two that do not apply are just hidden.
+const MENU_MODES = {
+    race: {
+        hint: 'One weekend: pick a car, qualify — a warm-up lap and two flying ' +
+              'laps, your best counts — and the classification is the grid. ' +
+              'The race is run in whatever weather qualifying got.'
+    },
+    champ: {
+        hint: 'A season with F1 points: the calendar is drawn at random — never ' +
+              'the same circuit twice — and every round rolls its own weather. ' +
+              'One car for the whole season, qualifying before every race. ' +
+              '<b>Reverse grid</b> sets each grid from the standings instead, ' +
+              'leader last — round&nbsp;1 drawn by lot.'
+    },
+    practice: {
+        hint: 'Your circuit and weather, no opponents, as many laps as you ' +
+              'like — every one of them timed. <b>Stop</b> in the HUD ends the ' +
+              'session and lists them all, best lap marked.'
+    }
+};
+
+function setMenuMode(mode) {
+    if (!MENU_MODES[mode]) mode = 'race';
+    menu.dataset.mode = mode;
+    menu.querySelectorAll('.mode-tab').forEach(b => {
+        const on = b.dataset.mode === mode;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    menu.querySelectorAll('[data-modes]').forEach(el => {
+        el.style.display = el.dataset.modes.split(' ').includes(mode) ? '' : 'none';
+    });
+    const hint = document.getElementById('mode-hint');
+    if (hint) hint.innerHTML = MENU_MODES[mode].hint;
+}
+
+menu.querySelectorAll('.mode-tab').forEach(b => {
+    b.addEventListener('click', () => setMenuMode(b.dataset.mode));
+});
+setMenuMode('race');
 
 startBtn.addEventListener('click', () => {
     isChampionship = false;

@@ -80,45 +80,53 @@
                     <div id="menu-stripe"><span></span><span></span><span></span></div>
                 </div>
 
+                <!-- One tab per way into the game. Every setting lives under the
+                     only mode it applies to, so the "championship only" tags and
+                     the paragraph explaining them have nothing left to explain. -->
+                <div id="mode-tabs" role="tablist">
+                    <button type="button" class="mode-tab" data-mode="race" role="tab">Single Race</button>
+                    <button type="button" class="mode-tab" data-mode="champ" role="tab">Championship</button>
+                    <button type="button" class="mode-tab" data-mode="practice" role="tab">Practice</button>
+                </div>
+
                 <div class="menu-cols">
                     <div class="menu-col">
-                        <div class="menu-section">Race</div>
-                        <div class="menu-group">
-                            <label>Track <span class="tag">single race &amp; practice</span></label>
+                        <div class="menu-section">Session</div>
+                        <div class="menu-group" data-modes="race practice">
+                            <label>Track</label>
                             <select id="track-select">
-                                <option value="oval">Oval</option>
-                                <option value="f1">F1 Circuit</option>
-                                <option value="peanut">Peanut</option>
-                                <option value="circomassimo">Circus Maximus</option>
-                                <option value="circle">Circle</option>
-                                <option value="serpent">Serpent</option>
-                                <option value="quadrato">Rectangle</option>
-                                <option value="triangle">Triangle</option>
-                                <option value="pettine">Comb</option>
-                                <option value="thunder">Thunder</option>
-                                <option value="crown">Crown</option>
                                 <option value="boomerang">Boomerang</option>
-                                <option value="zipper">Zipper</option>
-                                <option value="kettle">Kettle</option>
-                                <option value="harbour">Harbour</option>
+                                <option value="circle">Circle</option>
+                                <option value="circomassimo">Circus Maximus</option>
+                                <option value="pettine">Comb</option>
                                 <option value="crossover">Crossover &mdash; bridge</option>
+                                <option value="crown">Crown</option>
+                                <option value="f1">F1 Circuit</option>
+                                <option value="harbour">Harbour</option>
                                 <option value="kart">Kart</option>
+                                <option value="kettle">Kettle</option>
+                                <option value="oval" selected>Oval</option>
+                                <option value="peanut">Peanut</option>
+                                <option value="quadrato">Rectangle</option>
+                                <option value="serpent">Serpent</option>
+                                <option value="thunder">Thunder</option>
+                                <option value="triangle">Triangle</option>
+                                <option value="zipper">Zipper</option>
                             </select>
                         </div>
+                        <div class="menu-group" data-modes="champ">
+                            <label>Season length</label>
+                            <!-- filled by main.js from the circuit list, so the
+                                 longest season it offers is always exactly the
+                                 number of circuits there are -->
+                            <select id="rounds-select"></select>
+                        </div>
                         <div class="menu-row">
-                            <div class="menu-group">
+                            <div class="menu-group" data-modes="race champ">
                                 <label>Laps</label>
                                 <input type="number" id="laps-select" min="1" max="100" value="5">
                             </div>
-                            <div class="menu-group">
-                                <label>Season Length</label>
-                                <!-- filled by main.js from the circuit list, so the
-                                     longest season it offers is always exactly the
-                                     number of circuits there are -->
-                                <select id="rounds-select"></select>
-                                <span class="tag tag-under">championship</span>
-                            </div>
-                            <div class="menu-group">
+                            <div class="menu-group" data-modes="race champ">
                                 <label>Opponents</label>
                                 <select id="opponents-select">
                                     <option value="1">1</option>
@@ -134,8 +142,8 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="menu-group">
-                            <label>AI Difficulty</label>
+                        <div class="menu-group" data-modes="race champ">
+                            <label>AI difficulty</label>
                             <select id="difficulty-select">
                                 <option value="easy">Easy</option>
                                 <option value="medium" selected>Medium</option>
@@ -144,28 +152,16 @@
                                 <option value="alien">Alien</option>
                             </select>
                         </div>
-                        <label class="menu-check">
+                        <label class="menu-check" data-modes="race practice">
                             <input type="checkbox" id="wet-race-checkbox">
-                            <span>Force wet race <span class="tag">single race &amp; practice</span></span>
+                            <span>Force wet race</span>
                         </label>
-                        <label class="menu-check">
+                        <label class="menu-check" data-modes="champ">
                             <input type="checkbox" id="reverse-grid-checkbox">
-                            <span>Reverse grid <span class="tag">championship only</span></span>
+                            <span>Reverse grid</span>
                         </label>
-                        <div class="menu-hint">
-                            A championship draws its calendar at random &mdash; Season
-                            says how many rounds &mdash; and rolls its own weather, so Track
-                            and Force Wet only shape a single race or a practice run.
-                            Laps, opponents and difficulty apply everywhere. In a
-                            The car is chosen on its own screen when a session
-                            starts &mdash; once for a whole season in the
-                            championship, once per weekend otherwise.
-                        </div>
-                        <div class="menu-hint">
-                            You qualify before every race. Tick Reverse Grid and the
-                            championship grid comes from the standings instead &mdash;
-                            round&nbsp;1 drawn at random.
-                        </div>
+                        <!-- one short line about the mode on show, set by setMenuMode() -->
+                        <div class="menu-hint" id="mode-hint"></div>
                     </div>
 
                     <div class="menu-col">
@@ -211,17 +207,19 @@
                     </div>
                 </div>
 
+                <!-- ONE door into the game: the button for the mode on show.
+                     The other two stay in the DOM, hidden, so main.js wiring
+                     does not change. -->
                 <div class="menu-main-row">
-                    <button id="start-btn">Single Race</button>
-                    <button id="champ-btn">Championship</button>
+                    <button id="start-btn" data-modes="race">Start Race</button>
+                    <button id="champ-btn" data-modes="champ">Start Championship</button>
+                    <button id="practice-btn" data-modes="practice">Start Practice</button>
                 </div>
+                <!-- the reading room: nothing here starts a session -->
                 <div class="menu-btn-row">
-                    <button id="practice-btn">Practice</button>
-                    <button id="log-btn">Race Log</button>
-                </div>
-                <div class="menu-btn-row">
-                    <button id="explore-tracks-btn">Explore the circuits</button>
-                    <button id="explore-drivers-btn">Explore the drivers</button>
+                    <button id="explore-tracks-btn" class="menu-quiet">The circuits</button>
+                    <button id="explore-drivers-btn" class="menu-quiet">The drivers</button>
+                    <button id="log-btn" class="menu-quiet">Race Log</button>
                 </div>
 
                 <details id="how-to-play">

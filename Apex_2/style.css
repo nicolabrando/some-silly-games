@@ -80,7 +80,7 @@ canvas {
     display: flex;
     gap: 5px;
     justify-content: center;
-    margin: 10px auto 20px;
+    margin: 10px auto 16px;
     width: 210px;
 }
 
@@ -182,27 +182,57 @@ canvas {
     margin: 2px 0 8px;
 }
 
-/* which mode a setting belongs to, at a glance */
-.tag {
-    display: inline-block;
-    font-size: 9px;
-    font-weight: bold;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    color: #78909c;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid #37474f;
-    border-radius: 3px;
-    padding: 1px 5px;
-    margin-left: 6px;
-    vertical-align: 1px;
+/* --- mode tabs: one tab per way into the game --------------------------- */
+#mode-tabs {
+    display: grid;
+    /* minmax(0,1fr), not 1fr: a cell must be allowed to shrink below the
+       min-content of its label, or on a phone the widest label steals width
+       from the others and "Single Race" wraps onto two lines */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+    margin: 0 0 18px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid #2e343a;
+    border-radius: 8px;
 }
 
-/* Single Race and Championship carry the same weight: two equal doors into
-   the game, side by side. */
+.mode-tab {
+    margin: 0;
+    width: 100%;
+    min-width: 0;
+    white-space: nowrap;
+    padding: 9px 4px;
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #90a4ae;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.mode-tab:hover { background: rgba(255, 255, 255, 0.08); color: #cfd8dc; }
+
+/* the active tab wears its mode's colour - the same one its Start button has,
+   so the tab, the settings under it and the door out all read as one thing */
+.mode-tab.active[data-mode="race"] { background: #e53935; color: #fff; }
+.mode-tab.active[data-mode="champ"] { background: #c9a227; color: #111; }
+.mode-tab.active[data-mode="practice"] { background: #1f7a70; color: #e0f2f1; }
+
+/* tabs tight enough for one line each on a phone. This block must come AFTER
+   the .mode-tab rules above: the specificity is the same, so whichever is
+   written later wins, and an override written earlier simply never applies. */
+@media (max-width: 560px) {
+    .mode-tab { font-size: 10.5px; letter-spacing: 0.3px; padding: 8px 2px; }
+}
+
+/* ONE door into the game: the mode on show has exactly one Start button */
 .menu-main-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 10px;
     margin-top: 16px;
 }
@@ -220,25 +250,32 @@ canvas {
 #start-btn:hover { background: #f44336; }
 #champ-btn { background: #c9a227; color: #111; }
 #champ-btn:hover { background: #ffd700; }
+#practice-btn { background: #1f7a70; color: #e0f2f1; }
+#practice-btn:hover { background: #26a69a; }
 
 .menu-btn-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 8px;
     margin-top: 8px;
 }
 
 .menu-btn-row button {
     margin-top: 0;
-    padding: 10px 6px;
-    font-size: 14px;
+    padding: 9px 6px;
+    font-size: 13px;
     border-radius: 6px;
 }
 
-#practice-btn { background: #1f7a70; color: #e0f2f1; }
-#practice-btn:hover { background: #26a69a; }
-#log-btn { background: #37474f; color: #cfd8dc; }
-#log-btn:hover { background: #455a64; }
+/* quiet buttons: pure reading, so they must not compete with Start */
+.menu-quiet {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid #37474f;
+    color: #b0bec5;
+    font-weight: 600;
+}
+
+.menu-quiet:hover { background: rgba(255, 255, 255, 0.13); color: #e8eef2; }
 
 select, button {
     padding: 10px;
@@ -783,13 +820,14 @@ body.is-mobile #vsc-banner { order: 1; }
 #how-to-play > summary::-webkit-details-marker { display: none; }
 
 #how-to-play > summary::before {
-    content: '▸ ';
+    content: '▸';
     display: inline-block;
+    margin-right: 7px;
     transition: transform 0.15s ease;
 }
 
 #how-to-play[open] > summary::before {
-    content: '▾ ';
+    content: '▾';
 }
 
 #how-to-play > summary:hover { color: #d6e9ff; }
@@ -1338,12 +1376,6 @@ button.chassis-opt:hover {
     background: #e53935;
     color: #fff;
     letter-spacing: 0;
-}
-
-/* a tag sitting UNDER its control rather than beside its label */
-.tag-under {
-    display: inline-block;
-    margin: 5px 0 0;
 }
 
 /* ---- Explore ------------------------------------------------------------
