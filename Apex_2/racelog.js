@@ -71,7 +71,21 @@ const RaceLog = {
         lines.push(`SESSION ${s.id}  ${s.startedAt.toLocaleString()}`);
         const m = s.meta || {};
         lines.push(`  mode ${m.mode || '?'} | track ${m.track || '?'} | laps ${m.laps || '-'} ` +
-                   `| AI ${m.difficulty || '-'} | ${m.weather || '?'}`);
+                   `| AI ${m.difficulty || '-'} | ${m.weather || '?'}` +
+                   (m.playerTyre ? ` | you on ${m.playerTyre}` : '') +
+                   (m.playerChassis ? ` (${m.playerChassis})` : '') +
+                   // The seed makes a season repeatable, so it belongs in the
+                   // log: without it a championship you want to run again on
+                   // another tyre is gone the moment you close the page.
+                   (m.seed ? ` | season ${m.seed}` : ''));
+        // Which rubber everyone started on. This was missing, and its absence
+        // made a whole question unanswerable: two championships were run to
+        // find out whether one compound was too strong and the logs could not
+        // say which compound had been used. A log that cannot answer the
+        // question it was collected for is not a log.
+        if (m.tyres && m.tyres.length) {
+            lines.push('  tyres: ' + m.tyres.join(', '));
+        }
         if (m.grid && m.grid.length) {
             lines.push('  grid: ' + m.grid.map((g, i) => `P${i + 1} ${g}`).join(', '));
         }
@@ -84,7 +98,8 @@ const RaceLog = {
             lines.push('  CLASSIFICATION');
             s.result.forEach((r, i) => {
                 lines.push(`   P${String(i + 1).padStart(2)}  ${String(r.name).padEnd(22)} ` +
-                           `laps ${r.laps}  time ${r.time}  best ${r.best}  ${r.note || ''}`);
+                           `laps ${r.laps}  time ${r.time}  best ${r.best}  ` +
+                           `${(r.tyre || '').padEnd(7)}${r.note || ''}`);
             });
         }
         return lines.join('\n');

@@ -1447,6 +1447,14 @@ button.chassis-opt:hover {
 .ex-rec-tyre { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
                margin-left: 6px; vertical-align: baseline;
                box-shadow: 0 0 0 1px rgba(0,0,0,0.45); }
+/* the season seed: a name you can type back in to run the same calendar */
+.seed-row { display: flex; gap: 6px; align-items: stretch; }
+.seed-row > input { flex: 1 1 auto; min-width: 0; }
+.seed-row > button { flex: 0 0 auto; width: 38px; margin: 0; padding: 0;
+                     font-size: 16px; line-height: 1; background: #37474f; color: #cfd8dc; }
+.seed-hint { font-size: 10px; opacity: 0.5; margin-top: 5px; line-height: 1.45; }
+.gp-seed { font-size: 11px; opacity: 0.55; margin-left: 10px;
+           font-variant-numeric: tabular-nums; }
 .ex-rec-foot { font-size: 10px; opacity: 0.5; margin-top: 6px; line-height: 1.5; }
 .ex-rec-gap { font-size: 11px; opacity: 0.62; margin-top: 7px; line-height: 1.5; }
 /* what a lap on each compound is worth, here */

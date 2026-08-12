@@ -64,6 +64,11 @@ let __carUid = 0;
 //    grip     - how hard it holds, and (through tyrePerf) how fast it steers
 //    bite     - steering rate bought back on a fresh set only
 //    slide    - how readily the tail steps out, multiplying powerOversteer
+//    hook     - steering rate bought back only in the SLOW corners, fading to
+//               nothing at hookBand. This is the one that can make a compound
+//               a specialist: bite pays the same everywhere, so a tyre meant
+//               for hairpins cannot be built out of it.
+//    hookBand - the speed above which hook is worth nothing (default 160)
 //    rainGrip - multiplier on WET_GRIP: what the tread is worth in the rain
 //    aqua     - 0..1, how much of the aquaplaning penalty the tread clears
 //    dryWear  - wear multiplier on a dry road, for rubber not meant to be there
@@ -94,13 +99,50 @@ const TYRES = {
     //    * the lateral force is clamped to currentGrip, so once it is sideways
     //      it stays sideways.
     //
-    //  What it costs and what it buys, and why `bite` is so much larger here
-    //  than anywhere else: tyrePerf multiplies the STEERING RATE as well as
-    //  the grip, so a compound that halves its grip halves its turn-in with
-    //  it. The drift tyre has to buy that back explicitly - 1.45 x 0.70 is
-    //  1.015, a steering rate a shade above the medium's. So it turns in
-    //  slightly better than anything else and holds on far worse, which is the
-    //  definition of the thing.
+    //  WHERE IT PAYS, AND WHY THAT HAD TO BE REBUILT.
+    //
+    //  The first version bought its pace back with `bite`: 1.344 x 0.780 gave
+    //  a steering rate of 1.048, a shade above the medium's. That worked and
+    //  it was wrong, because `bite` is FLAT - it pays the same on a 250 px/s
+    //  sweeper as in a hairpin. The tyre came out slightly worse than a medium
+    //  everywhere instead of clearly better somewhere, which is not a choice.
+    //  Measured over a season on the same seed, in a human's hands: 3.7% off
+    //  on best lap, 27 championship points down, quicker on one circuit of
+    //  five and by 0.9%. Nobody would ever pick it.
+    //
+    //  Worse, that `bite` was a workaround for a broken instrument. Every tyre
+    //  number here was fitted against the AI, and the AI never provokes the
+    //  car - it drives a computed speed profile - so the drift compound
+    //  measured 0.5 to 1.3% SLOW on all seventeen circuits and the only way to
+    //  make it look competitive was a flat bonus. Fixing the measurement is
+    //  what let the workaround go.
+    //
+    //  So `bite` is 1.00 now - no fresh-tyre term at all - and the steering
+    //  rate is simply what the grip gives: 0.78, a fifth below a medium,
+    //  charged on every corner of every lap. It is bought back by `hook`,
+    //  which only exists at low speed. Fitted (driftfit.js, AI medium, 5-lap
+    //  solo stints) at hook 0.58 over a band of 320 px/s:
+    //
+    //      Pettine      -3.2%     Oval     +3.0%
+    //      Circo Massimo-2.8%     Peanut   +3.2%
+    //      Kart         -1.0%     Kettle   +3.4%
+    //      Thunder      -0.5%     Circle   +4.0%
+    //
+    //  which is the shape that was wanted: right where the lap is made of slow
+    //  corners, plainly wrong where it is not. Pettine is 51% of a lap under
+    //  160 px/s and gains most; Circle is a constant-radius sweeper with none
+    //  and loses most.
+    //
+    //  The penalty at the fast end has a floor that is nothing to do with
+    //  steering: grip 0.78 also caps lateral force, and in a fast corner the
+    //  AI is grip-limited rather than steering-limited (vGrip = sqrt(lat x
+    //  tyrePerf x R)), so no amount of hook can rescue it there. The tyre is
+    //  steering-limited where it is quick and grip-limited where it is slow,
+    //  and both come out of the physics rather than out of a special case.
+    //
+    //  `bite` was tried below 1.0 as a way of charging the flat deficit and
+    //  rejected: it FADES with wear, so a value under one would make the tyre
+    //  get better as it wore out.
     //
     //  Where that is quick and where it is not is a real circuit question. The
     //  yaw boost in powerOversteer is worth most below 160 px/s, so a hairpin
@@ -114,7 +156,8 @@ const TYRES = {
     //  the oversteer term. 1.282 of slipperiness times 1.55 of slide is a tail
     //  that steps out twice as readily as the medium's.
     drift:  { key: 'drift',  label: 'Drift',  short: 'D', colour: '#ab47bc',
-              grip: 0.780, falloff: 0.0150, life: 2.00, bite: 1.344, slide: 1.55 },
+              grip: 0.780, falloff: 0.0150, life: 2.00, bite: 1.000, slide: 1.55,
+              hook: 0.58, hookBand: 320 },
     // ---- RAIN -----------------------------------------------------------
     //  Two treaded compounds. What separates them is not simply "more wet
     //  grip": the wet road and the standing water on it are two different
@@ -160,6 +203,42 @@ const DRY_TYRE_KEYS = TYRE_KEYS.filter(k => !TYRES[k].rain);
 // physics and by ai.js for the speed the AI aims at - the two must be the same
 // number or the AI drives to a circuit that is not there.
 const WET_GRIP = 0.13;
+
+// The speed below which a compound's `hook` is worth anything, and the function
+// that says how much. Same 160 px/s as the yaw boost in powerOversteer, and
+// deliberately so: this is the band where a car is being rotated rather than
+// carried, and a tyre built for that band should be worth something in exactly
+// the same places.
+//
+// Read by car.js for the steering it applies and by ai.js for the corner speed
+// it aims at. One function, both sides. The last time those two disagreed - the
+// wet grip constant - the AI drove past the limit in every wet corner for weeks.
+// The band is per compound, with 160 as the default, because 160 turned out to
+// be far too narrow to build a tyre on: at the speeds a car actually takes
+// corners here, only a genuine hairpin lives under it. R=40 is 74 px/s but R=90
+// is already 141 and R=130 is 181, so a band of 160 pays on maybe two corners
+// of a lap and the flat deficit is charged on all the rest.
+const HOOK_BAND = 160;
+// How much of a compound's `slide` is handed back where its `hook` is fully
+// active. 0 leaves the two stacked, 1 removes the drift character exactly where
+// the tyre is meant to drift. 0.6 was chosen to leave the drift compound at
+// 1.22 of slide in a hairpin - a fifth more oversteer than a slick rather than
+// half again as much.
+const SLIDE_DECOUPLE = 0.6;
+// `wet` is passed because a band measured in px/s means something completely
+// different once it is raining. Grip falls to 0.13 of dry, so EVERY corner on
+// the circuit drops inside the band and a slow-corner bonus turns into a
+// blanket one: measured, the drift compound was picking up between +29% and
+// +48% of steering rate over an entire wet lap. It showed - a tyre with no
+// tread at all went from 15.5% off the medium in the rain to 1.9% off, which
+// is nonsense. The hook is a dry-road device and now says so.
+function tyreHookAt(tyre, speed, wet) {
+    const h = (tyre && tyre.hook) || 0;
+    if (!h) return 1;
+    if (wet === undefined ? (typeof isRaining !== 'undefined' && isRaining) : wet) return 1;
+    const band = (tyre && tyre.hookBand) || HOOK_BAND;
+    return 1 + h * Math.max(0, Math.min(1, 1 - speed / band));
+}
 
 // =========================================================================
 //  CHASSIS  -  chosen once, for a whole season
@@ -341,6 +420,22 @@ class Car {
         this.tyreSteer = 1;
         this.tyreSlide = 1;
 
+        // ---- Lap telemetry --------------------------------------------
+        // Enough to answer "where did this compound's time come from", which
+        // lap times on their own cannot. The drift compound's whole mechanism
+        // is powerOversteer, and powerOversteer is a SLOW-CORNER effect - it
+        // saturates below 116 px/s on the drift and below 81 on everything
+        // else, and the yaw boost that goes with it lives under 160. So the
+        // question is not just how quick the lap was but how much of it was
+        // spent in that band and how much rotation was being bought there.
+        //
+        // Collected for every car, but only the player's is written out: the
+        // AI never provokes oversteer at all, which is exactly why measuring
+        // this tyre in AI hands said so little.
+        this._tele = null;
+        this.lastLapTele = null;
+        this.resetLapTelemetry();
+
         // Blue flag (set each frame by main.js when a car on a higher lap closes in)
         this.blueFlag = false;
         this.blueFlagTimer = 0;
@@ -362,6 +457,30 @@ class Car {
         this.baseFriction = this.baseBaseFriction * (c.power / c.top);
         this.tyreWearScale = c.wear;
         return this;
+    }
+
+    resetLapTelemetry() {
+        this._tele = { t: 0, slowT: 0, osSum: 0, osFrames: 0, osHigh: 0,
+                       slideDist: 0, dist: 0, vSum: 0, frames: 0 };
+    }
+
+    // The lap that just ended, as numbers rather than a single time.
+    closeLapTelemetry() {
+        const a = this._tele;
+        if (!a || !a.frames) return null;
+        return {
+            tyre: (this.tyre && this.tyre.key) || 'medium',
+            // share of the lap spent under the yaw-boost speed, where the
+            // compound's oversteer is worth anything at all
+            slowShare: a.slowT / Math.max(1e-6, a.t),
+            // how much oversteer was actually being carried while down there,
+            // and how much of that time it was pinned at the ceiling
+            osMean: a.osFrames ? a.osSum / a.osFrames : 0,
+            osPinned: a.osFrames ? a.osHigh / a.osFrames : 0,
+            // how far the car actually travelled sideways
+            slidePct: 100 * a.slideDist / Math.max(1, a.dist),
+            vMean: a.vSum / a.frames
+        };
     }
 
     update(dt, track) {
@@ -563,7 +682,13 @@ class Car {
             // tenth of the input reaches the road, so the car carries straight
             // on through the water whatever you ask of it.
             const aqua = 1 - 0.90 * (this.aquaplane || 0);
-            const steerEffectiveness = speedTerm * understeer * (this.tyreSteer || this.tyrePerf || 1) * aqua;
+            // ...and `hook` acts here too, but only down in the slow stuff. It
+            // is what makes a compound a specialist rather than a flat upgrade:
+            // `bite` pays the same on a 250 px/s sweeper as in a hairpin, so a
+            // tyre meant for hairpins cannot be built out of it.
+            const hook = tyreHookAt(this.tyre, speed);
+            const steerEffectiveness = speedTerm * understeer *
+                                       (this.tyreSteer || this.tyrePerf || 1) * hook * aqua;
             const steerAmount = this.maxSteer * dt * steerEffectiveness;
 
             // Allow reversing steer direction if going backwards
@@ -584,8 +709,24 @@ class Car {
             // how you keep the rear behind you
             const demand = (this.enginePower * this.condition * thr) / Math.max(70, speed);
             const slipperiness = Math.max(1, Math.min(2.4, this.baseGrip / Math.max(1, currentGrip)));
+            // `slide` and `hook` both live at low speed, and stacking them was a
+            // mistake you could count: a season on the refitted drift compound
+            // produced 17 contacts and four ruined laps out of twenty, against
+            // 13 and none before. The steering rate arrives in the same corner
+            // as the surplus rotation, so a small input yaws the car hard while
+            // alignStiffness - which powerOversteer itself scales down - has
+            // stopped gathering it up.
+            //
+            // So where the tyre is being given steering, it gives back some of
+            // the slide. Not all of it: a drift tyre that stops oversteering in
+            // slow corners is not a drift tyre. At full hook this leaves 1.22
+            // of the 1.55, still well clear of the slicks' 1.00.
+            const hookNow = tyreHookAt(this.tyre, speed);
+            const hookFrac = this.tyre && this.tyre.hook
+                ? (hookNow - 1) / this.tyre.hook : 0;
+            const effSlide = 1 + ((this.tyreSlide || 1) - 1) * (1 - SLIDE_DECOUPLE * hookFrac);
             powerOversteer = Math.max(0, Math.min(1,
-                ((demand - 1.45) / 2.2) * slipperiness * (this.tyreSlide || 1)));
+                ((demand - 1.45) / 2.2) * slipperiness * effSlide));
         }
         this.powerOversteer = powerOversteer;
 
@@ -629,6 +770,25 @@ class Car {
         // frame for the understeer term above, and it is the reason a car can
         // be made to push wide by simply carrying too much speed in.
         this.gripUse = Math.min(1, Math.abs(lateralSpeed) * 3.5 / Math.max(1, currentGrip));
+
+        // ---- Lap telemetry ------------------------------------------------
+        // Everything here is already computed; this only adds it up. 160 px/s
+        // is the top of the yaw-boost band (lowSpeed = 1 - speed/160), which is
+        // the only place a compound's oversteer is worth anything, so that is
+        // the line the "slow" share is drawn at.
+        if (this._tele && !this.finished && !this.isBroken) {
+            const a = this._tele;
+            a.t += dt; a.frames++;
+            a.vSum += speed;
+            a.dist += speed * dt;
+            a.slideDist += Math.abs(lateralSpeed) * dt;
+            if (speed < 160) {
+                a.slowT += dt;
+                a.osFrames++;
+                a.osSum += powerOversteer;
+                if (powerOversteer > 0.95) a.osHigh++;
+            }
+        }
 
         // Clamp to grip limit
         if (lateralForce > currentGrip) lateralForce = currentGrip;
@@ -722,8 +882,10 @@ class Car {
                     if (this.bestLapTime === null || currentLapTime < this.bestLapTime) {
                         this.bestLapTime = currentLapTime;
                     }
+                    this.lastLapTele = this.closeLapTelemetry();
                 }
                 this.lapStartTime = typeof track.currentRaceTime !== 'undefined' ? track.currentRaceTime : 0;
+                this.resetLapTelemetry();
             }
 
             // Taking the flag is a separate question from scoring a lap.

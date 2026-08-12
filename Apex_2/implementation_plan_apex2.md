@@ -482,9 +482,11 @@ Il fit è fatto a difficoltà *medium*, non a impossible: in cima alla scala l'I
 | Soft | 1.090 | 1.010 | — | — | — | — | 0.90 |
 | Medium | 1.000 | 1.000 | — | — | — | — | 1.30 |
 | Hard | 0.988 | 1.005 | — | — | — | — | 2.60 |
-| Drift | 0.780 | 1.344 | **1.55** | — | — | — | 2.00 |
+| Drift | 0.780 | 1.000 | **1.55** | — | — | — | 2.00 |
 | Inter | 0.940 | 1.020 | — | **2.50** | 0.10 | **4.5** | 1.15 |
 | Wet | 0.870 | 1.030 | — | **3.55** | **0.60** | **3.4** | 1.55 |
+
+più `hook 0.58` e `hookBand 320` sulla sola drift: velocità di sterzata restituita solo sotto i 320 px/s, che è ciò che la rende specialista invece che un modificatore piatto (§6quater).
 
 I trattini sono default neutri (`|| 1`, `|| 0`) letti dalla fisica, non voci mancanti in una tabella di lookup: le quattro mescole da asciutto attraversano il codice nuovo e ne escono identiche a prima.
 
@@ -629,6 +631,69 @@ powerOversteer = clamp(((demand − 1.45) / 2.2) · slipperiness · tyreSlide, 0
 ```
 
 Con `slide 1.55`: sovrasterzo **+99%** rispetto alla medium, 2.5× il tempo di traverso, 2.5× i segni sull'asfalto. E il costo sul giro **scende** da 1.65% a 1.22%, perché la rotazione in più aiuta davvero nelle curve lente. La fisica non nomina mai una mescola: legge un attributo, come faceva già con `bite`.
+
+#### E poi il rifacimento, perché era mediocre ovunque invece che ottima da qualche parte
+
+Questa prima versione comprava il passo con **`bite 1.344`**: `1.344 × 0.780 = 1.048`, una velocità di sterzata un filo sopra la medium. Funzionava ed era sbagliato, perché **`bite` è piatto** — paga uguale su un curvone a 250 px/s e in un tornante. La gomma usciva un po' peggio della medium *dappertutto* invece che chiaramente migliore *da qualche parte*, che non è una scelta.
+
+Misurato in mano a Nicola, due campionati sullo stesso seed, stessi cinque circuiti, stesso telaio, AI impossible: **3.7% sul miglior giro** (1.6% sul mediano), **98 punti contro 125**, più veloce su un circuito su cinque e per lo 0.9%, e **13 contatti contro 2**. Nessuno l'avrebbe scelta.
+
+Peggio: quel `bite` era **un rattoppo a uno strumento rotto**. Tutti i numeri delle gomme erano tarati contro l'IA, e l'IA non provoca mai la macchina — guida un profilo di velocità calcolato — quindi la drift misurava **0.5–1.3% più lenta su tutti e diciassette i circuiti** e l'unico modo di farla sembrare competitiva era un bonus piatto. Aggiustare la misura è ciò che ha permesso di togliere il rattoppo.
+
+**Ora `bite` è 1.00** — nessun termine da gomma nuova — e la velocità di sterzata è semplicemente quella che dà il grip: **0.78**, un quinto sotto la medium, pagata su ogni curva di ogni giro. Viene ricomprata da **`hook`**, che esiste solo a bassa velocità:
+
+```js
+tyreHookAt(tyre, speed) = 1 + hook · clamp(1 − speed / hookBand, 0, 1)
+```
+
+Tarato (`driftfit.js`, AI medium, stint solitari) a **`hook 0.58`, `hookBand 320`**. Risultato su tutti e 17 i circuiti (`driftcheck.js`):
+
+| | | | |
+|---|---|---|---|
+| Pettine (51% lento) | **−3.2%** | Circle (0%) | +4.0% |
+| Circo Massimo (22%) | **−2.8%** | Kettle (0%) | +3.4% |
+| Kart (18%) | **−1.0%** | Peanut (0%) | +3.2% |
+| Thunder (32%) | **−0.5%** | Oval (0%) | +3.0% |
+
+**Correlazione fra "quanta parte del giro è curva lenta" e vantaggio della drift: da r = −0.49 a r = −0.88.** Vince su 6 circuiti su 17 a medium, 8 su 17 a impossible.
+
+Tre cose imparate facendolo:
+
+- **la banda a 160 px/s era troppo stretta.** È la stessa del boost di imbardata, e all'inizio l'avevo riusata per simmetria — ma alle velocità a cui si prendono davvero le curve qui, sotto i 160 ci sta solo un tornante vero: `R=40` è 74 px/s, `R=90` è già 141, `R=130` è 181. Il gancio pagava su due curve al giro e il deficit piatto si pagava su tutte le altre. Da qui `hookBand` per mescola, 320 sulla drift;
+- **`bite` sotto 1.0 non si può usare** per addebitare il deficit piatto: **svanisce con l'usura**, quindi un valore sotto uno farebbe *migliorare* la gomma man mano che si consuma. Provato e scartato;
+- **la penalità sui circuiti veloci ha un pavimento che non c'entra con lo sterzo.** `grip 0.78` limita anche la forza laterale, e in una curva veloce l'IA è limitata dall'aderenza e non dalla sterzata (`vGrip = sqrt(lat · tyrePerf · R)`), quindi nessun gancio la può salvare lì. La gomma è limitata dallo sterzo dove va forte e dall'aderenza dove va piano, e vengono entrambe dalla fisica invece che da un caso speciale.
+
+**L'IA sa dove conviene.** `AI.chooseTyre` prende ora il circuito e moltiplica la probabilità di pescare la drift per la frazione di giro lento, normalizzata su 0.22 e limitata fra 0.20× e 2.20×. Pettine 33%, Oval 5%. Una gomma specialista distribuita a caso non è una gomma specialista, è un handicap assegnato a sorte.
+
+#### Cosa ha trovato la prima stagione col refit — due difetti, uno grosso
+
+Nicola ha corso `prova` sulla nuova drift, stesso seed, stessi cinque circuiti. **Non ha funzionato come previsto.**
+
+Sul passo non è cambiato quasi niente: **miglior giro all'asciutto +3.7% → +4.1%**, per circuito un pareggio confuso (harbour 9.55 → 9.25 e serpent 11.57 → 11.40 meglio, triangle 8.46 → 8.76 e thunder 11.53 → 11.92 peggio). Quello che è cambiato sono **i giri distrutti**: harbour 10.84 / **16.82** / 9.25 / **17.82**, thunder 11.92 / **17.59** / 12.78 / 12.53. Quattro giri rovinati su venti, **17 contatti contro 13**, e il giro mediano da +1.6% a +12.6% — un numero interamente dentro quegli incidenti, non nel passo.
+
+**Difetto 1 — il gancio sfondava nel bagnato, ed era un bug mio.** La banda è misurata in px/s, ma sotto la pioggia l'aderenza cala a 0.13 del secco e *tutte* le curve scendono dentro la banda: un bonus per curve lente diventa un bonus generale, misurato fra **+29% e +48% di sterzata su tutto il giro**. Nel log si vedeva chiarissimo: circomassimo bagnato, drift da **+15.5% a +1.9%** rispetto alla medium. Una gomma senza battistrada non può andare quasi come una medium sotto la pioggia. `tyreHookAt` ora prende il meteo e restituisce 1 quando piove, leggendo `isRaining` se il chiamante non lo passa — così i due lati non possono essere in disaccordo sul tempo che fa, che è il fallimento di `WET_GRIP` travestito.
+
+**Difetto 2 — `slide` e `hook` si sommavano nella stessa curva.** Vivono entrambi a bassa velocità: il gancio dà sterzata proprio dove il sovrasterzo è massimo, quindi un input piccolo imbarda forte mentre `alignStiffness` — che `powerOversteer` stesso abbassa — ha smesso di raccogliere la macchina. Ora dove il gancio è attivo la gomma **restituisce parte dello scivolamento**: `SLIDE_DECOUPLE = 0.6`, che a gancio pieno lascia 1.22 dei 1.55. Non tutto: una gomma da drift che smette di sovrasterzare nelle curve lente non è una gomma da drift. Misurato con la telemetria del gioco, tempo passato saturi in curva lenta: drift **da 71% a 66%**, ancora sopra soft 61%, medium 57%, hard 53%.
+
+Nessuno dei due tocca la specializzazione: r resta **−0.883** e la drift vince ancora su 6 circuiti su 17.
+
+**E una cosa che resta aperta, onestamente.** L'harness prevedeva triangle, serpent e thunder come vittorie della drift; in mano a Nicola sono state tutte e quattro sconfitte. Il modello dell'IA e le mani umane divergono, probabilmente perché l'IA sfrutta la sterzata in più *calcolando* una velocità d'ingresso più alta, mentre una persona sente il 22% di sterzata in meno ovunque. Una gara per circuito e una varianza di sessione del 3–4% non bastano per concludere.
+
+#### Terza stagione: cosa hanno dimostrato le correzioni, e cosa no
+
+Stessa `prova`, stessi cinque circuiti, drift con gancio + correzione bagnato + scollegamento.
+
+**Lo scollegamento ha funzionato, e su questo i dati sono netti.** Contatti **da 17 a 7** — e **cinque dei sette sono un unico incidente al via a thunder**: Verstappen a 1.03s, Senna a 3.4s, Vettel a 5.7s e 7.3s, tutti nei primi sette secondi partendo dalla P7. Tolta quella gara: **2 contatti in quattro gare**, contro i 12 e 13 delle due versioni precedenti sugli stessi quattro circuiti. Harbour è il giro più pulito mai fatto su drift — 9.42 / 9.69 / 9.82 / 9.53, zero contatti, miglior giro migliore della v1 — e non ci sono più giri da sedici secondi. Punti **100**, il migliore delle tre versioni, con P1 P1 P1 DNF P1.
+
+**La correzione del bagnato ha funzionato.** Circo Massimo torna chiaramente più lenta della medium (11.13 / 10.46 / 16.59 / 12.44 contro 9.98 / 9.58 / 10.08 / 10.63), P1 con un contatto invece di P6 con otto.
+
+**Il costo si è spostato sulle qualifiche, e lì si compone.** Giri di qualifica: harbour 9.136 → P1, serpent 10.350 → P1, circomassimo 10.133 → P1, ma **triangle 8.800 → P6** e **thunder 11.799 → P7**. Quel P7 è diventato quattro contatti in sette secondi e la vettura distrutta a 43.9s. La catena è *gomma → giro secco peggiore → griglia peggiore → contatto al via → ritiro*: difendibile per una mescola che rinuncia al 22% di sterzata piatta, ma è una penalità che si moltiplica invece di essere solo passo.
+
+**Sul passo i dati non dicono ancora niente, e va scritto.** Due gare su cinque hanno avuto un incidente precoce — thunder ritirata al secondo giro, serpent con 14.76 / 24.56 nei primi due giri e **zero contatti**, quindi un'uscita e un rientro. Il numero grezzo dà +11.2% sul miglior giro all'asciutto; tolta thunder è +7.0%; e il contributo di serpent viene da una gara di cui la prima metà è stata buttata (qualifica 10.35 contro 12.38 in gara). Con `n=1` per circuito e due gare rovinate, **nessuna conclusione sul passo in mano umana**. Quello che i dati sostengono è che lo scollegamento ha funzionato; niente di più.
+
+Il campo IA prende la drift nel **14%** dei casi all'asciutto (3 su 10 a harbour, 1 su 10 a thunder), dentro la banda di progetto.
+
+**Stato: chiusa qui.** Non per convinzione che sia perfetta, ma perché l'unica modifica che verrebbe in mente — ammorbidire la penalità in qualifica — sarebbe artificiale: è corretto che una gomma con meno sterzata faccia un giro secco peggiore. Se giocando risulterà sbagliata, il gioco ora registra da solo la mescola, la telemetria per giro e i personal best per gomma, quindi la questione si riapre con dati invece che con impressioni.
 
 Una cosa che il test **fissa apposta**: la soft gira più forte della drift (`grip × bite` 1.101 contro 1.048) e va bene così. Non è la stessa cosa dello scivolare, e dare alla drift più `bite` della soft la renderebbe anche la gomma più veloce del gioco.
 
@@ -776,6 +841,14 @@ Gli attrezzi di misura sono nella cartella di lavoro e non nel gioco: `logscan.j
 - **[Apex 2] Uno scivolamento senza gas non distingue niente.** `alignStiffness = 3.5 · (1 − slideRelease · powerOversteer)`: a gas chiuso `powerOversteer` è zero e la rigidezza è 3.5 per tutti. Anche il limite sulla forza laterale non morde alle velocità normali. Tutto l'effetto della mescola su un traverso passa per `slipperiness → powerOversteer → alignStiffness`, quindi il gas resta dentro.
 - **[Apex 2] Un attributo nuovo sulla tabella gomme deve avere un default neutro nella fisica, non una tabella di lookup.** `tyre.rainGrip || 1`, `tyre.aqua || 0`, `tyre.dryWear || 1`: così le mescole vecchie attraversano il codice nuovo e ne escono identiche, e c'è un test che verifica che le quattro da asciutto **non dichiarino** nessuno dei tre.
 - **[Apex 2] Non basta che ognuna delle due opzioni vinca da qualche parte: la regola dev'essere leggibile.** Inter contro full wet vinceva 5-1 e sembrava «bilanciato». Non lo era: era una gomma migliore più un circuito rumoroso. La taratura giusta è quella in cui si può dire *perché* — strada pulita l'intermedia, acqua alta la full wet, su tutti i circuiti.
+- **[Apex 2] Se lo strumento non sa misurare una cosa, non tararla: aggiusta lo strumento.** Il `bite 1.344` della drift esisteva solo perché stavo misurando contro l'IA, e l'IA il sovrasterzo non lo provoca: nelle mie misure l'unico modo di non farla risultare lenta era un bonus piatto. Era un rattoppo, non una scelta di progetto, e ha reso la gomma mediocre ovunque per un anno di conversazione. La strada giusta era registrare la mescola nel log e i personal best per gomma — cioè imparare a misurare in mano al giocatore — e solo dopo tarare.
+- **[Apex 2] Un incidente non è un dato sul passo, e va tolto prima di mediare.** Nella terza stagione due gare su cinque avevano un'uscita o un ritiro al secondo giro: il divario grezzo sul miglior giro diceva +11.2%, tolta la gara ritirata +7.0%, e il resto veniva da una gara buttata a metà. Prima di concludere qualcosa sulla velocità, guardare **quante gare sono utilizzabili** — con `n=1` per circuito ne bastano due storte per inventare un risultato.
+- **[Apex 2] Una penalità sul giro secco si moltiplica, una sul passo gara no.** La drift costa sterzata, quindi costa qualifica, quindi costa griglia, quindi costa contatti al via: P7 a thunder è diventato quattro botte in sette secondi e un ritiro. Quando si toglie prestazione a qualcosa, chiedersi se la si sta togliendo in un punto che si propaga.
+- **[Apex 2] Una soglia in px/s non significa la stessa cosa sotto la pioggia.** L'aderenza cala a 0.13 del secco, quindi *tutte* le velocità in curva scendono: qualsiasi bonus "sotto X px/s" diventa un bonus generale quando piove. Il gancio della drift regalava fra +29% e +48% di sterzata su un giro bagnato intero. Vale per qualunque futura soglia sulla velocità — vanno chieste rispetto alla velocità *disponibile*, non a un numero fisso.
+- **[Apex 2] Due effetti che vivono nella stessa fascia si sommano, e la somma è la cosa che si sente.** `slide` e `hook` sono entrambi a bassa velocità: presi singolarmente erano tarati, insieme producevano 17 contatti e quattro giri distrutti su venti. Quando si aggiunge un termine, guardare *dove* agisce e cosa c'è già lì.
+- **[Apex 2] Un bonus piatto non può fare una gomma specialista.** `bite` moltiplica la velocità di sterzata in ogni curva, quindi paga uguale sul curvone e nel tornante: una mescola costruita con quello sarà sempre "un po' meglio o un po' peggio dappertutto". Serve un termine che dipenda dalla velocità (`hook`), e la sua banda va scelta guardando **le velocità a cui si prendono davvero le curve** — 160 px/s sembrava naturale e copriva due curve al giro.
+- **[Apex 2] Un attributo che svanisce con l'usura non può portare un valore negativo.** `bite` sotto 1.0 farebbe migliorare la gomma consumandosi. Vale per qualsiasi futuro termine legato a `max(0, 1 − w)`.
+- **[Apex 2] `ai.js` non deve dipendere da `main.js`.** `AI.slowShare` chiamava `makeTrack`, che vive in main.js: negli harness che caricano solo track/car/ai la funzione tornava `null` in silenzio e l'IA distribuiva la gomma specialista a caso. Passa l'oggetto pista, non la chiave. Una dipendenza che fallisce zitta è peggio di una che esplode.
 - **[Apex 2] Una cifra derivata va etichettata con come è stata ottenuta, non con cosa sembra.** «Est. lap» stava sopra un record più veloce del 9-28% e non diceva perché: erano due misure diverse (hard su medium in uno stint, contro alien su soft nuove) e la scheda le presentava come se fossero la stessa. Se due numeri sulla stessa pagina non possono essere confrontati, la pagina deve dirlo.
 - **[Apex 2] Un dato salvato deve portarsi dietro il fingerprint della cosa che l'ha prodotto.** Il libro dei record è misurato dalla build: cambia una gomma, `WET_GRIP` o un profilo IA e i tempi salvati descrivono un gioco che non esiste più. La chiave in `localStorage` include quel fingerprint, quindi il libro stantio viene buttato invece di essere mostrato con l'aria di essere autorevole.
 - **[Apex 2] Con un clock finto, uno slice temporale non si chiude mai.** Gli harness congelano `performance.now()` fra un drain e l'altro, quindi il ciclo `while (performance.now() - t0 < 12)` di `exStep` esaurisce l'intera coda in una chiamata sola. Non è un bug del gioco, ma qualsiasi test che voglia osservare uno stato *transitorio* (una barra di avanzamento a metà) non può farlo così: si verifica la proprietà, o si pilota il renderer a mano.

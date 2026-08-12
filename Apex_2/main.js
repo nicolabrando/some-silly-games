@@ -1067,7 +1067,17 @@ function reverseGridEnabled() {
     return !!(box && box.checked);
 }
 
+// Every track made here is tagged with the key it was made from. Several
+// things downstream need to ask a track object what it is - the AI's compound
+// choice depends on the layout now - and reverse-mapping a constructor name is
+// the kind of thing that breaks silently when a circuit is renamed.
 function makeTrack(trackType) {
+    const t = makeTrackRaw(trackType);
+    t.trackKey = trackType;
+    return t;
+}
+function trackKeyOf(t) { return (t && t.trackKey) || null; }
+function makeTrackRaw(trackType) {
     switch (trackType) {
         case 'f1':           return new F1Track();
         case 'peanut':       return new PeanutTrack();
@@ -1167,7 +1177,8 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
     car.nextWaypoint = 0;
     car._lapPixels = line.length;
     car._tyreRaceLaps = QUALI_LAPS;
-    car.tyre = TYRES[AI.chooseTyre(driverName, QUALI_LAPS, raining)] || TYRES.medium;
+    car.tyre = TYRES[AI.chooseTyre(driverName, QUALI_LAPS, raining, qTrack)] ||
+               TYRES.medium;
     car.tyreWear = 0;
     // Standing start, exactly like the player's session: lap 1 is the warm-up
     // lap and is thrown away, laps 2 and 3 are the flying laps.
@@ -1404,6 +1415,7 @@ function startQualifying(forceTrackType) {
         difficulty: isChampionship ? championshipState.difficulty
                                    : document.getElementById('difficulty-select').value,
         weather: isRaining ? 'wet' : 'dry',
+        seed: isChampionship && championshipState ? championshipState.seed : null,
         grid: pendingField.map(p => p.driverName || p.color)
     });
 
@@ -1548,7 +1560,7 @@ const TYRE_NOTE = {
     soft:   'quickest early, gone by the flag',
     medium: 'holds its shape',
     hard:   'slowest, and still there at the end',
-    drift:  'no grip, all rotation \u2014 it slides',
+    drift:  'a fifth slower in the quick stuff, quicker in the slow',
     inter:  'the quick wet tyre \u2014 no answer to a puddle',
     wet:    'slower, but it drives through standing water'
 };
@@ -1616,9 +1628,21 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
         // the lateral clamp really does bind - 0.13 of dry grip is low enough
         // that it is the limit rather than the steering rate - so what decides
         // corner speed is the tread, and that is what the button says.
+        // And `grip x bite` is only the whole story for a compound whose
+        // steering rate is the same in every corner. The drift tyre's is not:
+        // it is 22% down flat and bought back by `hook` below 320 px/s, so the
+        // single number would read -22% and libel a tyre that is 3% QUICKER
+        // where the lap is made of slow corners. Two numbers when there are
+        // two to give.
+        const hookPace = t.hook
+            ? ((t.grip * (t.bite === undefined ? 1 : t.bite) * (1 + t.hook)) - 1) * 100
+            : null;
         const head = wetNow
             ? 'wet grip ×' + (t.rainGrip || 1).toFixed(2)
-            : (pace >= 0 ? '+' : '') + pace.toFixed(1) + '% pace';
+            : (hookPace !== null
+                ? pace.toFixed(0) + '% fast corners, ' +
+                  (hookPace >= 0 ? '+' : '') + hookPace.toFixed(0) + '% slow ones'
+                : (pace >= 0 ? '+' : '') + pace.toFixed(1) + '% pace');
         const note = TYRE_NOTE[k] || '';
         return '<button class="tyre-opt" data-tyre="' + k + '">' +
             '<span class="tyre-dot" style="background:' + t.colour + ';"></span>' +
@@ -1799,8 +1823,14 @@ function showGpPreview(trackType) {
 
     document.getElementById('gp-title').innerText =
         `Round ${round}/${total} — ${TRACK_LABELS[trackType] || trackType}`;
-    document.getElementById('gp-weather').innerHTML = wet
-        ? '<span style="color:#64b5f6;">Wet 🌧️</span>' : 'Dry ☀️';
+    document.getElementById('gp-weather').innerHTML = (wet
+        ? '<span style="color:#64b5f6;">Wet 🌧️</span>' : 'Dry ☀️') +
+        // The seed sits with the round because this is the screen you look at
+        // every race: whatever else you forget, the name of the season you are
+        // in is in front of you, and it is what makes running it again possible.
+        (championshipState && championshipState.seed
+            ? ` <span class="gp-seed" title="Type this into Season seed to run this ` +
+              `exact calendar again">season ${championshipState.seed}</span>` : '');
 
     // Mini-map: the real track, drawn scaled onto a small canvas.
     const map = document.getElementById('gp-map');
@@ -2143,6 +2173,51 @@ function exFingerprint() {
 }
 const EX_STORE_KEY = 'apex2.explore.records';
 
+// ===========================================================================
+//  YOUR OWN BESTS, BY CIRCUIT AND BY COMPOUND
+// ===========================================================================
+//
+//  The one number nobody has ever measured about this game is how much a
+//  compound is worth IN THE PLAYER'S HANDS. Every tyre in the table was
+//  balanced against the AI, and the AI cannot use the drift compound at all -
+//  it drives a computed speed profile and never provokes the car, so the drift
+//  tyre measures 0.5 to 1.3% SLOW on all seventeen circuits when the AI holds
+//  it, and quick enough to win championships when a person does.
+//
+//  So the game keeps your own best lap per circuit per compound, and shows the
+//  gap. No special mode to run, no laps to set aside: play, and after a few
+//  sessions the comparison is simply there.
+const PB_STORE_KEY = 'apex2.player.bests';
+let playerBests = null;         // { trackKey: { tyreKey: { ms, when, wet } } }
+
+function pbLoad() {
+    if (playerBests) return playerBests;
+    playerBests = {};
+    try {
+        const raw = window.localStorage.getItem(PB_STORE_KEY);
+        if (raw) playerBests = JSON.parse(raw) || {};
+    } catch (e) { /* no storage: the table just lives for this session */ }
+    return playerBests;
+}
+function pbSave() {
+    try { window.localStorage.setItem(PB_STORE_KEY, JSON.stringify(playerBests || {})); }
+    catch (e) { /* as above */ }
+}
+
+// Called with a completed lap. Wet and dry are kept apart - a wet lap next to a
+// dry one in the same column would make the compound look like the cause of a
+// difference the weather made.
+function pbRecord(trackKey, tyreKey, ms, wet) {
+    if (!trackKey || !tyreKey || !ms || !isFinite(ms)) return;
+    const all = pbLoad();
+    const slot = wet ? tyreKey + ':wet' : tyreKey;
+    const t = all[trackKey] || (all[trackKey] = {});
+    if (!t[slot] || ms < t[slot].ms) {
+        t[slot] = { ms: ms, when: Date.now(), wet: !!wet };
+        pbSave();
+    }
+}
+
 function exSaveRecords() {
     try {
         const out = {};
@@ -2411,6 +2486,34 @@ function exRenderRecords(key) {
                 `<span class="d">${d < 0.001 ? '&mdash;' : '+' + d.toFixed(1) + '%'}</span>` +
                 `</div>`;
         }).join('');
+    }
+
+    // ---- and the same table for YOU -------------------------------------
+    // The point of the whole exercise. The AI's ordering above says what the
+    // compounds are worth to a driver that never provokes the car; this one
+    // says what they are worth to you, which is a different question and the
+    // one the balance actually has to answer.
+    const pb = pbLoad()[key] || {};
+    const mine = Object.keys(pb).filter(s => pb[s] && pb[s].ms);
+    if (mine.length) {
+        const bestMine = Math.min(...mine.map(s => pb[s].ms));
+        html += `<div class="ex-rec-h" style="margin-top:12px;">Your best, by compound</div>`;
+        html += mine.sort((a, b) => pb[a].ms - pb[b].ms).map(slot => {
+            const wet = slot.indexOf(':wet') > 0;
+            const k = wet ? slot.slice(0, -4) : slot;
+            const t = TYRES[k];
+            if (!t) return '';
+            const d = 100 * (pb[slot].ms - bestMine) / bestMine;
+            return `<div class="ex-tyre-row">` +
+                `<span class="ex-rec-tyre" style="background:${t.colour};"></span>` +
+                `<span class="n">${t.label}${wet ? ' <i style="opacity:0.6;">wet</i>' : ''}</span>` +
+                `<span class="t">${(pb[slot].ms / 1000).toFixed(3)}</span>` +
+                `<span class="d">${d < 0.001 ? '&mdash;' : '+' + d.toFixed(1) + '%'}</span>` +
+                `</div>`;
+        }).join('');
+        if (mine.length < 2)
+            html += `<div class="ex-rec-foot">one compound so far &mdash; ` +
+                `drive a lap on another and the comparison appears here</div>`;
     }
 
     if (exBuild.running) {
@@ -2771,7 +2874,7 @@ function startGame(forceTrackType = null) {
         // so the grid is a mix rather than ten cars on the same rubber.
         car._lapPixels = track.getRacingLine ? track.getRacingLine('standard').length : 3000;
         const tKey = p.isPlayer ? seatTyre(car.playerIndex)
-                                : AI.chooseTyre(p.driverName, TOTAL_LAPS, isRaining);
+                                : AI.chooseTyre(p.driverName, TOTAL_LAPS, isRaining, track);
         car.tyre = TYRES[tKey] || TYRES.medium;
         car.tyreWear = 0;
         car._tyreRaceLaps = TOTAL_LAPS;
@@ -2850,6 +2953,17 @@ function startGame(forceTrackType = null) {
         laps: isPractice ? null : TOTAL_LAPS,
         difficulty: isPractice ? null : (isChampionship ? championshipState.difficulty : difficulty),
         weather: isRaining ? 'wet' : 'dry',
+        seed: isChampionship && championshipState ? championshipState.seed : null,
+        playerTyre: (() => {
+            const p = cars.find(c => c.isPlayer);
+            return p && p.tyre ? p.tyre.label : null;
+        })(),
+        playerChassis: (() => {
+            const p = cars.find(c => c.isPlayer);
+            return p && p.chassis ? p.chassis.label : null;
+        })(),
+        tyres: cars.map(c => (c.driverName || c.color) + ' ' +
+            ((c.tyre && c.tyre.short) || '?')),
         grid: cars.map(c => c.driverName || c.color)
     });
 
@@ -2945,6 +3059,21 @@ function updatePhysics(dt) {
             const isBest = c.lastLapTime && c.lastLapTime === c.bestLapTime;
             RaceLog.event('LAP', `${c.driverName || c.color} lap ${c.lap}` +
                 (c.lastLapTime ? ` — ${RaceLog.fmt(c.lastLapTime)}${isBest ? '  (best)' : ''}` : ' (out lap)'));
+            // Only the human's laps carry telemetry into the log and into the
+            // personal-best table. The AI's would be noise: it never provokes
+            // the car, so its oversteer numbers are the same on every compound.
+            if (c.isPlayer && c.lastLapTime) {
+                pbRecord(currentTrackKey, (c.tyre && c.tyre.key) || 'medium',
+                         c.lastLapTime, isRaining);
+                const te = c.lastLapTele;
+                if (te) RaceLog.event('TELE',
+                    `${humanLabel(c)} lap ${c.lap} on ${te.tyre} — ` +
+                    `${(100 * te.slowShare).toFixed(0)}% of it under 160 px/s, ` +
+                    `oversteer ${te.osMean.toFixed(2)} there ` +
+                    `(pinned ${(100 * te.osPinned).toFixed(0)}% of that time), ` +
+                    `sideways ${te.slidePct.toFixed(1)}% of the distance, ` +
+                    `mean ${te.vMean.toFixed(0)} px/s`);
+            }
         }
     });
     
@@ -4457,6 +4586,7 @@ function updateHUD() {
             laps: `${Math.min(c.lap, TOTAL_LAPS)}/${TOTAL_LAPS}`,
             time: (c.isBroken && !c.finished) ? 'DNF' : RaceLog.fmt(c.raceTime),
             best: RaceLog.fmt(c.bestLapTime),
+            tyre: (c.tyre && c.tyre.label) || '',
             note: (c.isBroken && !c.finished) ? (c.status || 'retired') : ''
         })));
 
@@ -5210,6 +5340,22 @@ function seasonRounds() {
     return Math.max(1, Math.min(SEASON_POOL.length, n));
 }
 
+// What the seed box says, or a fresh one if it is empty. Whitespace and case
+// are ignored so a seed copied off the screen with a stray space still lands on
+// the same calendar - the whole point is that it is retypeable.
+function seasonSeedText() {
+    const el = document.getElementById('season-seed');
+    const raw = (el && el.value ? String(el.value) : '').trim().toLowerCase();
+    return raw || makeSeedText();
+}
+const SEED_STORE_KEY = 'apex2.season.seed';
+function rememberSeed(text) {
+    try { window.localStorage.setItem(SEED_STORE_KEY, text); } catch (e) { }
+}
+function lastSeed() {
+    try { return window.localStorage.getItem(SEED_STORE_KEY) || ''; } catch (e) { return ''; }
+}
+
 // The dropdown is built from the pool rather than written out in the HTML:
 // the longest season on offer is then exactly the number of circuits that
 // exist, and it cannot drift out of step when one is added.
@@ -5227,17 +5373,77 @@ function populateSeasonLengths() {
 }
 populateSeasonLengths();
 
-// The calendar: `rounds` circuits drawn at random from the pool, WITHOUT
-// replacement, so a season never visits the same place twice. The dropdown
-// cannot ask for more rounds than there are circuits; the refill below is
-// there only so that a longer season asked for in code still returns
-// something sensible rather than a short list.
-function seasonCalendar(rounds) {
+// The repeat button fills the box with the seed of the last season started.
+// Two clicks - repeat, then change the tyre - is the whole workflow the
+// comparison needs.
+(function wireSeedBox() {
+    const again = document.getElementById('seed-again');
+    if (!again) return;
+    again.addEventListener('click', () => {
+        const el = document.getElementById('season-seed');
+        const s = lastSeed();
+        if (el && s) { el.value = s; el.focus(); }
+    });
+})();
+
+// ---------------------------------------------------------------------------
+//  THE SEED
+// ---------------------------------------------------------------------------
+//  A calendar drawn at random is right for playing and useless for comparing.
+//  Two championships run to find out what a tyre is worth visited five
+//  different circuits each and shared two, so the answer rested on two races.
+//
+//  So the calendar and the weather come from a NAMED draw. Type the same seed
+//  and you get the same seventeen-circuit shuffle and the same rain, which
+//  makes "the same season on a different tyre" a thing you can actually run.
+//  Leave it blank and a fresh one is rolled and then shown, so a season you
+//  enjoyed can be repeated after the fact.
+//
+//  Deliberately only the calendar and the weather. The racing itself - grid
+//  order, AI mistakes, tyre choices, where the puddles fall - stays on
+//  Math.random, because a seed that froze those too would make the comparison
+//  a replay rather than a second attempt.
+function seedFrom(text) {
+    let h = 2166136261 >>> 0;
+    const s = String(text);
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h >>> 0;
+}
+// mulberry32: small, fast, and good enough for shuffling seventeen circuits.
+function seededRng(seed) {
+    let a = seed >>> 0;
+    return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+// Seeds are shown to you and typed back in, so they are words rather than
+// nine-digit numbers: easier to read off a screen and to write in a log.
+const SEED_WORDS = ['apex', 'kerb', 'slip', 'drift', 'lock', 'tow', 'wing', 'brake',
+                    'grid', 'flag', 'wet', 'dry', 'soft', 'hard', 'late', 'quick'];
+function makeSeedText() {
+    const r = () => SEED_WORDS[Math.floor(Math.random() * SEED_WORDS.length)];
+    return r() + '-' + r() + '-' + Math.floor(100 + Math.random() * 900);
+}
+
+// The calendar: `rounds` circuits drawn from the pool, WITHOUT replacement, so
+// a season never visits the same place twice. The dropdown cannot ask for more
+// rounds than there are circuits; the refill below is there only so that a
+// longer season asked for in code still returns something sensible rather than
+// a short list.
+function seasonCalendar(rounds, rng) {
+    const rand = rng || Math.random;
     const pool = SEASON_POOL;
     const shuffled = () => {
         const a = pool.slice();
         for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
+            const j = Math.floor(rand() * (i + 1));
             [a[i], a[j]] = [a[j], a[i]];
         }
         return a;
@@ -5262,20 +5468,25 @@ function startChampionship() {
     // races the same drivers.
     twoPlayer = twoPlayerEnabled() && color !== 'spectator';
 
-    // Every circuit, in a different order every season. A fixed calendar meant
-    // you learned the season rather than the tracks: the same opener, the same
-    // decider, every time.
-    const tracks = seasonCalendar(seasonRounds());
+    // Every circuit, in a different order every season - unless you name the
+    // season. A fixed calendar meant you learned the season rather than the
+    // tracks; a calendar you cannot repeat meant two championships were never
+    // comparable. A seed gives both: blank rolls a new one, typed reproduces it.
+    const seedText = seasonSeedText();
+    const rng = seededRng(seedFrom(seedText));
+    const tracks = seasonCalendar(seasonRounds(), rng);
 
     // The season's weather is rolled once, up front, at the same 20% per race
     // as before - but a season with no wet race at all is rerolled. At 20% a
     // ten-race season came out completely dry about one time in nine, which is
     // how you can play a whole championship and never see the rain.
-    // Rolled AFTER the shuffle, so weather[i] belongs to round i.
-    const weather = tracks.map(() => Math.random() < 0.20);
-    if (!weather.some(Boolean)) weather[Math.floor(Math.random() * weather.length)] = true;
+    // Rolled AFTER the shuffle, and from the SAME seeded stream, so the same
+    // seed gives the same rain in the same places.
+    const weather = tracks.map(() => rng() < 0.20);
+    if (!weather.some(Boolean)) weather[Math.floor(rng() * weather.length)] = true;
 
     championshipState = {
+        seed: seedText,
         tracks: tracks,
         weather: weather,
         currentTrackIndex: 0,
@@ -5285,6 +5496,11 @@ function startChampionship() {
         results: [],
         difficulty: difficulty
     };
+    // Written back into the box and kept, so the season you have just started
+    // can be run again on a different tyre without having copied anything down.
+    rememberSeed(seedText);
+    const seedEl = document.getElementById('season-seed');
+    if (seedEl) seedEl.value = seedText;
 
     // Famous names list
     let availableNames = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];

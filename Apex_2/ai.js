@@ -674,12 +674,30 @@ class AI {
             const R = radiusOf(nd);
             // vCorner is tabulated for nd.radius; rescale it for the radius we
             // are actually willing to commit to (v scales ~ with R here).
-            const steerRateNow = aiSteerOf(car) * tyreF;
-            const vSteer = steerRateNow / (1 / R + steerRateNow / 500);
+            // A compound's `hook` is worth more the slower you are going, so the
+            // steering rate available in a corner depends on the speed you take
+            // it at - which is the thing being solved for. Two passes of fixed
+            // point: guess with the flat rate, read the hook at that speed,
+            // solve again. The map is monotone and the second pass moves the
+            // answer by well under a per cent, so a third would be theatre.
+            //
+            // It has to be here at all for the same reason WET_GRIP does: an AI
+            // that does not know the tyre gains steering in the slow corners
+            // will brake for a speed it could have beaten, and the compound's
+            // whole point disappears into a safety margin.
+            const flat = aiSteerOf(car) * tyreF;
+            let vSteer = flat / (1 / R + flat / 500);
+            for (let k = 0; k < 2; k++) {
+                const s = flat * tyreHookAt(car.tyre, vSteer);
+                vSteer = s / (1 / R + s / 500);
+            }
             const vGrip = Math.sqrt(latLimit * tyreG * R);
             const cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
                                 Math.max(this.p.cornerFactor, AI_ATTACK_CORNER_CAP));
-            return Math.min(nd.vCorner * 1.35 * tyreF, vSteer, vGrip) * AI_CORNER_SAFETY * cf;
+            // The tabulated ceiling has to move with the hook too, or it clamps
+            // the gain straight back off again.
+            const tabF = tyreF * tyreHookAt(car.tyre, vSteer);
+            return Math.min(nd.vCorner * 1.35 * tabF, vSteer, vGrip) * AI_CORNER_SAFETY * cf;
         };
 
         // Under the VSC everyone has the same reduced power, so the AI must
@@ -1100,7 +1118,45 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
 //  same compound every single time, which is exactly the "everyone makes the
 //  same choice" outcome this is meant to avoid.
 // ---------------------------------------------------------------------------
-AI.chooseTyre = function (driverName, laps, raining) {
+// How much of a lap this circuit spends in the band where a compound's `hook`
+// is worth anything. Cached, because it needs the racing line and the answer
+// never changes for a given layout.
+//
+// It exists so the field does not throw the drift compound away on a circuit it
+// is wrong for. Before this, chooseTyre drew it on temperament alone and the AI
+// took it to Circle - where it is 4% off the pace - as readily as to Pettine,
+// where it is 3% up. A specialist tyre handed out at random is not a specialist
+// tyre, it is a handicap applied to a random driver.
+// Takes the TRACK ITSELF, or a key if that is all the caller has. Taking the
+// object matters: ai.js must not need makeTrack, which lives in main.js. The
+// first version called it and every harness that loads ai.js without main.js -
+// which is most of them - silently got null back, applied no adjustment at all,
+// and handed the drift compound out just as often at the Oval as at Pettine.
+// The test caught it; a dependency that fails quietly would not have been.
+const AI_SLOW_SHARE = {};
+AI.slowShare = function (track) {
+    if (!track) return null;
+    const key = typeof track === 'string' ? track : (track.trackKey || null);
+    if (key && AI_SLOW_SHARE[key] !== undefined) return AI_SLOW_SHARE[key];
+    let share = null;
+    try {
+        let t = track;
+        if (typeof track === 'string') {
+            if (typeof makeTrack !== 'function') return null;
+            t = makeTrack(track);
+        }
+        if (!t || typeof t.getRacingLine !== 'function') return null;
+        const line = t.getRacingLine();
+        let n = 0;
+        for (let i = 0; i < line.count; i++)
+            if ((line.nodes[i].vCorner || 999) < 160) n++;
+        share = n / Math.max(1, line.count);
+    } catch (e) { share = null; }
+    if (key) AI_SLOW_SHARE[key] = share;
+    return share;
+};
+
+AI.chooseTyre = function (driverName, laps, raining, trackKey) {
     const s = AI_DRIVER_STYLES[driverName];
 
     // ---- RAIN ------------------------------------------------------------
@@ -1187,6 +1243,16 @@ AI.chooseTyre = function (driverName, laps, raining) {
         drift += (s.err - 0.7) * 0.05;          // lives on the edge
         drift += (1 - s.steerTau) * 0.18;       // sharp, nervous hands
         drift += (s.overtake - 0.85) * 0.25;    // always on the attack
+        // ...and then the circuit, which is now the bigger question. The
+        // compound is fitted to be about 3% up where half the lap is slow
+        // corners and 3-4% down where none of it is, so temperament decides
+        // WHO is tempted and the layout decides WHETHER it is worth it.
+        // Pettine and Circo Massimo see it often, Circle and the Oval almost
+        // never. A flat 20% band either side of neutral, so it never becomes
+        // the whole grid's tyre and never disappears entirely.
+        const slow = AI.slowShare(trackKey);
+        if (slow !== null && slow !== undefined)
+            drift *= Math.max(0.20, Math.min(2.20, slow / 0.22));
         if (Math.random() < Math.max(0, Math.min(0.30, drift))) return 'drift';
     }
 

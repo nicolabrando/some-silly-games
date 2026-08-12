@@ -121,6 +121,21 @@
                                  number of circuits there are -->
                             <select id="rounds-select"></select>
                         </div>
+                        <div class="menu-group" data-modes="champ">
+                            <label>Season seed</label>
+                            <!-- Name a season and you can run it again. The seed
+                                 fixes the calendar and the rain and nothing
+                                 else, so a second attempt is a second attempt
+                                 and not a replay. Blank rolls a new one and
+                                 writes it back here. -->
+                            <div class="seed-row">
+                                <input type="text" id="season-seed" placeholder="random"
+                                       autocomplete="off" spellcheck="false">
+                                <button type="button" id="seed-again" title="Repeat the last season">↺</button>
+                            </div>
+                            <div class="seed-hint">Same seed, same circuits and the
+                                same rain &mdash; so two seasons can be compared.</div>
+                        </div>
                         <div class="menu-row">
                             <div class="menu-group" data-modes="race champ">
                                 <label>Laps</label>
