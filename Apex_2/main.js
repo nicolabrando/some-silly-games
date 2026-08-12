@@ -1321,10 +1321,10 @@ function startQualifying(forceTrackType) {
 
     // The weekend's weather is decided here and reused for the race, so
     // qualifying and the race are never run in different conditions.
-    const forceWetRace = document.getElementById('wet-race-checkbox').checked;
-    isRaining = isChampionship ? nextChampionshipWeather()
-                               : (forceWetRace ? true : (Math.random() < 0.20));
-    pendingWeather = isRaining;
+    // Already decided, before the tyre screen. Committing again is a no-op:
+    // the point is that this line cannot come to a different answer than the
+    // banner the player has just read.
+    isRaining = commitWeather();
 
     let weatherIndicator = document.getElementById('weather-indicator');
     if (!weatherIndicator) {
@@ -1584,7 +1584,43 @@ function seatTyre(index) {
     return (index === 2 ? playerTyre2 : playerTyre) || 'medium';
 }
 
+// ---------------------------------------------------------------------------
+//  THE WEATHER IS ONE DECISION, MADE ONCE
+// ---------------------------------------------------------------------------
+//  It used to be made inside startQualifying and startGame - which run AFTER
+//  the tyre screen. So the screen where you choose your tyres was reading
+//  `isRaining` left over from the previous session, and a wet round could ask
+//  for tyres under a large banner reading DRY. Worse for a single race: the
+//  20% roll had not happened yet, so no honest answer existed at that moment.
+//
+//  Now the decision is taken before the tyre screen and pinned in
+//  `pendingWeather`, and everything downstream reads that. Same shape as
+//  WET_GRIP: if two places have to agree about a fact, they read it from one
+//  place instead of each working it out.
+function decideWeather() {
+    if (pendingWeather !== null) return pendingWeather;   // a weekend already fixed it
+    if (isChampionship) return nextChampionshipWeather(); // pre-rolled with the calendar
+    // The checkbox is read here rather than passed in: it used to be a local
+    // const inside startQualifying and startGame, and moving the decision out
+    // of those functions left it out of scope. A single source for the toggle
+    // as well as for the answer.
+    const box = document.getElementById('wet-race-checkbox');
+    return (box && box.checked) ? true : (Math.random() < 0.20);
+}
+function commitWeather() {
+    pendingWeather = decideWeather();
+    return pendingWeather;
+}
+// What the session you are about to start will be. Reading `isRaining` here is
+// the bug; reading the committed decision is the fix.
+function upcomingWeather() {
+    return pendingWeather !== null ? pendingWeather
+         : (typeof isRaining !== 'undefined' && isRaining);
+}
+
 function chooseTyres(title, subtitle, laps, done) {
+    // Before the screen is drawn, not after it is answered.
+    commitWeather();
     if (!twoPlayerEnabled()) {
         showTyreChoice(title, subtitle, laps, done, 1);
         return;
@@ -1608,6 +1644,22 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
 
     tyreTitle.innerText = title;
     tyreSubtitle.innerText = subtitle;
+
+    // THE WEATHER, IN A SIZE YOU CANNOT WALK PAST. It was already on the menu
+    // as a small icon, and that was not enough - picking slicks for a wet race
+    // is a 17% mistake with no way back, and it happened several times. It goes
+    // here rather than anywhere else because this is the screen where the
+    // decision is actually made.
+    const tw = document.getElementById('tyre-weather');
+    if (tw) {
+        const wet = upcomingWeather();
+        tw.className = 'tw ' + (wet ? 'tw-wet' : 'tw-dry');
+        tw.innerHTML = '<span class="tw-icon">' + (wet ? '🌧️' : '☀️') + '</span>' +
+            '<span class="tw-word">' + (wet ? 'WET' : 'DRY') + '</span>' +
+            '<span class="tw-note">' + (wet
+                ? 'treaded rubber, or you will be seconds a lap slower'
+                : 'slicks — rain tyres will destroy themselves') + '</span>';
+    }
     // In the rain the treaded compounds lead, in the dry the slicks do. Nothing
     // is hidden either way - a slick in the wet is a legitimate gamble and a
     // wet tyre in the dry is a legitimate mistake - but the list should not
@@ -1823,8 +1875,11 @@ function showGpPreview(trackType) {
 
     document.getElementById('gp-title').innerText =
         `Round ${round}/${total} — ${TRACK_LABELS[trackType] || trackType}`;
-    document.getElementById('gp-weather').innerHTML = (wet
-        ? '<span style="color:#64b5f6;">Wet 🌧️</span>' : 'Dry ☀️') +
+    // Bigger than it was. The small version was walked past often enough to
+    // cost races, and this is the screen you look at before every round.
+    document.getElementById('gp-weather').innerHTML =
+        '<span class="gp-wx ' + (wet ? 'gp-wx-wet' : 'gp-wx-dry') + '">' +
+        (wet ? 'WET 🌧️' : 'DRY ☀️') + '</span>' +
         // The seed sits with the round because this is the screen you look at
         // every race: whatever else you forget, the name of the season you are
         // in is in front of you, and it is what makes running it again possible.
@@ -2643,18 +2698,13 @@ function startGame(forceTrackType = null) {
     
     document.getElementById('dnf-timer').style.visibility = 'hidden';
     
-    const forceWetRace = document.getElementById('wet-race-checkbox').checked;
     // If a qualifying session has just run, the weekend's weather was decided
     // there and the race has to inherit it - you cannot qualify in the wet and
     // then race in the dry. Otherwise: championship uses the pre-rolled season
-    // weather, a single race uses the toggle or a 20% chance.
-    if (pendingWeather !== null) {
-        isRaining = pendingWeather;
-    } else if (isChampionship) {
-        isRaining = nextChampionshipWeather();
-    } else {
-        isRaining = forceWetRace ? true : (Math.random() < 0.20);
-    }
+    // weather, a single race uses the toggle or a 20% chance. All of that is
+    // decideWeather's job now, and it has already been asked once before the
+    // tyre screen, so this line only reads the answer back.
+    isRaining = commitWeather();
 
     // UI for weather.
     // A normal flex child of the HUD, not an absolutely positioned overlay:
@@ -4791,6 +4841,20 @@ function updateHUD() {
         if (isChampionship) {
             championshipState.currentTrackIndex++;
             champRecapSection.style.display = 'block';
+            // currentTrackIndex has just been advanced, so it is now the number
+            // of rounds COMPLETED - which is exactly the round you have just
+            // driven. When it reaches the end of the calendar there is nothing
+            // left to be current about, so the table says so.
+            const done = championshipState.currentTrackIndex;
+            const total = championshipState.tracks.length;
+            const recapTitle = document.getElementById('champ-recap-title');
+            if (recapTitle) {
+                recapTitle.innerHTML = done >= total
+                    ? 'Final Standings <span class="recap-round">after all ' +
+                      total + ' rounds</span>'
+                    : 'Current Standings <span class="recap-round">after round ' +
+                      done + ' of ' + total + '</span>';
+            }
             champRecapBody.innerHTML = '';
             
             // Sort by current points
@@ -5377,12 +5441,19 @@ populateSeasonLengths();
 // Two clicks - repeat, then change the tyre - is the whole workflow the
 // comparison needs.
 (function wireSeedBox() {
+    const el = () => document.getElementById('season-seed');
     const again = document.getElementById('seed-again');
-    if (!again) return;
-    again.addEventListener('click', () => {
-        const el = document.getElementById('season-seed');
-        const s = lastSeed();
-        if (el && s) { el.value = s; el.focus(); }
+    if (again) again.addEventListener('click', () => {
+        const box = el(), s = lastSeed();
+        if (box && s) { box.value = s; box.focus(); }
+    });
+    // And its opposite: roll a new one and show it, rather than leaving the box
+    // empty and finding out what you got afterwards. Same size and shape as the
+    // repeat button - they are two halves of one control.
+    const roll = document.getElementById('seed-random');
+    if (roll) roll.addEventListener('click', () => {
+        const box = el();
+        if (box) { box.value = makeSeedText(); box.focus(); }
     });
 })();
 

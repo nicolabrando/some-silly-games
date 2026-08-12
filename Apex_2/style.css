@@ -1447,14 +1447,38 @@ button.chassis-opt:hover {
 .ex-rec-tyre { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
                margin-left: 6px; vertical-align: baseline;
                box-shadow: 0 0 0 1px rgba(0,0,0,0.45); }
+/* which round the standings are as of - quieter than the heading it follows */
+.recap-round { font-size: 15px; font-weight: 400; opacity: 0.6; margin-left: 8px; }
+
+/* The weather on the tyre screen. Deliberately loud: this is the one piece of
+   information that decides whether the choice below it is right or wrong. */
+.tw { display: flex; align-items: center; gap: 14px; margin: 0 0 18px;
+      padding: 14px 18px; border-radius: 10px; border: 2px solid;
+      background: rgba(255, 255, 255, 0.04); }
+.tw-icon { font-size: 34px; line-height: 1; }
+.tw-word { font-size: 30px; font-weight: 800; letter-spacing: 3px; }
+.tw-note { font-size: 12px; opacity: 0.72; line-height: 1.4; flex: 1 1 auto; }
+.tw-dry { border-color: #ffb300; color: #ffd54f; }
+.tw-dry .tw-note { color: #ffe9a8; }
+.tw-wet { border-color: #2196f3; color: #64b5f6;
+          background: rgba(33, 150, 243, 0.12); }
+.tw-wet .tw-note { color: #bbdefb; }
+
 /* the season seed: a name you can type back in to run the same calendar */
 .seed-row { display: flex; gap: 6px; align-items: stretch; }
 .seed-row > input { flex: 1 1 auto; min-width: 0; }
+/* Both buttons, one rule: they are a pair and must not drift apart in size. */
 .seed-row > button { flex: 0 0 auto; width: 38px; margin: 0; padding: 0;
                      font-size: 16px; line-height: 1; background: #37474f; color: #cfd8dc; }
 .seed-hint { font-size: 10px; opacity: 0.5; margin-top: 5px; line-height: 1.45; }
 .gp-seed { font-size: 11px; opacity: 0.55; margin-left: 10px;
            font-variant-numeric: tabular-nums; }
+/* the weather on the round preview - large enough not to be walked past */
+.gp-wx { font-size: 22px; font-weight: 800; letter-spacing: 2px;
+         padding: 3px 12px; border-radius: 7px; border: 2px solid; }
+.gp-wx-dry { color: #ffd54f; border-color: #ffb300; }
+.gp-wx-wet { color: #64b5f6; border-color: #2196f3;
+             background: rgba(33, 150, 243, 0.14); }
 .ex-rec-foot { font-size: 10px; opacity: 0.5; margin-top: 6px; line-height: 1.5; }
 .ex-rec-gap { font-size: 11px; opacity: 0.62; margin-top: 7px; line-height: 1.5; }
 /* what a lap on each compound is worth, here */
