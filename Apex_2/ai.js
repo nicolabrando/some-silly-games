@@ -63,6 +63,8 @@
 // -----------------------------------------------------------------------------
 const AI_PROFILES = {
     easy: {
+        // how hard this level leans on the throttle to rotate a slow corner
+        provoke: 0.00,
         cornerFactor: 0.72,     // fraction of the attainable cornering speed
         straightFactor: 0.68,   // fraction of top speed on the straights
         brakeConfidence: 0.80,  // lower => brakes earlier
@@ -86,6 +88,8 @@ const AI_PROFILES = {
         attackGain: 1.00
     },
     medium: {
+        // how hard this level leans on the throttle to rotate a slow corner
+        provoke: 0.25,
         cornerFactor: 0.826,    // 0.95 x 0.869, fitted to land 24% off impossible
         straightFactor: 0.834,  // 0.96 x 0.869
         brakeConfidence: 0.86,
@@ -106,6 +110,8 @@ const AI_PROFILES = {
         attackGain: 1.00
     },
     hard: {
+        // how hard this level leans on the throttle to rotate a slow corner
+        provoke: 0.45,
         cornerFactor: 0.950,    // 1.08 x 0.880, fitted to land 12% off impossible
         straightFactor: 0.880,
         brakeConfidence: 1.02,
@@ -126,6 +132,8 @@ const AI_PROFILES = {
         attackGain: 0.55
     },
     impossible: {
+        // how hard this level leans on the throttle to rotate a slow corner
+        provoke: 0.65,
         // 1.16 is the measured optimum: swept solo across every layout, lap
         // time bottoms out here and starts rising again past ~1.25 as the car
         // begins to scrub instead of turn.
@@ -158,6 +166,8 @@ const AI_PROFILES = {
     // came from exactly that - not from beating the leaders, but from passing
     // the ones the ladder had already slowed down.
     alien: {
+        // how hard this level leans on the throttle to rotate a slow corner
+        provoke: 0.65,
         cornerFactor: 1.14,
         straightFactor: 1.0,
         brakeConfidence: 1.12,
@@ -283,6 +293,16 @@ const AI_DRIVER_STYLES = {
 // (aiSteerOf / aiTopOf / aiGripOf below). An AI reading the base numbers while
 // sitting in a different chassis is the worst of both worlds - it would brake
 // for corners its car could take flat, and aim at a top speed it does not have.
+// Above this the corner is quick enough that rotating the car is just scrub:
+// powerOversteer is (demand - 1.45)/2.2 and demand falls with speed, so past
+// about 200 px/s there is nothing to provoke anyway.
+const AI_PROVOKE_SPEED = 190;
+// How far out on the road the car may be and still be provoked. 0.70 was the
+// first guess and it switched the whole thing off: the racing line HUGS the
+// edges, so in a corner `edge` sits well above that and the condition was
+// never true. 0.88 is just inside where the AI already starts scrubbing speed
+// for running wide (0.90), so the two agree about what "in trouble" means.
+const AI_PROVOKE_EDGE = 0.88;
 const AI_MAX_STEER = Math.PI * 0.7;
 const AI_TOP_SPEED = 355;      // enginePower / baseFriction
 const AI_BASE_GRIP = 1200;
@@ -742,6 +762,82 @@ class AI {
         }
         // else: coast
 
+        // ================================================================
+        //  5b. PROVOKING THE CAR
+        // ================================================================
+        //  Everything above is a speed profile: work out how fast the corner
+        //  can be taken, then hold that speed. It is a good way to be quick and
+        //  it is not how a person drives - a driver rotating a slow corner
+        //  keeps the power on THROUGH it and lets the tail come round.
+        //
+        //  The AI never did, and it showed. powerOversteer needs thr > 0 and
+        //  lock on at the same time; in a slow corner the AI sits in its dead
+        //  band with the throttle shut. Measured over four laps: the AI carries
+        //  0.12 to 0.19 of oversteer in the slow stuff and leaves ZERO skid
+        //  marks on every circuit in the game, where a person carries 0.68 and
+        //  leaves dozens. It is also why the drift compound measured badly in
+        //  AI hands for weeks - the tyre's whole point is a mechanism the AI
+        //  was not using.
+        //
+        //  So: in a slow corner, at the corner speed, with lock on, feed the
+        //  throttle back in. Only ever ADDS throttle - Math.max - so it can
+        //  never slow a car that was already accelerating.
+        const prov = this.p.provoke || 0;
+        if (prov > 0 && this.steerDir !== 0 && !car.inputs.down &&
+            speed > 25 && speed < AI_PROVOKE_SPEED) {
+            // Only once it has finished braking and is at the corner speed.
+            // Provoking on the way in would just carry too much speed to the
+            // apex, which is understeer, not rotation.
+            const settled = speed > vTarget * 0.88 && speed < vTarget * 1.05;
+            // And not when the tyre is already saturated: gripUse is last
+            // frame's lateral demand against the clamp, so this is the car
+            // telling the driver it has nothing left. Feeding it more there is
+            // how you spin rather than how you rotate.
+            const room = (car.gripUse || 0) < 0.80;
+            // And only from a position it can afford to lose a little. `edge`
+            // is how close the car already is to the limit of the road; a
+            // driver running wide is gathering the car up, not throwing it in
+            // further. Without this, Kart at provoke 0.50 spent 14% of the lap
+            // on the grass and cut most of a corner - which the stopwatch
+            // reported as a 24% improvement, because a lap you did not drive
+            // is always quick.
+            const safe = edge < AI_PROVOKE_EDGE;
+            if (settled && room && safe) {
+                // HOW MUCH THROTTLE, and the first version had this backwards.
+                //
+                // The tail only starts to move once `demand` clears 1.45, and
+                // demand is enginePower x thr / speed - so the throttle needed
+                // RISES with speed. The first attempt tapered it the other way,
+                // `prov * (1 - speed/190)`, which fed least where most was
+                // needed: at 150 px/s no setting below 0.74 produces any
+                // oversteer at all, and the whole sweep from 0.35 to 1.10 came
+                // back identical to two decimal places because none of it ever
+                // crossed the threshold.
+                //
+                // So the parameter is expressed against the threshold itself.
+                // provoke 0 sits exactly on it and nothing happens; provoke 1
+                // is flat out. What it means is "how far past the point where
+                // the car starts to rotate", which is what a driver is choosing.
+                const P = (car.enginePower || 296) * (car.condition || 1);
+                const need = Math.min(1, 1.45 * Math.max(70, speed) / Math.max(1, P));
+                const want = Math.min(1, need + prov * (1 - need));
+                // The EFFECTIVE throttle, and READ BEFORE `up` is forced on.
+                // Two bugs lived on these three lines. First, reading the
+                // `throttle` field alone says 0 on a frame the car is flat out,
+                // because the AI leaves it undefined and car.js falls back to
+                // the boolean - writing 0.3 over that is a brake pedal, and
+                // oversteer FELL from 0.152 to 0.004 at Thunder. Then, fixing
+                // that by reading `up`, the read happened AFTER this block had
+                // already set `up = true`, so it always came back 1 and the
+                // whole provoke parameter did nothing: a sweep from 0.15 to
+                // 1.10 returned identical lap times to two decimal places.
+                const had = car.inputs.throttle !== undefined ? car.inputs.throttle
+                                                             : (car.inputs.up ? 1 : 0);
+                car.inputs.up = true;
+                car.inputs.throttle = Math.max(had, want);
+            }
+        }
+
         // Never let a car sit still (or start reversing) on the racing line:
         // below ~18 px/s "down" would engage reverse instead of the brakes.
         if (speed < 18) {
@@ -1094,6 +1190,12 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
         p.defend *= s.defend;
         p.wetSkill = s.wet;
         p.cleanAir = s.cleanAir;
+        // Who leans on the throttle to turn the car. The same two traits that
+        // decide who reaches for the drift compound: living on the edge, and
+        // quick hands to catch what that starts. Senna and Verstappen rotate
+        // everything; Prost and Clark drive it round.
+        p.provoke *= Math.max(0.25, Math.min(1.8,
+            1 + (s.err - 0.7) * 0.30 + (1 - s.steerTau) * 0.45));
         if (driverName === 'Lewis Hamilton') p.lookBase += 14;   // reads the track furthest ahead
     }
 

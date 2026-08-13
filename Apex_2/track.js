@@ -321,8 +321,20 @@ class SegmentedTrack {
     // 70, verge 75) stopped cars 7px in from the edge of the tarmac, and Crown
     // 2px in; both had done so since they were drawn. The floor keeps the
     // barrier just outside the road, wherever it is.
+    // The floor is +9 rather than +2 because a kerb has to fit UNDER it. A
+    // kerb is drawn outward from the edge of the road and must end inside the
+    // wall - paint it past the wall and on a tight arc it covers the barrier,
+    // which is how Thunder and Comb came to look as though their inner
+    // barriers were missing.
+    //
+    // Two pixels of verge cannot carry a kerb, so four circuits had none:
+    // Peanut, Comb, Crown, Harbour. Raising the floor gives every circuit
+    // enough room for one, and it is a floor rather than seventeen separate
+    // edits because the requirement is the same everywhere. Most circuits are
+    // untouched or gain a pixel; the four tight ones gain five to seven, which
+    // is run-off they always should have had.
     wallRadius() {
-        return Math.max(this.grassWidth - 12, this.trackWidth + 2);
+        return Math.max(this.grassWidth - 12, this.trackWidth + 18);
     }
 
     // How far outside the stopping line the armco is painted: one car radius,
@@ -448,7 +460,38 @@ class SegmentedTrack {
                 // NOTE the test is on the point at R, never on the offset one:
                 // that is what keeps the painted curve tied to the physics.
                 if (this.getClosestPoint(wx, wy).dist < R - 0.75) { flush(); continue; }
-                const ox = wx + p.nx * side * out, oy = wy + p.ny * side * out;
+                // THE OFFSET IS ONLY AS BIG AS THERE IS ROOM FOR. Pushing the
+                // paint 12px clear of the wall assumes there is 12px of grass
+                // out there, and where a circuit doubles back on itself there
+                // is not: "away from this road" is "onto the next one". At
+                // Comb and Thunder - the only two of the seventeen where it
+                // happens - the inner barrier crossed the kerb of the stretch
+                // alongside, so the tricolour ran across a corner instead of
+                // round the edge of it.
+                //
+                // Where the room is short the barrier hugs the boundary
+                // instead, which is the invariant that matters anyway: the
+                // paint stands for the wall, so it may sit closer to it but
+                // must never sit on a piece of road.
+                // The test is "could a car be here", not getSurface. getSurface
+                // reports 'kerb' out past the wall on every circuit in the game
+                // - the kerb width is capped against barrierRadius rather than
+                // wallRadius - so asking it produces the opposite answer: it
+                // calls the whole boundary kerb and drags the paint back onto
+                // the road it was trying to leave. Tried, measured, wrong: the
+                // intrusions went from 21 to 39 at Comb.
+                //
+                // Distance to the nearest centre line is the honest question.
+                // Inside R of any stretch is somewhere a car can reach; outside
+                // it, whatever the paint is drawn over, nobody can drive there.
+                let o = out;
+                while (o > 0) {
+                    const tx = wx + p.nx * side * o, ty = wy + p.ny * side * o;
+                    if (this.getClosestPoint(tx, ty).dist >= R - 0.75) break;
+                    o -= 2;
+                }
+                if (o < 0) o = 0;
+                const ox = wx + p.nx * side * o, oy = wy + p.ny * side * o;
                 // A jump means the offset has come back somewhere else - round
                 // the far side of a hairpin, most often. Joining the two would
                 // draw a wall straight across the road, which is worse than
@@ -584,21 +627,49 @@ class SegmentedTrack {
     //    were painted on top of one another. Nobody noticed while there was no
     //    barrier drawn there. Four pixels of clearance, and the cap is applied
     //    here rather than in draw() so that getSurface() agrees with the paint.
+    // A kerb has to fit between the edge of the road and the WALL. The third
+    // cap used to be written against barrierRadius - where the paint goes -
+    // which is twelve pixels further out, so on every circuit in the game the
+    // kerb ran 6 to 8px past the wall, onto ground no car can reach.
+    //
+    // Harmless on a wide sweeper, and not harmless at all on the inside of a
+    // tight one. There, "outside the road" points at the arc's own centre, so
+    // the boundary is a small circle and the barrier offset shrinks it further:
+    // at Thunder's inner hairpin the wall sits 17.75px from the arc centre and
+    // the painted barrier collapses to a 5.75px dot, while the kerb - drawn
+    // outward from the road edge - covers everything out to 25.75. The
+    // tricolour was still being drawn; the kerb was on top of it. That is the
+    // "missing inner barrier" at Thunder and Comb.
+    //
+    // Where the verge is too thin for any kerb at all the answer is none: four
+    // circuits have 3px or less between road and wall, and a kerb there was
+    // always a fiction painted over the thing it was hiding.
     kerbWidthFor(seg) {
         if (!seg || seg.type !== 'arc') return 0;
-        return Math.min(this.kerbWidth,
-                        Math.max(0, seg.r - this.trackWidth - 2),
-                        Math.max(0, this.barrierRadius() - this.trackWidth - 4));
+        const w = Math.min(this.kerbWidth,
+                           Math.max(0, seg.r - this.trackWidth - 2),
+                           Math.max(0, this.wallRadius() - this.trackWidth - 2));
+        return w < 3 ? 0 : w;
+    }
+
+    // The widest the kerb ever gets on this circuit, measured from the centre
+    // line. Used by the tests that check it stays inside the wall.
+    kerbOuterRadius() {
+        let w = 0;
+        for (const s of this.segments) w = Math.max(w, this.kerbWidthFor(s));
+        return w ? this.trackWidth + w : 0;
     }
 
     getSurface(x, y) {
         const distData = this.getClosestPoint(x, y);
         if (distData.dist <= this.trackWidth) return 'track';
 
-        // Kerbs exist only on the *inside* of a corner: the nearest piece of
-        // geometry has to be an arc, and the point has to be on the side
-        // towards the arc's centre. The outside of a corner and the whole of
-        // every straight are grass.
+        // Kerbs exist only on the INSIDE of a corner, which is where they are
+        // painted: the nearest piece of geometry has to be an arc, and the
+        // point has to be on the side towards that arc's centre. The outside of
+        // a corner and the whole of every straight are grass. The surface and
+        // the paint say the same thing, which is the only way either of them
+        // means anything.
         const seg = distData.seg;
         if (distData.segType === 'arc' && seg &&
             distData.dist <= this.trackWidth + this.kerbWidthFor(seg) &&
@@ -1245,14 +1316,25 @@ class SegmentedTrack {
         ctx.strokeStyle = '#2e7d32';
         ctx.stroke();
 
-        // 2. Kerbs on the inside of every corner (red / white).
-        //    Drawn as a thin band hugging the inner edge of the asphalt, so
-        //    nothing appears on the outside of the corner or on the straights.
+        // 2. Kerbs, on the INSIDE of every corner, wide enough to cover the
+        //    grass out to the barrier.
+        //
+        //    Inside of arcs only: a straight has no kerb, and neither does the
+        //    outside of a corner. That is how they were drawn originally and it
+        //    is what Nicola wants back - a band round the whole lap, tried
+        //    first, was the wrong reading of "bigger".
+        //
+        //    What HAS changed is the width. They used to be capped against
+        //    barrierRadius, which let them run past the wall and, on a tight
+        //    arc, straight over the tricolour barrier; then capped against the
+        //    wall, which on four circuits left no room at all. The verge is 18px
+        //    everywhere now, so the band is 16 and reaches from the edge of the
+        //    asphalt to just short of the armco on every circuit in the game.
         for (const seg of this.segments) {
             if (seg.type !== 'arc') continue;
 
             const kw = this.kerbWidthFor(seg);
-            if (kw < 5) continue;               // hairpin with no inside run-off
+            if (kw < 3) continue;               // no verge to put one on
             const rk = seg.r - this.trackWidth - kw / 2;
             if (rk <= 2) continue;
 

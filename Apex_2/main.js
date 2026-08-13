@@ -131,8 +131,67 @@ function seatChassis(index) {
 // a new weekend asks again and qualifying-then-race does not.
 let weekendChassisAsked = false;
 
+// Is anybody actually driving? Spectator mode has no player, so there is
+// nothing to equip and nobody to ask.
+//
+// `humanSeats()` reads the menu, which is right for a one-off race and wrong
+// for a championship: a season's field is settled when it is created, not by
+// whatever the dropdowns say now. qualifyingEnabled() already made that
+// distinction; this is the same question asked once, in one place, so the two
+// screens that ask the player something cannot disagree about whether there is
+// a player.
+// ---------------------------------------------------------------------------
+//  WHO THE HUD IS ABOUT
+// ---------------------------------------------------------------------------
+//  Yours, if you are driving. If you are spectating there is no car of yours,
+//  and the panel used to fall back to two lines about the leader - which lap
+//  and who. Now a spectator can pick a car out of the timing tower and get the
+//  whole panel for it: lap, speed, live lap time, tyre and wear.
+//
+//  It falls back to the leader when nothing is picked, and also when the car
+//  you picked is out of the race - a HUD frozen on a wreck is worse than one
+//  that moves on.
+let spectateCar = null;
+
+function raceLeader() {
+    let best = null, bestLap = -1, bestProg = -1;
+    for (const c of cars) {
+        const lap = Math.min(c.lap, TOTAL_LAPS);
+        const prog = c.trackProgress || 0;
+        if (lap > bestLap || (lap === bestLap && prog > bestProg)) {
+            best = c; bestLap = lap; bestProg = prog;
+        }
+    }
+    return best;
+}
+
+function hudCar() {
+    if (twoPlayer) return null;              // each seat has its own card
+    if (playerCar) return playerCar;
+    if (spectateCar && cars.indexOf(spectateCar) >= 0 &&
+        !(spectateCar.isBroken && !spectateCar.finished)) return spectateCar;
+    return raceLeader();
+}
+
+// Clicking a row in the tower follows that car. Only while spectating: with a
+// car of your own the panel is about you and nothing else.
+function spectateFollow(idx) {
+    if (playerCar || twoPlayer) return;
+    const c = cars[idx];
+    if (!c) return;
+    spectateCar = (spectateCar === c) ? null : c;   // click again to let go
+}
+
+function anyoneDriving() {
+    if (isChampionship) {
+        return !!(championshipState &&
+                  championshipState.participants.some(p => p.isPlayer));
+    }
+    return humanSeats().length > 0;
+}
+
 function chooseChassisForWeekend(done) {
-    if (weekendChassisAsked || !humanSeats().length) { done(); return; }
+    if (weekendChassisAsked || !anyoneDriving()) { done(); return; }
     const seats = humanSeats();
     const ask = (n) => {
         if (n >= seats.length) { weekendChassisAsked = true; done(); return; }
@@ -1621,6 +1680,13 @@ function upcomingWeather() {
 function chooseTyres(title, subtitle, laps, done) {
     // Before the screen is drawn, not after it is answered.
     commitWeather();
+    // NOBODY TO ASK. In spectator mode the race still needs its weather decided
+    // - the AI has to know what it is driving on - but there is no player to
+    // put tyres on, and the screen came up anyway, over a race that had already
+    // started. chooseChassisForWeekend had this guard from the beginning and
+    // chooseTyres never got one; two sibling functions, one of them asking a
+    // question with no one in the room.
+    if (!anyoneDriving()) { done(); return; }
     if (!twoPlayerEnabled()) {
         showTyreChoice(title, subtitle, laps, done, 1);
         return;
@@ -4273,22 +4339,28 @@ function updateHUD() {
     }
 
     // Lap
-    if (playerCar && !twoPlayer) {
-        renderTyreIndicator(playerCar);
+    //
+    // The car this panel is ABOUT. Normally yours; when you are spectating it
+    // is whichever car you picked out of the timing tower, or the leader if
+    // you have not picked one. The whole block used to be gated on playerCar,
+    // so a spectator got two lines - leader's lap and name - and nothing else.
+    const hc = hudCar();
+    if (hc && !twoPlayer) {
+        renderTyreIndicator(hc);
         if (raceMode === 'practice') {
-            lapCounter.innerText = `Practice — lap ${playerCar.lap + 1}`;
+            lapCounter.innerText = `Practice — lap ${hc.lap + 1}`;
         } else if (raceMode === 'qualifying') {
-            lapCounter.innerText = playerCar.lap === 0
+            lapCounter.innerText = hc.lap === 0
                 ? 'Qualifying — warm-up lap'
-                : `Qualifying — flying lap ${playerCar.lap}/${QUALI_LAPS - 1}`;
+                : `Qualifying — flying lap ${hc.lap}/${QUALI_LAPS - 1}`;
         } else {
-            let currentLap = playerCar.lap + 1;
+            let currentLap = hc.lap + 1;
             if (currentLap > TOTAL_LAPS) currentLap = TOTAL_LAPS;
             lapCounter.innerText = `Lap: ${currentLap}/${TOTAL_LAPS}`;
         }
         
         // Speed
-        const speed = Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2);
+        const speed = Math.sqrt(hc.velocity.x**2 + hc.velocity.y**2);
         // Convert to arbitrary km/h (1 unit = ~0.5 km/h for nice numbers)
         speedometer.innerText = `${Math.floor(speed * 0.5)} km/h`;
 
@@ -4303,16 +4375,16 @@ function updateHUD() {
                 return (ms / 1000).toFixed(3);
             };
             const nowMs = typeof track.currentRaceTime === 'number' ? track.currentRaceTime : 0;
-            const current = playerCar.finished ? (playerCar.lastLapTime || 0) : Math.max(0, nowMs - playerCar.lapStartTime);
+            const current = hc.finished ? (hc.lastLapTime || 0) : Math.max(0, nowMs - hc.lapStartTime);
 
             // Green while we are up on our best, red once we have lost it.
             let colour = '#fff';
-            if (playerCar.bestLapTime) {
-                colour = current > playerCar.bestLapTime ? '#ff8a80' : '#69f0ae';
+            if (hc.bestLapTime) {
+                colour = current > hc.bestLapTime ? '#ff8a80' : '#69f0ae';
             }
 
-            const lastStr = playerCar.lastLapTime
-                ? `${fmt(playerCar.lastLapTime)}${playerCar.lastLapTime === playerCar.bestLapTime ? ' ★' : ''}`
+            const lastStr = hc.lastLapTime
+                ? `${fmt(hc.lastLapTime)}${hc.lastLapTime === hc.bestLapTime ? ' ★' : ''}`
                 : '--.---';
 
             // The live lap big, last and best beside it: the bar is one row,
@@ -4320,7 +4392,7 @@ function updateHUD() {
             lapTimerDiv.innerHTML =
                 `<span class="lt-cur" style="color:${colour};">${fmt(current)}</span>` +
                 `<span class="lt-sub">L ${lastStr}</span>` +
-                `<span class="lt-sub lt-best">B ${fmt(playerCar.bestLapTime)}</span>`;
+                `<span class="lt-sub lt-best">B ${fmt(hc.bestLapTime)}</span>`;
         }
     }
     
@@ -4437,8 +4509,17 @@ function updateHUD() {
             const chPip = `<span class="tt-ch" style="background:${ch.accent};" ` +
                 `title="${ch.label}">${ch.short}</span>`;
             // One cell per car, laid left to right along the top.
+            // Spectating: the row is a button that follows that car. It is
+            // an onclick attribute rather than a listener because the tower is
+            // rebuilt from innerHTML every frame - a listener attached here
+            // would be thrown away before it could ever fire.
+            const idx = cars.indexOf(c);
+            const spect = !playerCar && !twoPlayer;
             rows.push(
-                `<div class="tt-row${c.isPlayer ? ' me' : ''}" ` +
+                `<div class="tt-row${c.isPlayer ? ' me' : ''}` +
+                `${spect ? ' tt-click' : ''}${spectateCar === c ? ' tt-watch' : ''}" ` +
+                (spect ? `onclick="spectateFollow(${idx})" ` +
+                         `title="Follow ${c.driverName || c.color}" ` : '') +
                 `style="border-left-color:${c.color};">` +
                 `<div class="tt-top">` +
                 `<span class="tt-pos">${i + 1}</span>` +
@@ -4463,16 +4544,17 @@ function updateHUD() {
         } else {
             posCounter.innerText = `Pos: ${pos}/${cars.length}`;
         }
-    } else if (!playerCar && (raceMode === 'race' || raceMode === 'championship')) {
-        // Spectating: there is no car of yours to report, so the HUD follows
-        // the race instead - which lap the leader is on, and who it is.
-        // Two-player is NOT this case - both drivers have their own card.
-        const ldr = sortedCars[0];
-        if (ldr) {
-            renderTyreIndicator(ldr);
-            const lap = Math.min(ldr.lap + (ldr.finished ? 0 : 1), TOTAL_LAPS);
-            lapCounter.innerText = `Lap: ${lap}/${TOTAL_LAPS}`;
-            posCounter.innerText = `Leader: ${driverCode(ldr)}`;
+    } else if (!playerCar && !twoPlayer &&
+               (raceMode === 'race' || raceMode === 'championship')) {
+        // Spectating. The lap, speed, tyre and live lap time were all filled in
+        // above for whichever car is being followed; only the position line is
+        // different, because "Pos" for a spectator has to say WHOSE position.
+        const hc2 = hudCar();
+        if (hc2) {
+            const p2 = sortedCars.indexOf(hc2) + 1;
+            posCounter.innerText =
+                (spectateCar === hc2 ? '▶ ' : 'Leader: ') +
+                `${driverCode(hc2)}  P${p2}/${cars.length}`;
         }
     }
 
