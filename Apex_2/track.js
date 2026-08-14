@@ -99,6 +99,60 @@ class SegmentedTrack {
         // more, but the hook is here because a circuit that needs one needs it
         // in the physics, not only in the paint.
         this.dividers = [];
+        // True on circuits flipped by mirrorVertically(). The ghost store
+        // reads it: a lap recorded one way round cannot drive the other.
+        this.mirrored = false;
+    }
+
+    // =====================================================================
+    //  MIRRORING A CIRCUIT
+    //  Thirteen of the seventeen circuits turned right on balance and three
+    //  turned left (Crossover, a figure of eight, is the one honest neutral:
+    //  272 degrees each way). Nicola plays with the arrow keys, and after
+    //  enough seasons the imbalance stops being a statistic and becomes a
+    //  sore right ring finger: 5545 degrees of right sweep per calendar
+    //  against 2545 of left.
+    //
+    //  The fix is a TOP-TO-BOTTOM mirror of five right-handed circuits,
+    //  chosen among the ones whose silhouette barely changes when flipped.
+    //  A vertical mirror is the one transformation that is safe here by
+    //  construction: y negates, so every right-hander becomes a left-hander
+    //  - which is the point - while the x direction of travel is untouched,
+    //  and checkLapCross() counts a lap by crossing startX in +x. Reversing
+    //  the segment order instead (same layout, driven backwards) would have
+    //  reversed that crossing and silently stopped the lap counter; it was
+    //  considered and rejected for exactly that reason.
+    //
+    //  Everything else is derived - waypoints, racing line, walls, stands,
+    //  kerbs, grid slots, the spina, the bridge - so nothing else is
+    //  touched. Under reflection an arc's angles negate and its winding
+    //  flips; a line keeps its point order. Lap times are unchanged (the
+    //  mirrored circuit is congruent), so the record book and personal
+    //  bests stay honest; the ghost does not (its trace is coordinates),
+    //  which is what the `mirrored` flag on the ghost key is for.
+    // =====================================================================
+    mirrorVertically() {
+        for (const s of this.segments) {
+            if (s.type === 'line') {
+                s.y1 = -s.y1;
+                s.y2 = -s.y2;
+            } else {
+                s.cy = -s.cy;
+                const a = s.start;
+                s.start = -a;
+                s.end = -s.end;
+                s.ccw = !s.ccw;
+            }
+        }
+        for (const d of (this.dividers || [])) {
+            d.y1 = -d.y1;
+            d.y2 = -d.y2;
+        }
+        this.startY = -this.startY;
+        this.mirrored = true;
+        // centreInArena(), called from generateWaypoints, translates the
+        // negated coordinates back into the arena; nothing here needs to
+        // know where the arena is.
     }
 
     // =====================================================================
@@ -483,154 +537,320 @@ class SegmentedTrack {
     // The barrier as geometry: the set of points at exactly R from the nearest
     // stretch of centre line, each pushed `out` further along its own outward
     // normal. `out` moves the curve without changing which points are ON it.
+    //
+    // HOW THE CURVE IS FOUND, second edition. The first edition offset dense
+    // samples of the centre line, kept the ones no other stretch was closer
+    // to, and re-joined the survivors by proximity. Every defect Nicola
+    // pointed at in the painted barriers came out of that joining step,
+    // because proximity is not order: wherever two stretches of road run
+    // close - a comb tooth at Pettine, a spina strip at Kart, the wedges of
+    // Crossover's crossing, the island corners of Quadrato and Serpent -
+    // survivors from BOTH sides of the gap fall inside the join tolerance,
+    // and the run zigzags between them: panels braided down the teeth,
+    // crossed at Kart's funnels, hooked at the wedge tips. The 12px paint
+    // offset made it worse, because "is there room" was asked as "is the
+    // pushed point still off the road" - which stays true after crossing the
+    // WHOLE strip, so the two lines were painted past each other, each
+    // standing on the other side's wall.
+    //
+    // So the curve is now TRACED, not stitched: marching squares over the
+    // distance field phi(x, y) = "distance to the nearest centre line",
+    // sampled on a 2px lattice. Following the contour phi = R cell by cell
+    // yields closed, ordered, non-crossing loops by construction - there is
+    // no joining heuristic left to get wrong. The field is the same
+    // getClosestPoint the physics asks, and every traced vertex is snapped
+    // back onto the exact level set along its own gradient, so the paint
+    // still cannot disagree with the wall.
+    //
+    // Three rules ride on top of the trace, and all three are visible on
+    // Pettine:
+    // - the outward push stops at the RIDGE of the field, the line where
+    //   "away from my road" starts to mean "towards the next one". In an 8px
+    //   strip each side now stops in the middle instead of overshooting onto
+    //   the opposite wall;
+    // - where a wall would be painted within a stroke's width of paint that
+    //   is already there, it is dropped: one strip of ground no car can
+    //   reach gets ONE armco, the way a real circuit builds one wall between
+    //   two roads, not two fences drawn through each other. A wall dropped
+    //   this way is at most ~19px from the line a stopped car touches -
+    //   less than a car's length - and the kept line IS the wall it stands
+    //   for, just seen from the other side;
+    // - debris shorter than a panel (the collapsed dot inside Thunder's
+    //   hairpin, slivers at the crossing) is not worth a stroke and is
+    //   culled.
+
+    // phi on a 2px lattice covering every segment plus the widest paint.
+    // Computed once per track and freed after the trace. Exact in a band
+    // around the wall's own contour, estimated from an 8px pre-pass
+    // everywhere else: phi is 1-Lipschitz, so a coarse value more than a
+    // cell-diagonal clear of R settles which side of the contour every fine
+    // node under it is on, and that is all a far node is ever asked.
+    _phiGrid() {
+        if (this._phi) return this._phi;
+        const STEP = 2, COARSE = 8, SAFE = 14;
+        let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+        for (const g of this.segments) {
+            if (g.type === 'line') {
+                bx0 = Math.min(bx0, g.x1, g.x2); bx1 = Math.max(bx1, g.x1, g.x2);
+                by0 = Math.min(by0, g.y1, g.y2); by1 = Math.max(by1, g.y1, g.y2);
+            } else {
+                bx0 = Math.min(bx0, g.cx - g.r); bx1 = Math.max(bx1, g.cx + g.r);
+                by0 = Math.min(by0, g.cy - g.r); by1 = Math.max(by1, g.cy + g.r);
+            }
+        }
+        const pad = this.barrierRadius() + 26;
+        const x0 = Math.floor(bx0 - pad), y0 = Math.floor(by0 - pad);
+        const w = Math.ceil((bx1 + pad - x0) / STEP) + 2;
+        const h = Math.ceil((by1 + pad - y0) / STEP) + 2;
+        const R = this.wallRadius();
+        const cw = Math.ceil((w * STEP) / COARSE) + 2;
+        const ch = Math.ceil((h * STEP) / COARSE) + 2;
+        const coarse = new Float32Array(cw * ch);
+        for (let j = 0; j < ch; j++)
+            for (let i = 0; i < cw; i++)
+                coarse[j * cw + i] =
+                    this.getClosestPoint(x0 + i * COARSE, y0 + j * COARSE).dist;
+        const phi = new Float32Array(w * h);
+        for (let j = 0; j < h; j++) {
+            const cj = Math.min(ch - 2, (j * STEP / COARSE) | 0);
+            const fy = (j * STEP - cj * COARSE) / COARSE;
+            for (let i = 0; i < w; i++) {
+                const ci = Math.min(cw - 2, (i * STEP / COARSE) | 0);
+                const fx = (i * STEP - ci * COARSE) / COARSE;
+                const c00 = coarse[cj * cw + ci], c10 = coarse[cj * cw + ci + 1];
+                const c01 = coarse[(cj + 1) * cw + ci];
+                const c11 = coarse[(cj + 1) * cw + ci + 1];
+                const est = c00 + (c10 - c00) * fx + (c01 - c00) * fy
+                          + (c11 - c10 - c01 + c00) * fx * fy;
+                phi[j * w + i] = Math.abs(est - R) > SAFE
+                    ? est
+                    : this.getClosestPoint(x0 + i * STEP, y0 + j * STEP).dist;
+            }
+        }
+        this._phi = { x0: x0, y0: y0, step: STEP, w: w, h: h, phi: phi };
+        return this._phi;
+    }
+
+    // Marching squares on phi at iso-value R. Returns ordered loops of
+    // [x, y, ...]; the padding in _phiGrid keeps the contour clear of the
+    // lattice border, so every loop closes (first point repeated last).
+    _traceWall(R) {
+        const G = this._phiGrid();
+        const w = G.w, h = G.h, phi = G.phi, S = G.step;
+
+        // One id per lattice edge - horizontal even, vertical odd - and one
+        // interpolated crossing per edge, shared by both cells that border
+        // it, so neighbouring cells agree on the point to the last bit.
+        const ptOf = new Map();
+        const keyPt = (key) => {
+            let p = ptOf.get(key);
+            if (p) return p;
+            const e = key >> 1, j = (e / w) | 0, i = e % w;
+            const a = phi[j * w + i];
+            const b = (key & 1) ? phi[(j + 1) * w + i] : phi[j * w + i + 1];
+            const t = (R - a) / (b - a);
+            p = (key & 1)
+                ? [G.x0 + i * S, G.y0 + (j + t) * S]
+                : [G.x0 + (i + t) * S, G.y0 + j * S];
+            ptOf.set(key, p);
+            return p;
+        };
+        const HE = (i, j) => (j * w + i) * 2, VE = (i, j) => (j * w + i) * 2 + 1;
+
+        const segA = [], segB = [], touch = new Map();
+        const join = (ka, kb) => {
+            const id = segA.length;
+            segA.push(ka); segB.push(kb);
+            let la = touch.get(ka); if (!la) touch.set(ka, la = []); la.push(id);
+            let lb = touch.get(kb); if (!lb) touch.set(kb, lb = []); lb.push(id);
+        };
+        for (let j = 0; j < h - 1; j++) {
+            for (let i = 0; i < w - 1; i++) {
+                const v0 = phi[j * w + i], v1 = phi[j * w + i + 1];
+                const v3 = phi[(j + 1) * w + i], v2 = phi[(j + 1) * w + i + 1];
+                let m = 0;
+                if (v0 < R) m |= 1; if (v1 < R) m |= 2;
+                if (v2 < R) m |= 4; if (v3 < R) m |= 8;
+                if (m === 0 || m === 15) continue;
+                const T = HE(i, j), B = HE(i, j + 1), L = VE(i, j), Rt = VE(i + 1, j);
+                switch (m) {
+                    case 1: case 14: join(T, L); break;
+                    case 2: case 13: join(T, Rt); break;
+                    case 3: case 12: join(L, Rt); break;
+                    case 4: case 11: join(Rt, B); break;
+                    case 6: case 9:  join(T, B); break;
+                    case 7: case 8:  join(L, B); break;
+                    // The two saddles: which corners the contour separates is
+                    // decided by the cell's centre, not by convention, so two
+                    // strips passing a hair apart cannot be fused into an X.
+                    case 5:
+                        if ((v0 + v1 + v2 + v3) / 4 < R) { join(T, Rt); join(B, L); }
+                        else { join(T, L); join(Rt, B); }
+                        break;
+                    case 10:
+                        if ((v0 + v1 + v2 + v3) / 4 < R) { join(T, L); join(Rt, B); }
+                        else { join(T, Rt); join(B, L); }
+                        break;
+                }
+            }
+        }
+
+        const used = new Uint8Array(segA.length);
+        const loops = [];
+        for (let s = 0; s < segA.length; s++) {
+            if (used[s]) continue;
+            used[s] = 1;
+            const keys = [segA[s], segB[s]];
+            let cur = segB[s];
+            for (;;) {
+                const cand = touch.get(cur);
+                let nxt = -1;
+                for (let q = 0; q < cand.length; q++)
+                    if (!used[cand[q]]) { nxt = cand[q]; break; }
+                if (nxt < 0) break;
+                used[nxt] = 1;
+                cur = segA[nxt] === cur ? segB[nxt] : segA[nxt];
+                keys.push(cur);
+            }
+            if (keys.length < 4) continue;
+            const pts = [];
+            for (const k of keys) { const p = keyPt(k); pts.push(p[0], p[1]); }
+            loops.push(pts);
+        }
+        return loops;
+    }
+
     getWalls(R, out) {
         if (R === undefined) R = this.wallRadius();
         out = out || 0;
         this._wallCache = this._wallCache || {};
         const key = R + ':' + out;
         if (this._wallCache[key]) return this._wallCache[key];
-        const step = 2;
+        // The geometry of a circuit never changes after its constructor, so
+        // the traced wall is shared across instances of the same circuit:
+        // reopening the record book, or restarting a race, does not pay for
+        // the trace again.
+        const store = SegmentedTrack._wallStore || (SegmentedTrack._wallStore = {});
+        const skey = this.constructor.name + ':' + key;
+        if (store[skey]) return (this._wallCache[key] = store[skey]);
+        if (!this.segments.length) return (this._wallCache[key] = []);
+
+        const loops = this._traceWall(R);
+        this._phi = null;   // a megabyte per circuit, and the trace is done
+
+        // Snap each traced vertex onto the exact level set, then push it
+        // outward - at most `out`, never past the ridge. dist rises 1:1 with
+        // the step for as long as the step really moves away from this road;
+        // the moment it rises slower, the nearest road is about to change
+        // and the paint is about to cross onto somebody else's strip: stop
+        // on the last honest step. (And never onto reachable ground,
+        // R - 0.75, same rule as ever.)
+        const pushed = [];
+        for (const pts of loops) {
+            const q = [];
+            for (let i = 0; i < pts.length; i += 2) {
+                const cp = this.getClosestPoint(pts[i], pts[i + 1]);
+                if (cp.dist < 1e-6) continue;
+                const nx = (pts[i] - cp.projX) / cp.dist;
+                const ny = (pts[i + 1] - cp.projY) / cp.dist;
+                const bx = cp.projX + nx * R, by = cp.projY + ny * R;
+                let t = 0;
+                for (let s = 1; s <= out; s++) {
+                    const d = this.getClosestPoint(bx + nx * s, by + ny * s).dist;
+                    if (d < R - 0.75 || d < R + s - 0.9) break;
+                    t = s;
+                }
+                q.push(bx + nx * t, by + ny * t);
+            }
+            if (q.length >= 4) pushed.push(q);
+        }
+
+        // One wall per strip. A vertex that lands within a stroke's width of
+        // paint already kept is dropped and its run breaks there. "Already
+        // kept" excludes the last 24px OF ARC of the very line being drawn -
+        // always close and always innocent: the line itself and, around a
+        // tight cap, its far lip. Arc length and not a count of vertices,
+        // because the inward push crowds the trace's vertices together round
+        // a tight cap - a corner of Quadrato's island lands hundreds of them
+        // in a couple of pixels - and a count that stands for "24px back"
+        // on a straight stands for half a pixel there, which broke the cap
+        // off the wall it belonged to.
+        const CELL = 4, RAD = 7.5, BEHIND = 24;
+        const polyLen = (r) => {
+            let L = 0;
+            for (let i = 2; i < r.length; i += 2)
+                L += Math.hypot(r[i] - r[i - 2], r[i + 1] - r[i - 1]);
+            return L;
+        };
+        const bins = new Map();
         const runs = [];
-
-        // Dense samples of the centre line with its normal - plus, at every
-        // joint, a FAN of directions across the turn. Offsetting perpendicular
-        // to the road leaves a wedge unpainted on the outside of a corner,
-        // where the boundary is really a cap around the joint itself; without
-        // the fan, Thunder was left with a 15px hole in its wall.
-        const pts = [];
-        const fan = (x, y, a0, a1) => {
-            let d = a1 - a0;
-            while (d > Math.PI) d -= Math.PI * 2;
-            while (d < -Math.PI) d += Math.PI * 2;
-            const n = Math.ceil(Math.abs(d) * R / step);
-            for (let i = 1; i < n; i++) {
-                const a = a0 + d * i / n;
-                pts.push({ x: x, y: y, nx: Math.cos(a), ny: Math.sin(a) });
-            }
-        };
-        const normalAt = (g, which) => {
-            if (g.type === 'line') {
-                const dx = g.x2 - g.x1, dy = g.y2 - g.y1, L = Math.hypot(dx, dy);
-                return { nx: -dy / L, ny: dx / L, x: which === 'end' ? g.x2 : g.x1,
-                         y: which === 'end' ? g.y2 : g.y1 };
-            }
-            const a = which === 'end' ? g.end : g.start;
-            return { nx: Math.cos(a), ny: Math.sin(a),
-                     x: g.cx + g.r * Math.cos(a), y: g.cy + g.r * Math.sin(a) };
-        };
-
-        for (const g of this.segments) {
-            if (g.type === 'line') {
-                const dx = g.x2 - g.x1, dy = g.y2 - g.y1;
-                const L = Math.hypot(dx, dy), m = Math.max(2, Math.ceil(L / step));
-                for (let i = 0; i < m; i++) {
-                    pts.push({ x: g.x1 + dx * i / m, y: g.y1 + dy * i / m,
-                               nx: -dy / L, ny: dx / L });
-                }
-            } else {
-                const sweep = this._arcSweep(g);
-                const L = Math.abs(sweep) * g.r, m = Math.max(3, Math.ceil(L / step));
-                for (let i = 0; i < m; i++) {
-                    const a = g.start + sweep * i / m;
-                    pts.push({ x: g.cx + g.r * Math.cos(a), y: g.cy + g.r * Math.sin(a),
-                               nx: Math.cos(a), ny: Math.sin(a) });
-                }
-            }
-        }
-
-        // fill the wedges at the joints
-        for (let i = 0; i < this.segments.length; i++) {
-            const a = normalAt(this.segments[i], 'end');
-            const b = normalAt(this.segments[(i + 1) % this.segments.length], 'start');
-            fan(a.x, a.y, Math.atan2(a.ny, a.nx), Math.atan2(b.ny, b.nx));
-        }
-
-        // And a full circle around every segment END. getClosestPoint falls
-        // back to an arc's endpoints for anything outside its sweep, so the
-        // boundary can wrap right around a joint by more than the exterior
-        // angle - and where two stretches of road run close, it does. Walking
-        // the whole circle and keeping only what survives the boundary test
-        // catches those without having to reason about which case is which.
-        // Thunder had an 18px hole in its wall until this went in.
-        const ends = [];
-        for (const g of this.segments) {
-            if (g.type === 'line') ends.push({ x: g.x2, y: g.y2 });
-            else ends.push({ x: g.cx + g.r * Math.cos(g.end),
-                             y: g.cy + g.r * Math.sin(g.end) });
-        }
-        const ring = Math.max(24, Math.ceil(2 * Math.PI * R / step));
-        for (const e of ends) {
-            for (let i = 0; i < ring; i++) {
-                const a = (2 * Math.PI * i) / ring;
-                pts.push({ x: e.x, y: e.y, nx: Math.cos(a), ny: Math.sin(a), ring: true });
-            }
-        }
-
-        for (const side of [-1, 1]) {
+        for (let li = 0; li < pushed.length; li++) {
+            const q = pushed[li], n = q.length / 2;
+            // arc length along the pushed loop, per vertex, for the window
+            const arc = new Float64Array(n);
+            for (let i = 1; i < n; i++)
+                arc[i] = arc[i - 1] +
+                    Math.hypot(q[i * 2] - q[i * 2 - 2], q[i * 2 + 1] - q[i * 2 - 1]);
+            const total = arc[n - 1];
             let cur = [];
-            const flush = () => { if (cur.length >= 4) runs.push(cur); cur = []; };
-            for (let i = 0; i <= pts.length; i++) {
-                const p = pts[i % pts.length];
-                // the rings are walked once, not once per side
-                if (p.ring && side < 0) { flush(); continue; }
-                const wx = p.x + p.nx * side * R, wy = p.y + p.ny * side * R;
-                // Is this point really on the boundary? It is exactly R from
-                // the centre line it came from; if anything else is closer,
-                // the car can still drive here and there is no wall.
-                // NOTE the test is on the point at R, never on the offset one:
-                // that is what keeps the painted curve tied to the physics.
-                if (this.getClosestPoint(wx, wy).dist < R - 0.75) { flush(); continue; }
-                // THE OFFSET IS ONLY AS BIG AS THERE IS ROOM FOR. Pushing the
-                // paint 12px clear of the wall assumes there is 12px of grass
-                // out there, and where a circuit doubles back on itself there
-                // is not: "away from this road" is "onto the next one". At
-                // Comb and Thunder - the only two of the seventeen where it
-                // happens - the inner barrier crossed the kerb of the stretch
-                // alongside, so the tricolour ran across a corner instead of
-                // round the edge of it.
-                //
-                // Where the room is short the barrier hugs the boundary
-                // instead, which is the invariant that matters anyway: the
-                // paint stands for the wall, so it may sit closer to it but
-                // must never sit on a piece of road.
-                // The test is "could a car be here", not getSurface. getSurface
-                // reports 'kerb' out past the wall on every circuit in the game
-                // - the kerb width is capped against barrierRadius rather than
-                // wallRadius - so asking it produces the opposite answer: it
-                // calls the whole boundary kerb and drags the paint back onto
-                // the road it was trying to leave. Tried, measured, wrong: the
-                // intrusions went from 21 to 39 at Comb.
-                //
-                // Distance to the nearest centre line is the honest question.
-                // Inside R of any stretch is somewhere a car can reach; outside
-                // it, whatever the paint is drawn over, nobody can drive there.
-                let o = out;
-                while (o > 0) {
-                    const tx = wx + p.nx * side * o, ty = wy + p.ny * side * o;
-                    if (this.getClosestPoint(tx, ty).dist >= R - 0.75) break;
-                    o -= 2;
+            const flush = () => {
+                // shorter than a panel is debris, not barrier
+                if (cur.length >= 4 && polyLen(cur) >= 14) runs.push(cur);
+                cur = [];
+            };
+            for (let i = 0; i < n; i++) {
+                const x = q[i * 2], y = q[i * 2 + 1];
+                const cx = Math.round(x / CELL), cy = Math.round(y / CELL);
+                let clash = false;
+                for (let a = cx - 2; a <= cx + 2 && !clash; a++) {
+                    for (let b = cy - 2; b <= cy + 2 && !clash; b++) {
+                        const list = bins.get(a * 100003 + b);
+                        if (!list) continue;
+                        for (let e = 0; e < list.length; e += 4) {
+                            if (list[e] === li) {
+                                const d = Math.abs(list[e + 1] - arc[i]);
+                                if (Math.min(d, total - d) <= BEHIND) continue;
+                            }
+                            const dx = list[e + 2] - x, dy = list[e + 3] - y;
+                            if (dx * dx + dy * dy <= RAD * RAD) { clash = true; break; }
+                        }
+                    }
                 }
-                if (o < 0) o = 0;
-                const ox = wx + p.nx * side * o, oy = wy + p.ny * side * o;
-                // A jump means the offset has come back somewhere else - round
-                // the far side of a hairpin, most often. Joining the two would
-                // draw a wall straight across the road, which is worse than
-                // drawing none: break the run instead.
-                if (cur.length >= 2) {
-                    const px = cur[cur.length - 2], py = cur[cur.length - 1];
-                    if (Math.hypot(ox - px, oy - py) > (step + out * 0.35) * 4) flush();
-                }
-                cur.push(ox, oy);
+                if (clash) { flush(); continue; }
+                cur.push(x, y);
+                const bk = cx * 100003 + cy;
+                let list = bins.get(bk);
+                if (!list) bins.set(bk, list = []);
+                list.push(li, arc[i], x, y);
             }
             flush();
         }
-        // Thin them out. The samples are 2px apart, which is what it takes to
-        // FIND the boundary, but drawing every one of them means about 7000
-        // path operations per frame on a circuit like Lombard - enough to
-        // matter, and enough to exhaust a recording context in the tests.
+
+        // Thin them out. The trace lands a vertex roughly every 2px, which
+        // is what it takes to FIND the wall, not what it takes to draw it:
         // Douglas-Peucker at half a pixel keeps the shape and throws away
-        // nine tenths of the points.
-        this._wallCache[key] = runs.map(r => simplifyRun(r, 0.5));
+        // nine tenths of the points. One care it did not need before: DP
+        // hangs a run on its two endpoints, and a loop that survived intact
+        // has only one - its seam - so anchoring there flattens the whole
+        // loop to a dot (Zipper's island vanished into one). A closed run is
+        // split at its farthest point from the seam and the halves stitched
+        // back together.
+        const simp = (r) => {
+            const n = r.length / 2;
+            const closed = n > 3 &&
+                Math.hypot(r[0] - r[r.length - 2], r[1] - r[r.length - 1]) < 0.01;
+            if (!closed) return simplifyRun(r, 0.5);
+            let far = 1, best = -1;
+            for (let i = 1; i < n - 1; i++) {
+                const dx = r[i * 2] - r[0], dy = r[i * 2 + 1] - r[1];
+                const d = dx * dx + dy * dy;
+                if (d > best) { best = d; far = i; }
+            }
+            const a = simplifyRun(r.slice(0, far * 2 + 2), 0.5);
+            const b = simplifyRun(r.slice(far * 2), 0.5);
+            return a.concat(b.slice(2));
+        };
+        store[skey] = this._wallCache[key] = runs.map(simp);
         return this._wallCache[key];
     }
 
@@ -770,6 +990,12 @@ class SegmentedTrack {
                            Math.max(0, seg.r - this.trackWidth - 2),
                            Math.max(0, this.wallRadius() - this.trackWidth - 2));
         return w < 3 ? 0 : w;
+        // There was briefly a third rule here: bands with less than ~30px of
+        // painted arc were dropped as litter, which took the kerb off eleven
+        // shallow bends - four at Harbour among them. Nicola asked for them
+        // back: the kerb goes on EVERY inside curve, short or not. Against
+        // the repaired walls they read as the mini-kerbs they are, and the
+        // rule went; kerbs are exactly as they were in Apex 2.
     }
 
     // The widest the kerb ever gets on this circuit, measured from the centre
@@ -1555,6 +1781,7 @@ class OvalTrack extends SegmentedTrack {
             { type: 'arc', cx: 506, cy: 360, r: 180, start: 1.5708, end: -1.5708, ccw: false }
         ];
         
+        this.mirrorVertically();   // see mirrorVertically(): the left-hand half of the calendar
         this.waypoints = this.generateWaypoints();
     }
 }
@@ -1614,6 +1841,7 @@ class PeanutTrack extends SegmentedTrack {
             { type: 'arc', cx: 745, cy: 925.1, r: 456.38, start: -1.12096, end: -2.02064, ccw: true }
         ];
         
+        this.mirrorVertically();   // see mirrorVertically(): the left-hand half of the calendar
         this.waypoints = this.generateWaypoints();
     }
 }
@@ -1722,6 +1950,7 @@ class CircleTrack extends SegmentedTrack {
         this.startX = 745;
         this.startY = 133.45;
         
+        this.mirrorVertically();   // see mirrorVertically(): the left-hand half of the calendar
         this.waypoints = this.generateWaypoints();
     }
 }
@@ -1804,6 +2033,7 @@ class QuadratoTrack extends SegmentedTrack {
         this.startX = 672.4;
         this.startY = 123.5;
         
+        this.mirrorVertically();   // see mirrorVertically(): the left-hand half of the calendar
         this.waypoints = this.generateWaypoints();
     }
 }
@@ -2095,6 +2325,7 @@ class KartTrack extends SegmentedTrack {
         this.startX = 891.08;
         this.startY = 132;
 
+        this.mirrorVertically();   // see mirrorVertically(): the left-hand half of the calendar
         this.waypoints = this.generateWaypoints();
     }
 }

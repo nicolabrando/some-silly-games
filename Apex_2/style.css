@@ -29,6 +29,24 @@ canvas {
     object-fit: contain;
 }
 
+/* Shrink-to-fit on BOTH axes, like the intrinsic size did before the
+   backing store started following devicePixelRatio: never wider than the
+   world (--world-w, set from main.js), the window, or the height the
+   window can carry at 16:9. An explicit width alone held only the width
+   axis, and short windows pushed the HUD off the bottom.
+
+   On #gameCanvas ONLY. The first version put the width on the bare
+   `canvas` selector above, which sizes every canvas in the game: the
+   Grand Prix preview map blew up to the whole window and carried its
+   buttons off the bottom of the screen (Nicola hit it resuming a
+   season), and the pause minimap and record-book cards were headed the
+   same way. Those size themselves off their width/height attributes and
+   only ever needed the max rules; the main canvas is the one whose
+   backing store outgrew its box. */
+#gameCanvas {
+    width: min(var(--world-w, 1360px), 100vw, calc(100vh * 16 / 9));
+}
+
 #ui-layer {
     position: absolute;
     top: 0;

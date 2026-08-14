@@ -1,6 +1,110 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// ---------------------------------------------------------------------------
+//  RESOLUTION
+//  The canvas used to keep a fixed 1360x765 backing store whatever the
+//  screen: on a phone or any retina display the CSS scaled it up and every
+//  line went soft. The backing store now follows devicePixelRatio (capped at
+//  2 - beyond that the cost quadruples for sharpness nobody can see) and one
+//  setTransform maps world units onto it, so every draw call in the game
+//  keeps thinking in 1360x765 and nothing else changes.
+//
+//  The ELEMENT, on the other hand, must NOT follow: its CSS box derived from
+//  the width/height attributes, so doubling the backing store would double
+//  the layout size on a big screen. The box is therefore sized by the
+//  stylesheet - width: min(world, viewport width, viewport height by the
+//  aspect ratio) - which shrinks to fit on BOTH axes, the way the intrinsic
+//  size used to. The world number is fed in from here as --world-w rather
+//  than typed into the CSS, because no canvas limit is written by hand.
+//
+//  The first version pinned style.width to the world size and left the
+//  shrinking to max-width/max-height. That holds only while the WIDTH is
+//  the tight axis: in a window short of height - Nicola's retina Firefox,
+//  with tabs, URL bar and bookmarks eating a strip - a replaced element
+//  with an explicit width does not give it back, the canvas kept its 1360px
+//  and the bottom of the HUD slid off the screen. min() asks the question
+//  on both axes at once, which is what the old intrinsic behaviour did.
+// ---------------------------------------------------------------------------
+let RES = 1;
+function applyResolution() {
+    const dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
+    if (RES === dpr && canvas.width === Math.round(WORLD_W * dpr)) return;
+    RES = dpr;
+    document.documentElement.style.setProperty('--world-w', WORLD_W + 'px');
+    canvas.width = Math.round(WORLD_W * RES);
+    canvas.height = Math.round(WORLD_H * RES);
+    ctx.setTransform(RES, 0, 0, RES, 0, 0);
+}
+applyResolution();
+if (typeof window !== 'undefined' && window.addEventListener) {
+    // zoom or a move to another monitor changes dpr; the store follows
+    window.addEventListener('resize', applyResolution);
+}
+
+// ---------------------------------------------------------------------------
+//  THE STATIC TRACK LAYER
+//  Grass ring, kerbs, asphalt, start line, barriers, stands, puddles: none
+//  of it moves during a session, and it was all being re-stroked from paths
+//  every frame - hundreds of barrier panels and kerb arcs, sixty times a
+//  second, which on a phone was most of the frame. It is now drawn ONCE into
+//  an offscreen canvas at full resolution and blitted per frame.
+//
+//  What stays out of the layer is what moves: skid marks, particles, rain,
+//  the cars, the cranes, the bridge deck (painted OVER the cars that drive
+//  under it) - and the STANDS, which look static but are not: the crowd's
+//  shirts shimmer on a 260ms clock, and baking them into the circuit would
+//  freeze the crowd for the whole race. They get a LAYER OF THEIR OWN,
+//  transparent, redrawn only when the shimmer clock actually ticks - four
+//  times a second instead of sixty - and blitted between the background and
+//  the circuit, which is exactly where the old code painted them. Measured
+//  before this split: the crowd alone was 0.7-2.3ms per frame, most of what
+//  the bake had just saved.
+//
+//  The frame is therefore three cheap operations: background fill, stands
+//  blit, circuit blit. The circuit layer rebuilds when its inputs change -
+//  a new track instance (every session makes one), a new resolution, or a
+//  reassigned puddle list (weather is rolled after the track is made, so
+//  the reference is the honest signal); the stands layer additionally on
+//  the shimmer tick.
+// ---------------------------------------------------------------------------
+let trackLayer = null;
+let standsLayer = null;
+function drawTrackFrame(g) {
+    if (!trackLayer || trackLayer.track !== track ||
+        trackLayer.res !== RES || trackLayer.puddles !== track.puddles) {
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(WORLD_W * RES);
+        cv.height = Math.round(WORLD_H * RES);
+        const t = cv.getContext('2d');
+        t.setTransform(RES, 0, 0, RES, 0, 0);
+        const st = track._stands;      // the crowd is the other layer's job
+        track._stands = [];
+        track.draw(t);                 // transparent outside its own strokes
+        track._stands = st;
+        trackLayer = { canvas: cv, track: track, res: RES, puddles: track.puddles };
+    }
+    const tick = Math.floor(Date.now() / 260);   // drawStands' own clock
+    if (!standsLayer || standsLayer.track !== track || standsLayer.res !== RES) {
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(WORLD_W * RES);
+        cv.height = Math.round(WORLD_H * RES);
+        standsLayer = { canvas: cv, track: track, res: RES, tick: null };
+    }
+    if (standsLayer.tick !== tick) {
+        const t = standsLayer.canvas.getContext('2d');
+        t.setTransform(1, 0, 0, 1, 0, 0);
+        t.clearRect(0, 0, standsLayer.canvas.width, standsLayer.canvas.height);
+        t.setTransform(RES, 0, 0, RES, 0, 0);
+        track.drawStands(t);
+        standsLayer.tick = tick;
+    }
+    g.fillStyle = '#388E3C';
+    g.fillRect(0, 0, WORLD_W, WORLD_H);
+    g.drawImage(standsLayer.canvas, 0, 0, WORLD_W, WORLD_H);
+    g.drawImage(trackLayer.canvas, 0, 0, WORLD_W, WORLD_H);
+}
+
 // The world, the HUD column and the racing box all live in track.js: they are
 // facts about where a circuit is allowed to be, and track.js is what puts the
 // circuits there (`centreInArena`). This file reads them.
@@ -578,6 +682,12 @@ champBtn.addEventListener('click', () => {
     pendingWeather = null; pendingWetLevel = null;
     startChampionship();
 });
+
+// The saved season, if there is one. hidden (the attribute) rather than
+// style.display, because setMenuMode writes display on everything tagged
+// data-modes and would un-hide it on every visit to the tab.
+const champResumeBtn = document.getElementById('champ-resume-btn');
+if (champResumeBtn) champResumeBtn.addEventListener('click', resumeChampionship);
 
 practiceBtn.addEventListener('click', () => {
     isChampionship = false;
@@ -2397,6 +2507,214 @@ const EX_STORE_KEY = 'apex2.explore.records';
 //  So the game keeps your own best lap per circuit per compound, and shows the
 //  gap. No special mode to run, no laps to set aside: play, and after a few
 //  sessions the comparison is simply there.
+// ---------------------------------------------------------------------------
+//  THE SEASON SURVIVES A RELOAD
+//  Personal bests, the record book and the season seed were already in
+//  localStorage; the championship itself was not - close the tab at round
+//  seven and the season was gone. championshipState is plain data end to end
+//  (the seeded rng is consumed at creation, never stored), so the whole
+//  thing serialises as it stands.
+//
+//  Saved at every checkpoint that changes it: when a round is entered (which
+//  covers creation and the chassis picks, both of which funnel through
+//  nextChampionshipRound) and when a race's points have been applied. The
+//  save is cleared when the final standings are shown - a finished season is
+//  a memory, not a resumable state - and simply overwritten when a new one
+//  starts.
+//
+//  Resuming re-arms the three globals a season needs (isChampionship,
+//  raceMode, the per-seat chassis) and walks in through the same door as
+//  every other round: nextChampionshipRound, so the GP preview, skip flow
+//  and standings all behave as if the tab had never closed. A save from a
+//  season abandoned mid-picking has seats without cars; those are asked
+//  again, with the same screen the season used the first time.
+// ---------------------------------------------------------------------------
+const CHAMP_STORE_KEY = 'apex2.championship';
+function saveChampionship() {
+    if (!championshipState) return;
+    try {
+        window.localStorage.setItem(CHAMP_STORE_KEY,
+            JSON.stringify({ v: 1, state: championshipState }));
+    } catch (e) { /* storage full or blocked: the season just is not saved */ }
+    refreshChampResume();
+}
+function loadChampionshipSave() {
+    try {
+        const raw = window.localStorage.getItem(CHAMP_STORE_KEY);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        const s = data && data.v === 1 && data.state;
+        // enough shape-checking to refuse a save this build cannot drive
+        if (!s || !Array.isArray(s.tracks) || !Array.isArray(s.participants) ||
+            typeof s.currentTrackIndex !== 'number' || !s.points ||
+            s.currentTrackIndex >= s.tracks.length) return null;
+        return s;
+    } catch (e) { return null; }
+}
+function clearChampionshipSave() {
+    try { window.localStorage.removeItem(CHAMP_STORE_KEY); } catch (e) { }
+    refreshChampResume();
+}
+function refreshChampResume() {
+    const btn = document.getElementById('champ-resume-btn');
+    if (!btn) return;
+    const s = loadChampionshipSave();
+    btn.hidden = !s;
+    if (s) btn.textContent = 'Resume Championship — Round ' +
+        (s.currentTrackIndex + 1) + ' of ' + s.tracks.length;
+}
+function resumeChampionship() {
+    const s = loadChampionshipSave();
+    if (!s) { refreshChampResume(); return; }
+    championshipState = s;
+    isChampionship = true;
+    raceMode = 'championship';
+    pendingGrid = null;
+    pendingWeather = null; pendingWetLevel = null;
+    skipMode = false; skipPlayer = null; skipPlayers = [];
+    const ch = championshipState.chassis || (championshipState.chassis = {});
+    if (ch[1]) playerChassis = ch[1];
+    if (ch[2]) playerChassis2 = ch[2];
+    menu.style.display = 'none';
+    const unpicked = championshipState.participants
+        .some(p => p.isPlayer && !p.chassis);
+    if (unpicked) chooseChassisForSeason(() => nextChampionshipRound());
+    else nextChampionshipRound();
+}
+
+// ---------------------------------------------------------------------------
+//  THE GHOST
+//  Practice used to be a lap with nobody to measure against until the tower
+//  updated; now your best lap DRIVES. In practice and qualifying the
+//  player's laps are recorded - position and heading each frame, stamped
+//  with lap time - and the best one is replayed as a pale silhouette that
+//  sets off every time you cross the line. Beat it and the new lap takes
+//  its place on the spot: the ghost you chase is always the fastest you
+//  have ever been on this circuit, in this weather.
+//
+//  Recorded by TIME, not by frame: a trace replayed frame-by-frame would
+//  run faster on a fast machine. Samples carry their lap-clock timestamp
+//  and are resampled to a fixed 30Hz grid on save (rounded to a tenth of a
+//  pixel), so a 25-second lap costs about 20KB and playback interpolates
+//  on the same clock the lap timer uses. Dry and wet are separate ghosts -
+//  a wet best is a different sport - and the race never shows one: the
+//  ghost is a training partner, not an eleventh car.
+// ---------------------------------------------------------------------------
+const GHOST_STORE_KEY = 'apex2.ghost.laps';
+const GHOST_HZ = 30;
+let ghostStore = null;    // lazy: { "track:dry": {v, ms, hz, data:[x,y,a...]} }
+let ghostS = null;        // per-session state
+// The orientation is part of the key: a trace recorded before a circuit
+// was mirrored would replay through the mirrored world like a wrong-way
+// driver. Times transfer (the circuit is congruent); coordinates do not.
+function ghostKeyFor(trackKey, wet) { return trackKey + ':' + (wet ? 'wet' : 'dry'); }
+function ghostTrackKey(t) { return trackKeyOf(t) + (t && t.mirrored ? '~acw' : ''); }
+function loadGhostStore() {
+    if (ghostStore) return ghostStore;
+    ghostStore = {};
+    try {
+        const raw = window.localStorage.getItem(GHOST_STORE_KEY);
+        if (raw) ghostStore = JSON.parse(raw) || {};
+    } catch (e) { }
+    return ghostStore;
+}
+function ghostFor(trackKey, wet) {
+    const g = loadGhostStore()[ghostKeyFor(trackKey, wet)];
+    return (g && g.v === 1 && Array.isArray(g.data) && g.data.length >= 6 &&
+            g.hz > 0 && g.ms > 1000) ? g : null;
+}
+// timestamped [t,x,y,a, ...] -> fixed-rate [x,y,a, ...] on the 30Hz grid
+function ghostResample(samples, ms) {
+    const n = Math.max(2, Math.round(ms / 1000 * GHOST_HZ) + 1);
+    const out = new Array(n * 3);
+    let j = 0;
+    const S = samples.length;
+    for (let k = 0; k < n; k++) {
+        const t = Math.min(ms, k * 1000 / GHOST_HZ);
+        while (j + 4 < S - 4 && samples[j + 4] <= t) j += 4;
+        const t0 = samples[j], t1 = samples[j + 4] !== undefined ? samples[j + 4] : t0 + 1;
+        const f = Math.max(0, Math.min(1, (t - t0) / Math.max(1e-6, t1 - t0)));
+        const x = samples[j + 1] + (samples[j + 5] - samples[j + 1]) * f;
+        const y = samples[j + 2] + (samples[j + 6] - samples[j + 2]) * f;
+        let a0 = samples[j + 3], da = samples[j + 7] - a0;
+        while (da > Math.PI) da -= 2 * Math.PI;
+        while (da < -Math.PI) da += 2 * Math.PI;
+        out[k * 3]     = Math.round((x) * 10) / 10;
+        out[k * 3 + 1] = Math.round((y) * 10) / 10;
+        out[k * 3 + 2] = Math.round((a0 + da * f) * 100) / 100;
+    }
+    return out;
+}
+function saveGhostLap(trackKey, wet, ms, samples) {
+    const store = loadGhostStore();
+    store[ghostKeyFor(trackKey, wet)] = { v: 1, ms: Math.round(ms), hz: GHOST_HZ,
+                                          data: ghostResample(samples, ms) };
+    try { window.localStorage.setItem(GHOST_STORE_KEY, JSON.stringify(store)); }
+    catch (e) { /* storage full: this lap is simply not kept */ }
+}
+function ghostTick() {
+    const on = gameState === 'playing' &&
+        (raceMode === 'practice' || raceMode === 'qualifying') &&
+        playerCar && track;
+    if (!on) { ghostS = null; return; }
+    if (!ghostS || ghostS.track !== track) {
+        ghostS = { track: track, wet: !!isRaining, lastLap: playerCar.lap, rec: null,
+                   best: ghostFor(ghostTrackKey(track), !!isRaining) };
+    }
+    if (playerCar.lap !== ghostS.lastLap) {
+        // the line was just crossed inside updatePhysics: the buffer holds
+        // the finished lap, playerCar.lastLapTime its official time
+        const r = ghostS.rec;
+        if (playerCar.lap === ghostS.lastLap + 1 && r && r.length >= 240 &&
+            r[0] < 120 && playerCar.lastLapTime && playerCar.lastLapTime > 3000 &&
+            (!ghostS.best || playerCar.lastLapTime < ghostS.best.ms)) {
+            saveGhostLap(ghostTrackKey(track), ghostS.wet, playerCar.lastLapTime, r);
+            ghostS.best = ghostFor(ghostTrackKey(track), ghostS.wet);
+        }
+        ghostS.rec = null;
+        ghostS.lastLap = playerCar.lap;
+    }
+    if (playerCar.isBroken) { ghostS.rec = null; return; }
+    const t = track.currentRaceTime - playerCar.lapStartTime;
+    if (t >= 0) {
+        if (!ghostS.rec) { if (t < 120) ghostS.rec = []; else return; }
+        ghostS.rec.push(t, playerCar.x, playerCar.y, playerCar.angle);
+    }
+}
+function drawGhostCar(g) {
+    if (!ghostS || !ghostS.best || !playerCar || playerCar.lap < 1) return;
+    const gb = ghostS.best;
+    const t = track.currentRaceTime - playerCar.lapStartTime;
+    const n = gb.data.length / 3;
+    if (!(t >= 0) || n < 2) return;
+    const tf = t / 1000 * gb.hz;
+    if (tf > n - 1) return;                    // its lap is done; yours is not
+    const k = Math.min(n - 2, Math.floor(tf)), f = Math.min(1, tf - k);
+    const i3 = k * 3, j3 = i3 + 3;
+    const x = gb.data[i3] + (gb.data[j3] - gb.data[i3]) * f;
+    const y = gb.data[i3 + 1] + (gb.data[j3 + 1] - gb.data[i3 + 1]) * f;
+    let da = gb.data[j3 + 2] - gb.data[i3 + 2];
+    while (da > Math.PI) da -= 2 * Math.PI;
+    while (da < -Math.PI) da += 2 * Math.PI;
+    const a = gb.data[i3 + 2] + da * f;
+    // A pale outline in the car's 24x14 box: unmistakably not a rival - no
+    // shadow, no tag, no collision, drawn under the real cars.
+    g.save();
+    g.translate(x, y);
+    g.rotate(a);
+    g.globalAlpha = 0.36;
+    g.fillStyle = '#eaf5ff';
+    g.beginPath(); g.roundRect(-12, -7, 24, 14, 4); g.fill();
+    g.fillStyle = '#8fb8d8';
+    g.fillRect(-12, -6, 4, 12);
+    g.fillRect(8, -5, 4, 10);
+    g.globalAlpha = 0.6;
+    g.lineWidth = 1.2;
+    g.strokeStyle = '#ffffff';
+    g.beginPath(); g.roundRect(-12, -7, 24, 14, 4); g.stroke();
+    g.restore();
+}
+
 const PB_STORE_KEY = 'apex2.player.bests';
 let playerBests = null;         // { trackKey: { tyreKey: { ms, when, wet } } }
 
@@ -5012,6 +5330,7 @@ function updateHUD() {
 
         if (isChampionship) {
             championshipState.currentTrackIndex++;
+            saveChampionship();      // points, results and the new round, all in
             champRecapSection.style.display = 'block';
             // currentTrackIndex has just been advanced, so it is now the number
             // of rounds COMPLETED - which is exactly the round you have just
@@ -5093,15 +5412,17 @@ function drawLights(ctx) {
 function drawRain(ctx) {
     if (!isRaining) return;
     ctx.fillStyle = 'rgba(100, 120, 150, 0.1)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
     
-    // Fast rain streaks
+    // Fast rain streaks. World units, not canvas.width: the backing store is
+    // RES times the world now, and streaks rolled across it would land off
+    // screen - it rains harder on retina, which is not a weather model.
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     for (let i = 0; i < 50; i++) {
-        const x = Math.random() * canvas.width;
-        const y = Math.random() * canvas.height;
+        const x = Math.random() * WORLD_W;
+        const y = Math.random() * WORLD_H;
         ctx.moveTo(x, y);
         ctx.lineTo(x - 5, y + 25);
     }
@@ -5111,7 +5432,7 @@ function drawRain(ctx) {
 function gameLoop(timestamp) {
     if (gameState === 'menu') {
         ctx.fillStyle = '#222';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, WORLD_W, WORLD_H);
         return;
     }
 
@@ -5351,10 +5672,7 @@ function gameLoop(timestamp) {
         // have not moved yet.
         updateHUD();
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#388E3C';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        track.draw(ctx);
+        drawTrackFrame(ctx);
         cars.forEach(car => car.draw(ctx));
         if (typeof track.drawBridge === 'function') track.drawBridge(ctx);
         drawCranes(ctx);
@@ -5436,16 +5754,14 @@ function gameLoop(timestamp) {
         }
 
         updatePhysics(dt);
+        ghostTick();
         
         // If spectator, we don't need to update a camera because it's a fixed-screen game
         
         updateHUD();
         
-        // Draw Track
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#388E3C';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        track.draw(ctx);
+        // Draw Track - the pre-rendered layer, one drawImage
+        drawTrackFrame(ctx);
         
         // --- Draw Skid Marks ---
         for (let i = globalSkidMarks.length - 1; i >= 0; i--) {
@@ -5469,6 +5785,9 @@ function gameLoop(timestamp) {
             ctx.restore();
         }
         
+        // The ghost first, under everything alive
+        drawGhostCar(ctx);
+
         // Draw Cars
         // Draw broken/finished cars first so active ones draw on top
         const renderSorted = [...cars].sort((a, b) => {
@@ -5551,12 +5870,19 @@ function gameLoop(timestamp) {
 
 // Initial draw for menu background
 ctx.fillStyle = '#222';
-ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.fillRect(0, 0, WORLD_W, WORLD_H);
 
 // Put the HUD stage over the canvas straight away, and again once the browser
 // has settled the layout - getBoundingClientRect is zero until it has.
 layoutStage();
 if (typeof setTimeout === 'function') setTimeout(layoutStage, 0);
+
+// From down here and not from the menu wiring: refreshChampResume reads
+// CHAMP_STORE_KEY, a const that lives mid-file - called any earlier it is in
+// the dead zone, the read throws, the catch answers "no save", and the
+// resume button plays dead with a season sitting right there in storage.
+// (Found exactly that way.)
+refreshChampResume();
 
 // How many rounds the season runs. Ten by default, which is what it always
 // was; the field is clamped rather than trusted, because a browser will hand
@@ -5891,12 +6217,14 @@ function nextChampionshipRound() {
         showChampionshipFinal();
         return;
     }
+    saveChampionship();   // covers season creation and the chassis picks too
     // Every round opens on the Grand Prix preview; the session starts (or the
     // whole round is skipped) from its buttons.
     showGpPreview(championshipState.tracks[championshipState.currentTrackIndex]);
 }
 
 function showChampionshipFinal() {
+    clearChampionshipSave();
     hud.style.display = 'none';
     hideSplitHud();
     showVscBanner(false);   // never leave it lying over a menu

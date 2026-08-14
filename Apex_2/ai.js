@@ -395,6 +395,12 @@ class AI {
         this.startCaution = 0;
         this.breakoutTimer = 0;
         this.breakoutSide = 1;
+        // defending (see updateTraffic): one committed move, held to the corner
+        this.coverActive = false;
+        this.coverLat = 0;
+        this.coverS = -1;       // lap distance of the corner being covered
+        this.coverGrace = 0;
+        this.coverLog = 0;
         this.raceStarted = false;
         this.reactionTimer = 0;
 
@@ -1076,16 +1082,91 @@ class AI {
             hasTarget = true;
         }
 
-        // ---- defending: cover the line against a car right behind ---------
+        // ---- defending: ONE move, made early, held to the corner ----------
         // Schumacher / Verstappen / Alonso make themselves very hard to pass;
-        // Prost and Lauda concede rather than risk the car. Never applied when
-        // we are being lapped (that is what the blue flag is for), and the
-        // movement is a single decisive cover, not weaving.
-        if (this.p.defend > 0.05 && !this.car.blueFlag && !hasTarget && attacker) {
-            const attLat = (attacker.x - here.cx) * here.nx + (attacker.y - here.cy) * here.ny;
-            const cover = latCar + (attLat - latCar) * this.p.defend;
-            desired = Math.max(-lim, Math.min(lim, cover)) - lineLat;
+        // Prost and Lauda concede rather than risk the car.
+        //
+        // The first version MIRRORED the attacker frame by frame - cover =
+        // our line plus defend times (his line minus ours) - which is
+        // weaving with extra steps, and it knew nothing about the circuit:
+        // it covered the middle of a straight and left open the inside of
+        // the next corner, which is the one place a pass actually happens.
+        //
+        // Now it is a commitment, the real one-move rule. When a same-lap
+        // car sits on our tail, the defender picks its spot ONCE - the
+        // inside of the next corner, found by walking the line ahead; on a
+        // long straight, the side the attacker is coming on - moves there,
+        // and holds that line. No re-crossing, no tracking the feints: if
+        // the attacker flickers out of the detection window because we
+        // moved, the line is held on a grace timer rather than snapped
+        // back, because snapping back would be the second move. The hold
+        // ends when the fight moves on: attacker alongside or ahead (that
+        // is racing, handled above), attacker gone, the covered corner
+        // passed (the move spent - the next corner is a new decision),
+        // blue flag, or the VSC. How much of the road the cover takes is
+        // p.defend, so Prost still leaves the door ajar where Schumacher
+        // parks the car in front of it.
+        this.coverLog = Math.max(0, this.coverLog - dt);
+        const vscHeld = (typeof vscPowerFactor !== 'undefined') && vscPowerFactor < 1;
+        const mayDefend = this.p.defend > 0.05 && !this.car.blueFlag && !vscHeld;
+        if (hasTarget || !mayDefend) {
+            // somebody ahead or alongside, a flag, or the VSC: not defending
+            this.coverActive = false;
+        } else if (attacker) {
+            this.coverGrace = 0;
+            if (this.coverActive && this.coverS >= 0) {
+                // the corner we covered is behind us: that move is spent
+                const gone = (here.s - this.coverS + line.length) % line.length;
+                if (gone > 40 && gone < line.length / 2) this.coverActive = false;
+            }
+            if (!this.coverActive) {
+                // find the inside of the next corner worth covering
+                let coverLat = null;
+                this.coverS = -1;
+                for (let k = 2; k <= 60; k++) {
+                    const nd = line.nodes[(i + k) % line.count];
+                    const gain = (nd.s - here.s + line.length) % line.length;
+                    if (gain > 300) break;
+                    if ((nd.radius || 1e6) < 420) {
+                        const a2 = line.nodes[(i + k + 4) % line.count];
+                        const sgn = Math.sign((a2.tx - nd.tx) * nd.nx +
+                                              (a2.ty - nd.ty) * nd.ny) || 0;
+                        if (sgn) {
+                            coverLat = sgn * (lim - 6);
+                            this.coverS = nd.s;
+                            break;
+                        }
+                    }
+                }
+                if (coverLat === null) {
+                    // open road: block the side he is coming on, once
+                    const attLat = (attacker.x - here.cx) * here.nx +
+                                   (attacker.y - here.cy) * here.ny;
+                    coverLat = Math.abs(attLat - latCar) > 6
+                        ? Math.sign(attLat - latCar) * (lim - 6)
+                        : (latCar >= 0 ? 1 : -1) * (lim - 6);
+                }
+                this.coverActive = true;
+                this.coverLat = latCar + (coverLat - latCar) * this.p.defend;
+                if (this.coverLog <= 0 && typeof RaceLog !== 'undefined' && RaceLog.event) {
+                    RaceLog.event('DEFEND', (car.driverName || car.color) +
+                        ' covers the line against ' +
+                        (attacker.driverName || attacker.color));
+                    this.coverLog = 6;
+                }
+            }
+            desired = Math.max(-lim, Math.min(lim, this.coverLat)) - lineLat;
             hasTarget = true;
+        } else if (this.coverActive) {
+            // he vanished from the window - possibly because we moved. Hold
+            // the line a moment instead of snapping back into a weave.
+            this.coverGrace += dt;
+            if (this.coverGrace > 0.7) {
+                this.coverActive = false;
+            } else {
+                desired = Math.max(-lim, Math.min(lim, this.coverLat)) - lineLat;
+                hasTarget = true;
+            }
         }
 
         // ---- blue flag: we are being lapped, get out of the way ----------
