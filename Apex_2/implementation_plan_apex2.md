@@ -328,6 +328,45 @@ Struttura separata, costruita pigramente una sola volta per istanza di tracciato
 
 ---
 
+### 3bis. Il mondo è 1360×765, e il perché
+
+Nicola: «alcuni circuiti risultano un po' tagliati sulla destra, vengono coperti da una banda verde».
+
+**Cosa succedeva.** Ogni circuito è disegnato a mano perché la sua **erba** tocchi l'arena: da 216 a 1274 nel vecchio mondo, sei pixel di cortesia dentro `[210, 1280]`. Era l'inviluppo giusto finché l'erba era la cosa più esterna disegnata. Poi sono tornati i cordoli larghi e il pavimento del prato è andato a `trackWidth + 18`: `wallRadius = max(grassWidth − 12, trackWidth + 18)`, e dove la strada è larga rispetto al prato vince il pavimento, portandosi dietro il **muro**, la **barriera dipinta** a `wallRadius + 12` e il **margine d'erba**, che viene tracciato fino al più largo fra i due. Tredici circuiti su diciassette uscivano da 2 a 19 pixel oltre il bordo destro del canvas. Lo sbordo era **simmetrico** — i tracciati sono centrati — ma a sinistra finiva sotto la colonna dell'HUD, che è opaca: per questo se ne vedeva un lato solo.
+
+**La prima risposta era sbagliata.** Scalare i tracciati per farceli stare funzionava — tutti e diciassette dentro, tutti i cordoli vivi — ma Comb pagava il 4.6%, e i denti di Comb erano già a 160px contro un muro che ne voleva 176. A 153 il varco è diventato comodo e Nicola ha tagliato dritto per il centro del circuito. **Una correzione estetica che cambia la guida non è una correzione.**
+
+**Il mondo, invece.** 1280×720 → **1360×765**, sempre 16:9 al pixel. L'arena passa da 1070 a 1150 e il circuito più largo ne chiede 1144. Costa il **6.25% di dimensione apparente** — tutto renderizza un po' più piccolo sullo stesso schermo — e non muove nessun circuito rispetto a un altro: niente tempi sul giro diversi, niente record da invalidare.
+
+`centreInArena()` è una **traslazione, e mai altro**. È tutta lì la differenza con la versione buttata via: un circuito spostato di lato è lo stesso circuito; un circuito scalato è un circuito nuovo col nome di quello vecchio. Se un tracciato davvero non ci stesse, non viene schiacciato di nascosto: resta dov'è e `fitOffset.fits` dice di no.
+
+E i cinque numeri (`WORLD_W`, `WORLD_H`, `PANEL_W`, `ARENA_*`) stanno **in `track.js`**, che è il file che ci mette dentro i circuiti. `TRACK_W`/`TRACK_H`/`TRACK_X0` erano una **terza** copia con il commento «main.js has the same pair» — che non è un vincolo, è una speranza, ed era già rotta: il mondo era cresciuto e loro no, quindi le tribune venivano ancora tenute dentro un canvas da 1280. Ora sono alias.
+
+### 3quater. Comb non si taglia più
+
+Il taglio non l'aveva creato la scalatura, l'aveva solo reso comodo. La causa è più vecchia e più semplice: **la strada è 70 per lato**, quindi due denti a 160px lasciano **20px di prato** in mezzo — meno di una macchina. E col muro a 88 i due corridoi guidabili si sovrapponevano di 16px: bastava tenere due ruote su un dente e due sull'altro.
+
+Una barriera in mezzo era la risposta ovvia e **non ci sta**: una barriera vuole un raggio d'auto di franco per lato, 24px, e di prato ce n'erano 20 in tutto. Non esiste uno spessore di muro che fermi il taglio senza stare anche sulla strada.
+
+Quindi i denti si sono allontanati: **160 → 172**, che porta l'U-turn fra due denti da raggio 80 a 86 e allarga il pettine di 36px, assorbiti dai 80px di arena guadagnati. Il pavimento del prato qui è **12** invece di 18, che mette il muro a 82: due corridoi da 82 in un varco da 172 lasciano **8 pixel di terreno che nessuna macchina può raggiungere**, e la barriera tricolore ci viene dipinta sopra dalla macchina ordinaria, perché `getWalls()` disegna il confine dell'area guidabile ovunque quel confine si trovi. **Niente viene disegnato di speciale e niente viene collisionato di speciale.**
+
+Stessa cosa per l'altro punto stretto: il rettilineo del traguardo e il ritorno erano anche loro a 160, e ora sono a 172.
+
+I cordoli non solo restano, sono **più larghi**: erano tappati dalla strettezza degli archi (80 − 70 − 2 = 8px) e gli archi ora sono 86, quindi sono 10. Il giro passa da 3053 a 3159px (+3.5%).
+
+Copertura: `apex2_arena.js` (27 controlli) — inviluppo di tutti e diciassette, «tradotto e mai scalato», e la cresta fra i denti misurata: non guidabile, con la vernice a 3.9px dalla mezzeria.
+
+### 3ter. Il nome del circuito
+
+`quadrato` è la **chiave** di Rectangle, ed è giusto che resti: sta dentro i campionati salvati e dentro ogni log su disco. Quello che non doveva succedere è che arrivasse a schermo. Succedeva in due punti, e sono due modi diversi di sbagliare la stessa cosa:
+
+- `RaceLog.start({ track: trackType })` riceveva la chiave e la stampava — «track quadrato»;
+- la tabella di fine stagione ricavava le intestazioni con `(t || '?').slice(0, 3).toUpperCase()` sulla chiave — «QUA».
+
+Ora ci sono due sole porte, `trackLabel(key)` e `trackCode(key)`, e nessuno legge più `TRACK_LABELS` direttamente (c'è un test che conta le occorrenze). Le sigle sono **scritte a mano** in `TRACK_CODES` e non ritagliate: tagliare la chiave è come è nato QUA, e tagliare l'etichetta non sopravvive ai circuiti che abbiamo, perché Circle e Circus Maximus danno entrambi CIR e Crown e Crossover danno entrambi CRO. Sono REC, COM, CMX, CRS, CRW.
+
+---
+
 ## 4. Intelligenza Artificiale (Classe `AI`)
 
 L'IA non "bara" sulla fisica; essa fornisce solo un pacchetto di `inputs` ad un oggetto `Car`, subendo le stesse identiche regole del giocatore umano. Tutta la logica vive in `ai.js`; l'interfaccia verso `main.js` è minima: `new AI(car, difficulty, skillVariation)`, `startRace()`, `update(track, dt)`.
@@ -759,6 +798,42 @@ Ora è una decisione sola: `decideWeather()` la calcola (weekend già fissato �
 
 **Record in Explore.** Il giro record sul bagnato ora viene simulato su **entrambe** le mescole da pioggia e tiene la migliore, con un pallino del colore della mescola accanto al nome. Fissarne una avrebbe reso sbagliata metà dei record.
 
+### 6sexies. Due tipi di bagnato: `damp` e `soaked` (Apex 2)
+
+La richiesta era: due gare bagnate diverse, **stesso grip**, a cambiare solo il numero di pozzanghere — poche nel primo tipo, molte nel secondo — e pozzanghere di forma più irregolare.
+
+**La misura ha detto che quella prima metà non poteva funzionare, e il perché è interessante.** Se il grip è identico, l'unica leva è l'acqua, e l'acqua è precisamente ciò che la full wet neutralizza (`aqua 0.60`, §6quinquies). Quindi il tipo «poche pozzanghere» dovrebbe essere il regno dell'intermedia. Misurato prima di dire di sì, su sei circuiti e **zero** pozzanghere:
+
+| pozzanghere | 0 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| chi vince | wet +0.6% | wet +0.9% | wet +1.3% | wet +2.6% |
+
+**La full wet è già avanti a strada pulita.** Il punto di pareggio non sta a un certo numero di pozzanghere: sta *sotto lo zero*. Contare meno pozzanghere non produce una seconda gara, produce la stessa gara con un margine più stretto — e l'intermedia, che nel gioco esiste apposta, non avrebbe più un posto dove essere la scelta giusta.
+
+Perciò la strada bagnata **è** diversa nei due casi, e non solo l'acqua sopra:
+
+- `WET_GRIP = 0.13` resta il fondo. `DAMP_GRIP_MUL = 1.20` lo alza del 20% quando la pista è `damp`: una strada umida ha più aderenza di una allagata, il che è anche l'unica cosa fisicamente sensata da dire.
+- la full wet paga quella strada: `dampMul: 0.55` **solo su di lei**, perché è la gomma con più intaglio e su asfalto quasi asciutto sta pattinando su gomma che non tocca. L'intermedia non ha `dampMul`.
+
+Le due leve insieme spostano il vincitore, che era il punto:
+
+| | intermedia | full wet | miglior slick | drift |
+|---|---|---|---|---|
+| **damp** (1-3 pozzanghere) | **+0.1%** | +1.4% | +4.5% | +14.4% |
+| **soaked** (8-12 pozzanghere) | +4.3% | **0.0%** | +11.5% | +20.4% |
+
+Sei circuiti, `dampcheck.js`. Il moltiplicatore è stato scelto misurando, non stimato: **1.35 è stato scartato** perché a Kart faceva della hard la gomma più veloce sul bagnato leggero — una strada umida non deve diventare una gara asciutta di nascosto. **1.20 è il punto**: intermedia avanti dell'1.35% nel damp, e le slick restano 4.5% dietro senza mai vincere.
+
+**Come si tira.** `WET_KINDS = ['damp', 'damp', 'soaked']` — due terzi umido, un terzo allagato, perché la gara estrema deve restare l'eccezione. `puddleCountFor(kind, rand)` dà 1-3 e 8-12. Il tipo viene fissato insieme al meteo, in `commitWeather`, e in campionato è **pre-tirato dal seed** con le altre gare (`nextChampionshipWetKind`): due stagioni sullo stesso seed devono trovare la stessa acqua, o il confronto fra due mescole non regge (§ seed).
+
+**Si vede prima di scegliere le gomme.** Il banner ha tre stati invece di due — `DRY`, `DAMP 🌦️`, `SOAKED 🌧️` — ognuno con la sua conseguenza scritta accanto: «barely any standing water — the intermediate keeps more steering» contro «standing water everywhere — the full wet drives through it». Un banner che dicesse solo `WET` per due gare che vogliono gomme diverse sarebbe il difetto di §6quinquies rifatto con più passaggi.
+
+**La forma delle pozzanghere.** Erano cerchi con un po' di rumore. Ora ogni pozza è **allungata lungo la pista** (`stretch` 1.25-1.80 nella direzione della tangente al nodo più vicino: l'acqua si raccoglie in solchi, non in monete) e il raggio è modulato da due seni di periodo diverso con fasi casuali, campionati su `PUDDLE_LOBES = 19` vertici. Verificato renderizzando: il raggio varia fra il 43% e il 136% del suo valore medio, con 3-7 rientranze per pozza, e nessuna resta convessa.
+
+**Un dettaglio che non è cosmetico.** `wetGripNow(level)` e `tyreRainGrip(tyre, level)` sono le **due sole** funzioni che decidono l'aderenza sul bagnato, e le chiamano sia `car.js` sia `ai.js`. È la stessa disciplina di `WET_GRIP` (§6ter): ora però i numeri da tenere allineati sono quattro invece di uno, quindi la costante nuda non basta più — serve un accessore, altrimenti la prossima variante di meteo riapre il bug con un nome diverso.
+
+Copertura: `apex2_wettyres.js` §8-§9 (54 controlli) e `apex2_signage.js` (56).
+
 ### 4ter-bis La pausa (Apex 2)
 
 **Si mette in pausa con Spazio, P o Esc**, o col pulsante nell'angolo, in qualsiasi cosa stia girando davvero: griglia, gara, qualifica, prova libera. Spazio è sicuro perché nessuno dei due schemi di comando lo usa — il posto 1 ha frecce o WASD e il posto 2 prende l'altro — e c'è un test che lo verifica invece di darlo per scontato. `preventDefault` è obbligatorio o il browser scrolla la pagina sotto il canvas.
@@ -898,3 +973,16 @@ Gli attrezzi di misura sono nella cartella di lavoro e non nel gioco: `logscan.j
 - **[Apex 2] Un dato salvato deve portarsi dietro il fingerprint della cosa che l'ha prodotto.** Il libro dei record è misurato dalla build: cambia una gomma, `WET_GRIP` o un profilo IA e i tempi salvati descrivono un gioco che non esiste più. La chiave in `localStorage` include quel fingerprint, quindi il libro stantio viene buttato invece di essere mostrato con l'aria di essere autorevole.
 - **[Apex 2] Con un clock finto, uno slice temporale non si chiude mai.** Gli harness congelano `performance.now()` fra un drain e l'altro, quindi il ciclo `while (performance.now() - t0 < 12)` di `exStep` esaurisce l'intera coda in una chiamata sola. Non è un bug del gioco, ma qualsiasi test che voglia osservare uno stato *transitorio* (una barra di avanzamento a metà) non può farlo così: si verifica la proprietà, o si pilota il renderer a mano.
 - **[Apex 2] `gripUse` basso non vuol dire gomma sprecata.** È velocità laterale contro **il limite**, quindi una mescola che alza il limite abbassa il numero. Una slick sotto la pioggia sta al 47% perché è limitata dall'aderenza; la full wet sta al 17% perché non lo è più, ed è esattamente per questo che esiste. Avevo scritto il test con l'aspettativa opposta.
+- **[Apex 2] Se la leva richiesta non ha un punto di pareggio, dirlo prima di costruirla.** La proposta era «stesso grip, cambia solo il numero di pozzanghere». Misurato: la full wet vince **anche a zero pozzanghere**, quindi meno acqua non produce una seconda gara — produce la stessa gara con un margine più stretto. Il pareggio stava sotto lo zero, cioè da nessuna parte. Una richiesta che non funziona va misurata e riportata, non implementata alla lettera.
+- **[Apex 2] Una costante condivisa smette di bastare appena diventa condizionale.** `WET_GRIP` era un numero solo e due file lo leggevano; con due tipi di bagnato i numeri diventano quattro (strada × mescola) e la costante nuda non basta più. `wetGripNow(level)` e `tyreRainGrip(tyre, level)` sono ora le uniche due porte, e i test controllano il **sorgente** di entrambi i file: la disciplina è la stessa di §6ter, ma un livello più in su.
+- **[Apex 2] Non tarare un moltiplicatore a occhio quando può cambiare quale gomma vince.** `DAMP_GRIP_MUL = 1.35` sembrava ragionevole e a Kart rendeva la **hard** la gomma più veloce sotto la pioggia leggera. 1.20 tiene l'intermedia davanti e le slick 4.5% dietro su tutti e sei i circuiti. Il criterio non è «quanto sembra giusto», è *chi vince e dove*.
+- **[Apex 2] Un finto pilota che tiene il gas fisso smette di distinguere le mescole appena il resto migliora.** La sezione 3 di `apex2_tele.js` separava drift e medium (71% contro 57% di tempo al soffitto del sovrasterzo); dopo il disaccoppiamento `slide`/`hook` e le vie di fuga più larghe, **tutte e quattro** stanno al 63% perché `powerOversteer` è clampato a 1.0 e ci arriva sempre. Un canale che satura per tutti non misura più niente. Registrato nel test invece di allentare la soglia — la stessa proprietà è misurata a velocità bloccata in `a2/apex_tyres.js` §5, dove nulla satura.
+- **[Apex 2] Un test di identità bit-a-bit invecchia quando una feature nuova usa la via nuova.** «Un giro da tastiera è identico alla build pre-analogico» era vero finché l'unico utente del gas analogico era il giocatore. Poi l'IA ha imparato a provocare, e provoca **scrivendo un gas analogico**: la build vecchia legge solo `inputs.up`, gli avversari guidano diverso, e il giro del giocatore cade 0.05 più in là per colpa del traffico. La differenza non era nella cosa che il test voleva proteggere. Ora la sezione azzera `provoke` in entrambe le build e lo dice.
+- **[Apex 2] Un inviluppo disegnato a mano scade quando cambia qualcosa che sta più in fuori.** I diciassette circuiti erano fittati sull'**erba**, che era la cosa più esterna che venisse disegnata; poi il pavimento del prato è andato a `trackWidth + 18` per far stare i cordoli, e muro, barriera e margine d'erba si sono spostati oltre quell'inviluppo. Tredici circuiti finivano fuori dal canvas a destra. La correzione è stata **allargare il mondo**, non stringere i circuiti: quando il contenitore è troppo piccolo, cambiare il contenitore non cambia niente di ciò che c'è dentro.
+- **[Apex 2] Se non ci sta una macchina, non ci sta nemmeno una barriera.** Fra due denti di Comb c'erano 20px di prato e la risposta ovvia era metterci un muro. Un muro vuole 12px di franco per lato: 24 su 20 disponibili. Non c'era nessuno spessore che funzionasse, e il tempo speso a cercarlo era tempo speso a non accettare che la geometria fosse sbagliata. I denti sono andati a 172.
+- **[Apex 2] Una correzione estetica che cambia la guida non è una correzione.** Scalare i tracciati per rimetterli dentro lo schermo era corretto in senso stretto — tutti e diciassette dentro, tutti i cordoli vivi — e costava a Comb il 4.6%, che ha reso attraversabile il varco fra i denti. Il difetto da riparare era che si vedeva una banda verde; il risultato era che si poteva tagliare il circuito. Prima di accettare una modifica geometrica «piccola», chiedersi su quale vincolo di gioco quel piccolo margine stava in bilico.
+- **[Apex 2] Uno sbordo simmetrico si vede da un lato solo.** I tracciati sono centrati, quindi uscivano di 19px a destra e di 19px a sinistra — ma a sinistra c'è la colonna opaca dell'HUD. Quando un difetto grafico sembra avere un lato preferito, chiedersi cosa c'è sopra l'altro lato prima di cercare una causa asimmetrica.
+- **[Apex 2] Quando si sposta la geometria, il libro dei record va invalidato con lei.** `exFingerprint` teneva gomme, `WET_GRIP` e profili IA ma **non** la forma dei circuiti: durante il tentativo di fit Comb è diventato il 4.6% più corto e ogni tempo salvato descriveva un circuito che non esisteva più. Ora la geometria entra nel fingerprint, sommata dai **segmenti** e non dalle traiettorie: rilassare diciassette racing line a ogni salvataggio sarebbe quasi un secondo per scoprire che non è cambiato niente.
+- **[Apex 2] Un `Math.random = origRandom` avanzato rende bugiardo tutto quello che viene dopo.** La sezione 8 di `apex2_wettyres.js` chiama `seedRandom(909)` prima di ogni stint e credeva di confrontare le mescole sulla stessa acqua; una riga più su, un ripristino dimenticato aveva rimesso il generatore vero, e ogni stint pescava pozzanghere nuove. Il margine da misurare è 1.4 punti, lo scarto che questo introduce è ±2: passava le volte in cui l'ho scritto e falliva circa una volta su tre dopo. Ora c'è un `throw` se il generatore seminato non c'è più.
+- **[Apex 2] Una soglia sul caso peggiore di un campione è una moneta.** «Ogni pozzanghera ha almeno 3 insenature» su dodici estrazioni passava spesso; su duecento falliva regolarmente, perché chiedeva della più sfortunata di duecento. Le affermazioni sulle forme casuali si fanno su **percentili** — la mediana, e quante stanno sotto — non sul minimo.
+- **[Apex 2] Una sigla non si ricava tagliando una stringa.** «QUA» veniva da `slice(0, 3)` sulla **chiave** `quadrato`, che nessuno aveva rinominato perché è storage. E tagliare l'etichetta non basta comunque: Circle/Circus Maximus e Crown/Crossover collidono entrambe. Le sigle si scrivono, e la chiave non deve poter raggiungere lo schermo — una porta sola, `trackLabel`/`trackCode`, con un test che conta quanti la scavalcano.

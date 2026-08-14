@@ -305,15 +305,15 @@ button:hover {
 }
 
 /* --- the stage -----------------------------------------------------------
-   A 1280x720 box laid exactly over the canvas and scaled with it. Anything
+   A 1360x765 box laid exactly over the canvas and scaled with it. Anything
    that has to line up with the circuit goes in here, so a band reserved in
    world pixels is that same band on any screen. main.js sets --stage-*. */
 #stage {
     position: absolute;
     left: var(--stage-x, 0px);
     top: var(--stage-y, 0px);
-    width: 1280px;
-    height: 720px;
+    width: 1360px;
+    height: 765px;
     transform: scale(var(--stage-scale, 1));
     transform-origin: 0 0;
     pointer-events: none;
@@ -331,7 +331,7 @@ button:hover {
     left: 0;
     top: 0;
     width: 210px;
-    height: 720px;
+    height: 765px;
     display: flex;
     flex-direction: column;
     align-items: stretch;

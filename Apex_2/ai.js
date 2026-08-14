@@ -658,8 +658,14 @@ class AI {
             // reason: an AI on full wets that aims at intermediate speeds is
             // throwing away most of what the tyre is for, and an AI on slicks
             // in the rain that does not know it will drive off the road.
-            const rainGrip = (car.tyre && car.tyre.rainGrip) || 1;
-            gripScale = WET_GRIP * rainGrip * (this.p.wetSkill || 1);
+            // Through the same function the physics uses, so the AI knows a
+            // full wet is over-tyred on a damp road rather than driving to the
+            // grip it would have had in a downpour.
+            const rainGrip = tyreRainGrip(car.tyre);
+            // wetGripNow, not WET_GRIP: a damp track is grippier than a
+            // soaked one, and an AI that does not know which kind of wet it is
+            // driving on is the WET_GRIP bug all over again with a new name.
+            gripScale = wetGripNow() * rainGrip * (this.p.wetSkill || 1);
         }
         if (onGrass) gripScale *= 0.3;
         else if (onKerb) gripScale *= 0.80;

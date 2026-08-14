@@ -1,16 +1,50 @@
-// The world these circuits are laid out in. 16:9, so a modern screen is
-// filled rather than letterboxed. main.js has the same pair.
-const TRACK_W = 1280;
-const TRACK_H = 720;
+// ===========================================================================
+//  THE WORLD, AND THE BOX A CIRCUIT IS ALLOWED TO BE IN
+// ===========================================================================
+//
+//  These five numbers live here, in the geometry file, and main.js reads them.
+//  They describe where a circuit may be drawn, which is a fact about circuits,
+//  and two files each keeping their own copy of the edge of the screen is the
+//  WET_GRIP bug with different numbers.
+//
+//  The world grew from 1280x720 to 1360x765 - still 16:9 to the pixel - and
+//  the reason is worth keeping. Every circuit is laid out by hand so that its
+//  GRASS touches the arena: 216 to 1274 in the old world, six pixels of
+//  courtesy inside the box. That was the right envelope while the grass was
+//  the outermost thing drawn. Then the wide kerbs came back, the verge floor
+//  went to `trackWidth + 18` so a 16px kerb would fit under the armco, and the
+//  wall moved out - taking with it the painted barrier at wallRadius + 12 and
+//  the grass margin, which is stroked to whichever of the two is wider.
+//  Thirteen circuits ended up 2 to 19px past the right-hand edge of the canvas
+//  and were simply cut off there.
+//
+//  Scaling the layouts down to fit was tried first and reverted: it worked,
+//  but Comb paid 4.6% of its size and the gap between its teeth became wide
+//  enough to drive through. A bigger world costs nothing but apparent size -
+//  everything renders 6.25% smaller on the same screen - and moves no circuit
+//  relative to any other. The widest, Comb, needs 1108px of arena; there are
+//  1150.
+const WORLD_W = 1360;
+const WORLD_H = 765;
 
-// The timing tower and the driver's readouts share one column down the left,
-// so the racing surface starts here and not at zero. Everything to the right
-// of it - the full height - is circuit. main.js has the same number.
-const TRACK_X0 = 210;
+const PANEL_W = 210;
+const ARENA_X0 = PANEL_W;
+const ARENA_X1 = WORLD_W;
+const ARENA_Y0 = 0;
+const ARENA_Y1 = WORLD_H;
+
+// TRACK_W, TRACK_H and TRACK_X0 were a THIRD copy of these three numbers,
+// carrying a comment that said "main.js has the same pair" - which is not a
+// constraint, it is a hope, and it was already broken: the world grew and they
+// did not, so the crowd stands were still being kept inside a 1280px canvas.
+const TRACK_W = WORLD_W;
+const TRACK_H = WORLD_H;
+const TRACK_X0 = ARENA_X0;
+
 
 // Number of radii around a puddle's outline. Enough to look organic,
 // few enough that the per-frame containment test stays trivial.
-const PUDDLE_LOBES = 11;
+const PUDDLE_LOBES = 19;
 
 // Douglas-Peucker on a flat [x, y, x, y, ...] run. A wall is nearly all
 // smooth arc, so this is a large saving for no visible change.
@@ -53,9 +87,95 @@ class SegmentedTrack {
         this.segments = [];
         this.startX = 500;
         this.startY = 150;
+        // How much verge the circuit reserves outside its road, at minimum -
+        // see wallRadius(). Eighteen everywhere, because a 16px kerb has to
+        // fit under the armco, and Comb is the one exception: its teeth run
+        // close enough together that 18 of verge each makes the grass between
+        // them driveable, and its arcs are too tight to carry a 16px kerb
+        // anyway. It reserves 12, which is still more than the 10px kerb it
+        // can actually use.
+        this.vergeFloor = 18;
+        // Straight walls that are not an offset of the road: Comb has none any
+        // more, but the hook is here because a circuit that needs one needs it
+        // in the physics, not only in the paint.
+        this.dividers = [];
+    }
+
+    // =====================================================================
+    //  CENTRING THE CIRCUIT IN THE ARENA
+    // =====================================================================
+    //
+    //  A TRANSLATION, and never anything else. This is the whole difference
+    //  between it and the version that had to be thrown away: that one scaled
+    //  the layouts to make them fit, which took Comb's teeth from 160px apart
+    //  to 153 and turned the grass between them into a shortcut. A circuit
+    //  that has moved sideways is the same circuit - same lap length, same
+    //  corner radii, same gaps, same record book. A circuit that has been
+    //  scaled is a new one wearing the old one's name.
+    //
+    //  So if a circuit genuinely does not fit, this does NOT quietly squeeze
+    //  it: it leaves it where it is and says so. The arena is 1150 x 765 and
+    //  the widest circuit needs 1108, so there is room; the day there is not,
+    //  the answer is a bigger world or a smaller circuit, decided on purpose.
+    centreInArena() {
+        if (this._centred) return;
+        this._centred = true;
+
+        // The outermost paint, which is what the edge of the canvas sees: the
+        // grass margin is stroked out to whichever of the grass and the
+        // barrier ring is wider (see draw(), step 1).
+        const M = Math.max(this.grassWidth, this.barrierRadius());
+
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        const see = (x, y) => {
+            if (x < x0) x0 = x; if (x > x1) x1 = x;
+            if (y < y0) y0 = y; if (y > y1) y1 = y;
+        };
+        for (const seg of this.segments) {
+            if (seg.type === 'line') { see(seg.x1, seg.y1); see(seg.x2, seg.y2); continue; }
+            // An arc reaches wherever its sweep goes, not the four compass
+            // points of its circle: sample it. At 0.01 rad the chord sag is
+            // r/20000 of a pixel.
+            const sweep = this._arcSweep(seg);
+            const n = Math.max(8, Math.ceil(Math.abs(sweep) / 0.01));
+            for (let i = 0; i <= n; i++) {
+                const a = seg.start + sweep * (i / n);
+                see(seg.cx + seg.r * Math.cos(a), seg.cy + seg.r * Math.sin(a));
+            }
+        }
+        if (!isFinite(x0)) return;
+
+        const ox = (ARENA_X0 + ARENA_X1) / 2 - (x0 + x1) / 2;
+        const oy = (ARENA_Y0 + ARENA_Y1) / 2 - (y0 + y1) / 2;
+        this.fitOffset = { x: ox, y: oy, margin: M,
+                           fits: (x1 - x0) + 2 * M <= ARENA_X1 - ARENA_X0 &&
+                                 (y1 - y0) + 2 * M <= ARENA_Y1 - ARENA_Y0 };
+        if (Math.abs(ox) < 0.0005 && Math.abs(oy) < 0.0005) return;
+
+        for (const seg of this.segments) {
+            if (seg.type === 'line') {
+                seg.x1 += ox; seg.y1 += oy; seg.x2 += ox; seg.y2 += oy;
+            } else {
+                seg.cx += ox; seg.cy += oy;
+            }
+        }
+        this.startX += ox;
+        this.startY += oy;
+        for (const d of (this.dividers || [])) {
+            d.x1 += ox; d.y1 += oy; d.x2 += ox; d.y2 += oy;
+        }
+        // Everything else - the racing line, the wall, the barrier, the
+        // stands, the bridge - is derived from the segments on first use and
+        // cached after, and this runs from the constructor, before any of
+        // them exists.
     }
 
     generateWaypoints() {
+        // Every subclass constructor ends with `this.waypoints =
+        // this.generateWaypoints()`, which makes this the one hook that runs
+        // after the geometry exists and before anything reads it.
+        this.centreInArena();
+
         const waypoints = [];
         const numPoints = 15; // points per segment (straight)
         
@@ -334,7 +454,7 @@ class SegmentedTrack {
     // untouched or gain a pixel; the four tight ones gain five to seven, which
     // is run-off they always should have had.
     wallRadius() {
-        return Math.max(this.grassWidth - 12, this.trackWidth + 18);
+        return Math.max(this.grassWidth - 12, this.trackWidth + this.vergeFloor);
     }
 
     // How far outside the stopping line the armco is painted: one car radius,
@@ -1206,12 +1326,40 @@ class SegmentedTrack {
             const off = (0.25 + Math.random() * 0.55) * this.trackWidth * side;
             const r = 26 + Math.random() * 22;
 
-            // An irregular outline rather than a circle. PUDDLE_LOBES radii
-            // around the centre, each randomly scaled, then smoothed with its
-            // neighbours so the edge undulates instead of spiking. Water finds
-            // the shape of the tarmac; a perfect disc reads as a decal.
+            // An irregular outline rather than a circle, built from three
+            // things laid on top of each other:
+            //
+            //   * a STRETCH. Water pools along the road rather than across it,
+            //     so the outline is an ellipse elongated in the direction the
+            //     tarmac runs, by a random amount.
+            //   * two waves round the outline, a slow one and a fast one. One
+            //     harmonic alone gives an egg; two give a shape with a couple
+            //     of broad bays and some smaller kinks, which is what a puddle
+            //     looks like.
+            //   * per-lobe noise, smoothed once with its neighbours so the
+            //     edge undulates instead of spiking.
+            //
+            // The first version was noise alone, smoothed - which reads as a
+            // slightly wobbly disc, because random values with no structure
+            // average out to a circle. The structure is what makes it a shape.
+            const stretch = 1.25 + Math.random() * 0.55;   // along the road
+            const along = Math.atan2(nd.ty !== undefined ? nd.ty : 0,
+                                     nd.tx !== undefined ? nd.tx : 1);
+            const ph1 = Math.random() * Math.PI * 2, ph2 = Math.random() * Math.PI * 2;
+            const a1 = 0.16 + Math.random() * 0.16;        // slow wave
+            const a2 = 0.06 + Math.random() * 0.10;        // fast one
+            const w2 = 3 + Math.floor(Math.random() * 3);  // 3, 4 or 5 lobes
             const raw = [];
-            for (let k = 0; k < PUDDLE_LOBES; k++) raw.push(0.62 + Math.random() * 0.70);
+            for (let k = 0; k < PUDDLE_LOBES; k++) {
+                const th = (k / PUDDLE_LOBES) * Math.PI * 2;
+                // ellipse: r(th) for a body stretched by `stretch` along `along`
+                const rel = th - along;
+                const ex = Math.cos(rel) / stretch, ey = Math.sin(rel);
+                const ell = 1 / Math.sqrt(ex * ex + ey * ey);
+                raw.push(ell * (1 + a1 * Math.sin(2 * th + ph1)
+                                  + a2 * Math.sin(w2 * th + ph2))
+                             * (0.86 + Math.random() * 0.28));
+            }
             const rad = [];
             for (let k = 0; k < PUDDLE_LOBES; k++) {
                 const a = raw[(k - 1 + PUDDLE_LOBES) % PUDDLE_LOBES];
@@ -1951,31 +2099,67 @@ class KartTrack extends SegmentedTrack {
     }
 }
 
+// ===========================================================================
+//  COMB
+// ===========================================================================
+//
+//  THE TEETH USED TO BE 160px APART, and that number was not chosen: it was
+//  the old layout rule, 2 x grassWidth + 10, and the circuit was drawn exactly
+//  to it. Two things then made it wrong.
+//
+//  The road is 70 EITHER SIDE of the centre line, so two teeth 160 apart leave
+//  a strip of grass 20px wide between their tarmac - narrower than a car. And
+//  the verge floor went to `trackWidth + 18` when the wide kerbs came back,
+//  which puts the wall 88 from each centre line: 176 of driveable ground in a
+//  160px gap. The two corridors overlapped by 16px, so a car could sit with a
+//  pair of wheels on each tooth and drive straight across the middle of the
+//  circuit, skipping a hairpin. Nicola found it.
+//
+//  A barrier down the middle was the obvious answer and it does not fit. A
+//  barrier needs a car's radius of clearance on each side - 24px - and there
+//  are 20px of grass in total. There is no thickness of wall that stops the
+//  cut without also standing on the road.
+//
+//  So the teeth moved apart: 160 -> 172, which makes the U-turn between them
+//  a radius 86 instead of 80, and the whole comb 36px wider. The verge floor
+//  is 12 here instead of 18, which puts the wall at 82: two corridors of 82 in
+//  a 172px gap leave EIGHT PIXELS of ground no car can reach, and the barrier
+//  gets painted along it by the ordinary machinery, because getWalls() draws
+//  the boundary of the driveable area wherever that boundary happens to be.
+//  Nothing special is drawn and nothing special is collided with.
+//
+//  The kerbs are unchanged in kind and slightly wider in fact: they were
+//  capped by the tightness of the arcs (80 - 70 - 2 = 8px) and the arcs are
+//  now 86, so they are 10. The lap goes from 3053px to 3095.
 class PettineTrack extends SegmentedTrack {
     constructor() {
         super();
         this.trackWidth = 70;
         this.grassWidth = 75; // reduced so curbs do not overwrite each other
-        
+        // See the note above: 12, not 18, so that 172px of gap holds two walls
+        // and a strip of solid ground between them. The kerb it has to carry
+        // is 10px, capped by the radius of the hairpins, so 12 is enough.
+        this.vergeFloor = 12;
+
         this.segments = [
-            { type: 'line', x1: 371, y1: 108.96, x2: 1119, y2: 108.96 },
-            { type: 'arc', cx: 1119, cy: 188.96, r: 80, start: -1.5708, end: 1.5708, ccw: false },
-            { type: 'arc', cx: 1119, cy: 348.96, r: 80, start: -1.5708, end: -3.14159, ccw: true },
-            { type: 'line', x1: 1039, y1: 348.96, x2: 1039, y2: 531.04 },
-            { type: 'arc', cx: 959, cy: 531.04, r: 80, start: 0, end: 3.14159, ccw: false },
-            { type: 'line', x1: 879, y1: 531.04, x2: 879, y2: 368.8 },
-            { type: 'arc', cx: 799, cy: 368.8, r: 80, start: 0, end: -3.14159, ccw: true },
-            { type: 'line', x1: 719, y1: 368.8, x2: 719, y2: 531.04 },
-            { type: 'arc', cx: 639, cy: 531.04, r: 80, start: 0, end: 3.14159, ccw: false },
-            { type: 'line', x1: 559, y1: 531.04, x2: 559, y2: 348.96 },
-            { type: 'arc', cx: 479, cy: 348.96, r: 80, start: 0, end: -1.5708, ccw: true },
-            { type: 'line', x1: 479, y1: 268.96, x2: 371, y2: 268.96 },
-            { type: 'arc', cx: 371, cy: 188.96, r: 80, start: 1.5708, end: 4.71239, ccw: false }
+            { type: 'line', x1: 335, y1: 108.96, x2: 1119, y2: 108.96 },
+            { type: 'arc', cx: 1119, cy: 194.96, r: 86, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'arc', cx: 1119, cy: 360.96, r: 80, start: -1.5708, end: -3.14159, ccw: true },
+            { type: 'line', x1: 1039, y1: 360.96, x2: 1039, y2: 531.04 },
+            { type: 'arc', cx: 953, cy: 531.04, r: 86, start: 0, end: 3.14159, ccw: false },
+            { type: 'line', x1: 867, y1: 531.04, x2: 867, y2: 368.8 },
+            { type: 'arc', cx: 781, cy: 368.8, r: 86, start: 0, end: -3.14159, ccw: true },
+            { type: 'line', x1: 695, y1: 368.8, x2: 695, y2: 531.04 },
+            { type: 'arc', cx: 609, cy: 531.04, r: 86, start: 0, end: 3.14159, ccw: false },
+            { type: 'line', x1: 523, y1: 531.04, x2: 523, y2: 360.96 },
+            { type: 'arc', cx: 443, cy: 360.96, r: 80, start: 0, end: -1.5708, ccw: true },
+            { type: 'line', x1: 443, y1: 280.96, x2: 335, y2: 280.96 },
+            { type: 'arc', cx: 335, cy: 194.96, r: 86, start: 1.5708, end: 4.71239, ccw: false }
         ];
-        
+
         this.startX = 703.74;
         this.startY = 108.96;
-        
+
         this.waypoints = this.generateWaypoints();
     }
 }

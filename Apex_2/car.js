@@ -191,7 +191,8 @@ const TYRES = {
               rainGrip: 2.50, aqua: 0.10, dryWear: 4.5, rain: true },
     wet:    { key: 'wet',    label: 'Wet',    short: 'W', colour: '#1e88e5',
               grip: 0.870, falloff: 0.0900, life: 1.55, bite: 1.030, slide: 1.00,
-              rainGrip: 3.55, aqua: 0.60, dryWear: 3.4, rain: true }
+              rainGrip: 3.55, aqua: 0.60, dryWear: 3.4, rain: true,
+              dampMul: 0.55 }
 };
 const TYRE_KEYS = ['soft', 'medium', 'hard', 'drift', 'inter', 'wet'];
 // The two treaded compounds, kept as a list so nothing has to test a key by
@@ -203,6 +204,54 @@ const DRY_TYRE_KEYS = TYRE_KEYS.filter(k => !TYRES[k].rain);
 // physics and by ai.js for the speed the AI aims at - the two must be the same
 // number or the AI drives to a circuit that is not there.
 const WET_GRIP = 0.13;
+
+// A wet race comes in two kinds, and they differ in how much water is on the
+// road - both as standing puddles and as grip.
+//
+//   damp    - a drying or lightly wet track. Two or three puddles, and enough
+//             grip that the STEERING RATE is the binding limit again rather
+//             than the lateral clamp. That is what makes the intermediate the
+//             right tyre: it keeps more steering rate (grip x bite 0.959) and
+//             gives up wet grip (2.50 against 3.55).
+//   soaked  - the rain this game already had. 0.13 of dry grip, eight to
+//             twelve puddles, and the full wet wins comfortably.
+//
+// Measured before building it: with grip held the same, the full wet is
+// already ahead at ZERO puddles (+0.30% over five circuits) and by +1.28% at
+// today's four to six. So puddle count alone would have changed the scenery
+// and not the decision.
+//
+// 1.20 rather than more: at 1.35 a slick becomes the quickest tyre on a damp
+// road at Kart, and "in the rain the rain tyres are the tyre" is a property
+// worth keeping. At 1.20 the best slick is still 4.5% behind the best rain
+// tyre on every circuit, and the intermediate is 1.35% clear of the full wet.
+const DAMP_GRIP_MUL = 1.20;
+function wetGripNow(level) {
+    const lv = level !== undefined ? level
+             : (typeof wetLevel !== 'undefined' ? wetLevel : null);
+    return lv === 'damp' ? WET_GRIP * DAMP_GRIP_MUL : WET_GRIP;
+}
+
+// What a compound's tread is worth on a DAMP road rather than a soaked one.
+//
+// Grip alone could not make the intermediate the right damp tyre. Swept from
+// 1.0 to 1.9 times the wet grip, the full wet stayed ahead the whole way -
+// +1.23% down to +0.24% - because rainGrip multiplies whatever WET_GRIP is, so
+// the full wet's 3.55 against the intermediate's 2.50 survives the change. To
+// reach the regime where steering rate binds instead of grip you would need
+// something close to a dry road.
+//
+// So the tyre has to be wrong for the conditions, and there is a real reason
+// for it: a full wet on a damp track is over-tyred. There is not enough water
+// to clear, the tread squirms and overheats, and it gives back the grip it was
+// carried there for. `dampMul` is that, and only the full wet has one.
+function tyreRainGrip(tyre, level) {
+    const rg = (tyre && tyre.rainGrip) || 1;
+    const lv = level !== undefined ? level
+             : (typeof wetLevel !== 'undefined' ? wetLevel : null);
+    if (lv !== 'damp') return rg;
+    return rg * ((tyre && tyre.dampMul) || 1);
+}
 
 // The speed below which a compound's `hook` is worth anything, and the function
 // that says how much. Same 160 px/s as the yaw boost in powerOversteer, and
@@ -556,7 +605,7 @@ class Car {
             // number. It did not, for a while - see the note there - and an AI
             // that thinks the road is 54% grippier than it is drives straight
             // past the limit every corner.
-            currentGrip *= WET_GRIP * (tyre.rainGrip || 1);
+            currentGrip *= wetGripNow() * tyreRainGrip(tyre);
             // Wet-weather skill, from the driver style table in ai.js.
             if (this.wetGripBonus) currentGrip *= this.wetGripBonus;
         }

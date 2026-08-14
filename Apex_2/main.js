@@ -1,23 +1,15 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// The world. Everything - track geometry, crane parking, the mini-map - is in
-// these units, and the canvas is scaled to the window by CSS. 16:9, so a
-// modern screen is filled rather than letterboxed with two green bands.
-const WORLD_W = 1280;
-const WORLD_H = 720;
-
+// The world, the HUD column and the racing box all live in track.js: they are
+// facts about where a circuit is allowed to be, and track.js is what puts the
+// circuits there (`centreInArena`). This file reads them.
+//
 // The HUD is one column down the left: the timing tower, the driver's
 // readouts, the two-player cards and the VSC strip all live in it, so there is
 // only ONE thing taking room from the circuits instead of two. Everything to
-// the right of it, top to bottom, is racing surface - the circuits are laid
-// out strictly inside that box (see track.js), so nothing ever sits on the
-// road.
-const PANEL_W = 210;
-const ARENA_X0 = PANEL_W;
-const ARENA_X1 = WORLD_W;
-const ARENA_Y0 = 0;
-const ARENA_Y1 = WORLD_H;
+// the right of it, top to bottom, is racing surface - and the circuits are
+// centred inside that box by track.js, so nothing is ever drawn off the edge.
 
 // The HUD lives in #stage, a WORLD_W x WORLD_H box laid exactly over the
 // canvas and scaled with it. Without that the bands would be reserved in world
@@ -95,6 +87,8 @@ let qualiTrack = null;      // the track object the session is running on
 let qualiTrackType = null;
 let pendingGrid = null;     // participant order handed to the next startGame
 let pendingWeather = null;  // weather chosen at qualifying, reused for the race
+let pendingWetLevel = null; // 'damp' | 'soaked', pinned with it
+let wetLevel = null;        // the live one, read by car.js and ai.js
 let racePoleColor = null;   // who started P1 in the race now running
 // Who crossed the line first on each lap. The last piece of a Grand Chelem:
 // pole + win + fastest lap + led every single lap.
@@ -560,7 +554,7 @@ startBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'race';
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
     // The car is chosen on the same screen a season uses, and asked once for
     // the whole weekend - not again between qualifying and the race. There
@@ -581,7 +575,7 @@ champBtn.addEventListener('click', () => {
     isChampionship = true;
     raceMode = 'championship';
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     startChampionship();
 });
 
@@ -755,7 +749,7 @@ function renderPausePanel() {
             : '&mdash;');
         sess += pzRow('Pole time', pole ? fmtLapMs(pole.lap) : '&mdash;');
         sess += pzRow('Runners in', order.filter(r => r.lap !== null).length + ' of ' + order.length);
-        sess += pzRow('Circuit', TRACK_LABELS[currentTrackKey] || currentTrackKey || '&mdash;');
+        sess += pzRow('Circuit', currentTrackKey ? trackLabel(currentTrackKey) : '&mdash;');
         sess += pzRow('Weather', isRaining ? 'wet' : 'dry', isRaining ? 'pz-warn' : '');
         cols.push(pzCol('Session', sess));
         pauseStats.innerHTML = cols.join('');
@@ -927,7 +921,7 @@ qualiRaceBtn.addEventListener('click', () => {
 qualiMenuBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     isChampionship = false;
     weekendChassisAsked = false;   // a new weekend, a new choice of car
     menu.style.display = 'block';
@@ -936,7 +930,7 @@ qualiMenuBtn.addEventListener('click', () => {
 restartBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     skipMode = false;
     skipPlayer = null;
     skipPlayers = [];
@@ -978,7 +972,7 @@ quitBtn.addEventListener('click', () => {
     qualiQueue = [];
     qualiTimes = [];
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     skipMode = false;
     skipPlayer = null;
     skipPlayers = [];
@@ -1395,7 +1389,8 @@ function startQualifying(forceTrackType) {
         // not actually a child of the parent.
         (document.getElementById('hud-right') || hud).appendChild(weatherIndicator);
     }
-    weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
+    weatherIndicator.innerText = isRaining
+        ? (wetLevel === 'soaked' ? 'Soaked 🌧️' : 'Damp 🌦️') : 'Dry ☀️';
     renderTyreIndicator(null);
 
     // AFTER the weather is decided, not before. This used to sit above the
@@ -1403,7 +1398,7 @@ function startQualifying(forceTrackType) {
     // weather: puddles appeared in dry qualifying and were missing in wet.
     if (typeof track.makePuddles === 'function') {
         track.puddles = [];
-        if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
+        if (isRaining) track.makePuddles(puddleCountFor(wetLevel));
     }
 
     applyDifficultyRules(isChampionship ? championshipState.difficulty
@@ -1469,11 +1464,11 @@ function startQualifying(forceTrackType) {
 
     RaceLog.start({
         mode: isChampionship ? 'Qualifying (championship round)' : 'Qualifying',
-        track: qualiTrackType,
+        track: trackLabel(qualiTrackType),
         laps: null,
         difficulty: isChampionship ? championshipState.difficulty
                                    : document.getElementById('difficulty-select').value,
-        weather: isRaining ? 'wet' : 'dry',
+        weather: isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry',
         seed: isChampionship && championshipState ? championshipState.seed : null,
         grid: pendingField.map(p => p.driverName || p.color)
     });
@@ -1656,6 +1651,23 @@ function seatTyre(index) {
 //  `pendingWeather`, and everything downstream reads that. Same shape as
 //  WET_GRIP: if two places have to agree about a fact, they read it from one
 //  place instead of each working it out.
+// A wet race is DAMP or SOAKED. Two thirds of them are damp: heavy rain should
+// still feel like an event when it turns up.
+const WET_KINDS = ['damp', 'damp', 'soaked'];
+function rollWetKind(rand) {
+    const r = rand || Math.random;
+    return WET_KINDS[Math.floor(r() * WET_KINDS.length)];
+}
+// How many puddles each kind puts down. Fitted (puddlefit.js) either side of
+// where the two rain tyres cross: measured, the full wet's advantage grows from
+// +0.30% at no puddles to +4.41% at twelve, so the two kinds have to sit far
+// enough apart to give different answers.
+function puddleCountFor(kind, rand) {
+    const r = rand || Math.random;
+    return kind === 'soaked' ? 8 + Math.floor(r() * 5)    // 8-12
+                             : 1 + Math.floor(r() * 3);   // 1-3
+}
+
 function decideWeather() {
     if (pendingWeather !== null) return pendingWeather;   // a weekend already fixed it
     if (isChampionship) return nextChampionshipWeather(); // pre-rolled with the calendar
@@ -1668,7 +1680,29 @@ function decideWeather() {
 }
 function commitWeather() {
     pendingWeather = decideWeather();
+    // ...and WHICH KIND of wet, pinned at the same moment for the same reason.
+    // wetLevel is read by the physics and by the AI through wetGripNow(), so it
+    // has to be settled before either of them looks at it.
+    if (!pendingWeather) { pendingWetLevel = null; }
+    else if (pendingWetLevel === null) {
+        pendingWetLevel = isChampionship ? nextChampionshipWetKind() : rollWetKind();
+    }
+    wetLevel = pendingWetLevel;
     return pendingWeather;
+}
+
+// The kind of wet the season rolled for this round, alongside the weather
+// itself so the two cannot disagree.
+function nextChampionshipWetKind() {
+    if (!championshipState || !championshipState.wetKind) return rollWetKind();
+    const k = championshipState.wetKind[championshipState.currentTrackIndex];
+    return k || rollWetKind();
+}
+
+// What to call it on screen and in the log.
+function weatherLabel() {
+    if (!pendingWeather && !isRaining) return 'Dry';
+    return wetLevel === 'soaked' ? 'Soaked' : (wetLevel === 'damp' ? 'Damp' : 'Wet');
 }
 // What the session you are about to start will be. Reading `isRaining` here is
 // the bug; reading the committed decision is the fix.
@@ -1719,12 +1753,21 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
     const tw = document.getElementById('tyre-weather');
     if (tw) {
         const wet = upcomingWeather();
+        const soaked = wet && pendingWetLevel === 'soaked';
         tw.className = 'tw ' + (wet ? 'tw-wet' : 'tw-dry');
-        tw.innerHTML = '<span class="tw-icon">' + (wet ? '🌧️' : '☀️') + '</span>' +
-            '<span class="tw-word">' + (wet ? 'WET' : 'DRY') + '</span>' +
-            '<span class="tw-note">' + (wet
-                ? 'treaded rubber, or you will be seconds a lap slower'
-                : 'slicks — rain tyres will destroy themselves') + '</span>';
+        tw.innerHTML = '<span class="tw-icon">' +
+            (wet ? (soaked ? '🌧️' : '🌦️') : '☀️') + '</span>' +
+            '<span class="tw-word">' +
+            (wet ? (soaked ? 'SOAKED' : 'DAMP') : 'DRY') + '</span>' +
+            // The consequence, and for a wet race that means WHICH rain tyre.
+            // The two kinds differ in standing water and in grip, and those are
+            // exactly what separates the intermediate from the full wet.
+            '<span class="tw-note">' + (!wet
+                ? 'slicks — rain tyres will destroy themselves'
+                : (soaked
+                    ? 'standing water everywhere — the full wet drives through it'
+                    : 'barely any standing water — the intermediate keeps more steering'))
+            + '</span>';
     }
     // In the rain the treaded compounds lead, in the dry the slicks do. Nothing
     // is hidden either way - a slick in the wet is a legitimate gamble and a
@@ -1921,6 +1964,28 @@ const TRACK_LABELS = {
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown'
 };
 
+// The three-letter code, written out rather than sliced off the label, for two
+// reasons. Slicing a KEY is how `quadrato` came to appear as QUA in a season
+// table whose every other column had been renamed years ago - the label had
+// moved on and the abbreviation was still reading the internal name. And
+// slicing the LABEL does not survive the circuits we have: Circle and Circus
+// Maximus both give CIR, Crown and Crossover both give CRO.
+const TRACK_CODES = {
+    oval: 'OVA', peanut: 'PEA', f1: 'F1C', circomassimo: 'CMX',
+    circle: 'CIR', serpent: 'SER', quadrato: 'REC', triangle: 'TRI',
+    boomerang: 'BOO', zipper: 'ZIP', kettle: 'KET',
+    harbour: 'HAR', crossover: 'CRS', kart: 'KAR',
+    pettine: 'COM', thunder: 'THU', crown: 'CRW'
+};
+
+// Every place a circuit is NAMED goes through these two. A raw key must never
+// reach the screen or the log: it is storage, and it is allowed to be stale.
+function trackLabel(key) { return TRACK_LABELS[key] || key || '?'; }
+function trackCode(key) {
+    if (TRACK_CODES[key]) return TRACK_CODES[key];
+    return trackLabel(key).replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
+}
+
 function showGpPreview(trackType) {
     menu.style.display = 'none';
     gameOverScreen.style.display = 'none';
@@ -1940,12 +2005,15 @@ function showGpPreview(trackType) {
     const stats = measureTrackStats(pTrack, wet);
 
     document.getElementById('gp-title').innerText =
-        `Round ${round}/${total} — ${TRACK_LABELS[trackType] || trackType}`;
+        `Round ${round}/${total} — ${trackLabel(trackType)}`;
     // Bigger than it was. The small version was walked past often enough to
     // cost races, and this is the screen you look at before every round.
+    const gpKind = wet ? (championshipState && championshipState.wetKind
+                         ? championshipState.wetKind[championshipState.currentTrackIndex]
+                         : null) : null;
     document.getElementById('gp-weather').innerHTML =
         '<span class="gp-wx ' + (wet ? 'gp-wx-wet' : 'gp-wx-dry') + '">' +
-        (wet ? 'WET 🌧️' : 'DRY ☀️') + '</span>' +
+        (wet ? ((gpKind === 'soaked' ? 'SOAKED 🌧️' : 'DAMP 🌦️')) : 'DRY ☀️') + '</span>' +
         // The seed sits with the round because this is the screen you look at
         // every race: whatever else you forget, the name of the season you are
         // in is in front of you, and it is what makes running it again possible.
@@ -2284,9 +2352,30 @@ const exBuild = { jobs: null, i: 0, done: 0, total: 0, running: false, t0: 0 };
 // numbers it no longer matches. That has to be automatic - a record book that
 // silently outlives the balance it measured is worse than no record book.
 function exFingerprint() {
+    // The GEOMETRY belongs in here too, and it was missing. A record book is
+    // lap times, and a lap time is a fact about a shape: the afternoon the
+    // layouts were scaled to fit the arena, Comb lost 4.6% of its length and
+    // every saved time for it became a time for a circuit that no longer
+    // existed - and the book would have gone on showing them. That change was
+    // reverted, but the hole it exposed was real.
+    //
+    // Summed from the SEGMENTS, not from the racing line: the racing line
+    // costs 5-25ms per circuit to relax and this runs on every save and load,
+    // which would be most of a second to notice that nothing has changed.
+    let geom = 0;
+    for (const k of Object.keys(TRACK_LABELS)) {
+        try {
+            const t = makeTrack(k);
+            geom += t.trackWidth * 7 + t.grassWidth * 3;
+            for (const s of t.segments)
+                geom += s.type === 'line' ? (s.x1 + s.y1 + s.x2 + s.y2)
+                                          : (s.cx + s.cy + s.r * 13);
+        } catch (e) { /* ignore */ }
+    }
     const bits = [JSON.stringify(TYRES), String(WET_GRIP),
                   JSON.stringify(AI_PROFILES.alien || {}),
-                  JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS)];
+                  JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS),
+                  geom.toFixed(1)];
     let h = 5381;
     const s = bits.join('|');
     for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
@@ -2480,7 +2569,7 @@ function exShowTrackList() {
         const line = t.getRacingLine();
         const name = document.createElement('div');
         name.className = 'ex-name';
-        name.innerText = TRACK_LABELS[key] || key;
+        name.innerText = trackLabel(key);
         const meta = document.createElement('div');
         meta.className = 'ex-meta';
         meta.innerText = (line.length / 1000).toFixed(2) + ' km';
@@ -2532,7 +2621,7 @@ function exOpenTrack(key) {
     ];
 
     detail.innerHTML =
-        `<div class="ex-d-head"><h2>${TRACK_LABELS[key] || key}</h2>` +
+        `<div class="ex-d-head"><h2>${trackLabel(key)}</h2>` +
         `<button id="ex-track-list-btn" style="width:auto;margin:0;padding:6px 14px;` +
         `font-size:12px;background:#37474f;color:#cfd8dc;">All circuits</button></div>` +
         `<div class="ex-d-body">` +
@@ -2786,7 +2875,8 @@ function startGame(forceTrackType = null) {
         // not actually a child of the parent.
         (document.getElementById('hud-right') || hud).appendChild(weatherIndicator);
     }
-    weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
+    weatherIndicator.innerText = isRaining
+        ? (wetLevel === 'soaked' ? 'Soaked 🌧️' : 'Damp 🌦️') : 'Dry ☀️';
     
     // updateHUD only runs while playing, so anything left in these readouts
     // survives into the countdown: after qualifying the speedometer sat on
@@ -2826,7 +2916,7 @@ function startGame(forceTrackType = null) {
     // Standing water, only when it is raining. Fresh every race.
     if (typeof track.makePuddles === 'function') {
         track.puddles = [];
-        if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
+        if (isRaining) track.makePuddles(puddleCountFor(wetLevel));
     }
 
     cars = [];
@@ -2956,7 +3046,7 @@ function startGame(forceTrackType = null) {
 
     // Consumed: the next race builds its own grid unless it too is qualified for.
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
 
     racePoleColor = currentParticipants.length ? currentParticipants[0].color : null;
     lapLeaders = [];
@@ -3065,10 +3155,10 @@ function startGame(forceTrackType = null) {
     // ---- open the log for this session ----------------------------------
     RaceLog.start({
         mode: isPractice ? 'Free Practice' : (isChampionship ? 'Championship round' : 'Single race'),
-        track: trackType,
+        track: trackLabel(trackType),
         laps: isPractice ? null : TOTAL_LAPS,
         difficulty: isPractice ? null : (isChampionship ? championshipState.difficulty : difficulty),
-        weather: isRaining ? 'wet' : 'dry',
+        weather: isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry',
         seed: isChampionship && championshipState ? championshipState.seed : null,
         playerTyre: (() => {
             const p = cars.find(c => c.isPlayer);
@@ -5637,11 +5727,15 @@ function startChampionship() {
     // seed gives the same rain in the same places.
     const weather = tracks.map(() => rng() < 0.20);
     if (!weather.some(Boolean)) weather[Math.floor(rng() * weather.length)] = true;
+    // ...and which kind of wet each of those is, from the SAME stream, so a
+    // seed reproduces the rain exactly rather than approximately.
+    const wetKind = weather.map(w => (w ? rollWetKind(rng) : null));
 
     championshipState = {
         seed: seedText,
         tracks: tracks,
         weather: weather,
+        wetKind: wetKind,
         currentTrackIndex: 0,
         points: {},
         bonusPoints: {},          // places-gained, tracked apart from race points
@@ -5868,13 +5962,14 @@ function renderSeasonRecap() {
     const order = Object.keys(championshipState.points)
         .sort((a, b) => championshipState.points[b] - championshipState.points[a]);
 
-    const short = (t) => (t || '?').slice(0, 3).toUpperCase();
+    // trackCode, not a slice: the column heads used to read the raw key.
+    const short = (t) => trackCode(t);
 
     let html = '<h2 style="margin:18px 0 8px;">Season Results</h2>' +
         '<div style="overflow-x:auto;"><table class="season-table"><thead><tr>' +
         '<th style="text-align:left;">Driver</th>';
     races.forEach(r => {
-        html += `<th title="${r.track}${r.wet ? ' (wet)' : ''}">${short(r.track)}` +
+        html += `<th title="${trackLabel(r.track)}${r.wet ? ' (wet)' : ''}">${short(r.track)}` +
                 (r.wet ? '<span style="color:#64b5f6;">&#9730;</span>' : '') + '</th>';
     });
     html += '<th>Pts</th></tr></thead><tbody>';
