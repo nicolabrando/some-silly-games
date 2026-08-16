@@ -349,34 +349,75 @@ function lapsDownFrom(leader, c) {
     return Math.max(0, (leader.lap || 0) - (c.lap || 0) - behindOnLap);
 }
 
-function towerScore(c) {
-    // Finishers: DISTANCE first, then race time - exactly what the results
-    // sheet does. Time alone is wrong, and this is what put lapped cars near
-    // the top of the tower. Once the leader has taken the flag everyone else
-    // is classified the next time they cross the line, whether or not that
-    // crossing completed a lap; a car being lapped crosses the line SOONER
-    // than the cars still on the lead lap, so it was credited a quicker race
-    // time - Vettel classified at 42.466 over Senna's 45.374 while a whole lap
-    // behind - and the tower duly ranked it second.
-    //
-    // Time still has to be the tie-break rather than the order cars crossed
-    // the line: a car that takes the flag fifth with a five-second jump-start
-    // penalty is classified lower, and ranking by crossing order left the live
-    // order and the results sheet three places apart.
-    if (c.finished) {
-        const laps = Math.min(c.lap, TOTAL_LAPS);
-        // Two cars can take the flag on the same frame and record the same
-        // time to the millisecond. The one that physically crossed first is
-        // ahead; the nudge is far smaller than a frame, so it only ever
-        // decides a dead heat.
-        return 1e12 + laps * 1e9 - (isFinite(c.raceTime) ? c.raceTime : 0)
-               - (c.finishIndex || 0) * 1e-3;
+// ---------------------------------------------------------------------------
+//  ONE ORDER FOR THE WHOLE FIELD
+//  Finished, retired and still circulating, ranked by one comparator that
+//  both the timing tower and the results sheet use. This is the fix for the
+//  last places rearranging themselves while the stragglers come in.
+//
+//  What it used to do: a finished car scored 1e12 + laps, a running car
+//  scored its distance - about 9000. So the instant ANY car took the flag it
+//  leapt above every car still on the road, including cars physically ahead
+//  of it. Probed directly: a lapped backmarker crossing the line scored
+//  1.004e12 against 8923 for a lead-lap car still circulating a thousand
+//  pixels further down the road. The backmarker jumped above it, then fell
+//  back the moment that car crossed - and with cars trickling in over the
+//  closing laps the bottom of the tower rearranged itself every few seconds.
+//
+//  Two rules, and they are the ones a race steward would use:
+//
+//    * two CLASSIFIED cars are separated by laps, then by the clock. Never
+//      by distance - two cars that finish a second apart freeze their
+//      odometers within a few pixels of each other, and a few pixels of
+//      frame-capture noise must not be allowed to reorder a podium.
+//    * anything else is separated by DISTANCE COVERED, with a classified car
+//      counted at the odometer reading it had when it was classified rather
+//      than its live one. A finished car keeps rolling after the flag
+//      (measured, up to 344px of it) and a retired one gets carried off by a
+//      crane; neither is racing any more, and neither should move.
+//
+//  A car crossing the line therefore lands exactly where it already was, and
+//  the order stops moving. The first attempt at this put a finished car at
+//  "laps x lap length", which looked right and was not: trackProgress does
+//  not start at zero - the grid sits most of a lap behind the line - so that
+//  number sat a whole lap below the running cars and the churn got worse.
+//  Freezing the car's own odometer is the version that has no origin to get
+//  wrong.
+// ---------------------------------------------------------------------------
+function progressOf(c) {
+    if (!c) return 0;
+    return (c._classProgress !== undefined) ? c._classProgress : (c.trackProgress || 0);
+}
+
+// Negative when a is ahead of b.
+function raceCmp(a, b) {
+    const af = !!a.finished, bf = !!b.finished;
+    if (af && bf) {
+        const la = Math.min(a.lap, TOTAL_LAPS), lb = Math.min(b.lap, TOTAL_LAPS);
+        if (la !== lb) return lb - la;
+        const ta = isFinite(a.raceTime) ? a.raceTime : Infinity;
+        const tb = isFinite(b.raceTime) ? b.raceTime : Infinity;
+        if (ta !== tb) return ta - tb;
+        return (a.finishIndex || 0) - (b.finishIndex || 0);
     }
-    // A retired car is ranked by the distance it covered, exactly as the
-    // classification does. Sinking it to the bottom of the tower looked tidier
-    // but meant the live order and the final results sheet disagreed - by up
-    // to three places at the flag.
-    return c.trackProgress || 0;
+    const pa = progressOf(a), pb = progressOf(b);
+    if (pa !== pb) return pb - pa;
+    // dead level: a classified car is ahead of one still waiting to be
+    if (af !== bf) return af ? -1 : 1;
+    return 0;
+}
+
+// The odometer is frozen the moment a car is classified - see raceCmp.
+function freezeClassified() {
+    for (const c of cars) {
+        if ((c.finished || c.isBroken) && c._classProgress === undefined) {
+            c._classProgress = c.trackProgress || 0;
+        }
+    }
+}
+
+function towerScore(c) {
+    return progressOf(c);
 }
 
 // One settling pass towards the true order, with hysteresis on each swap.
@@ -395,8 +436,11 @@ function stableTowerOrder(sorted) {
         ? track.getRacingLine('standard').length : Infinity;
     // No hysteresis where the order is a fact rather than a judgement call:
     // between two cars that have taken the flag, or across a whole lap.
+    // Hysteresis only where the order is a judgement call: two cars still
+    // racing, nose to tail. Never between classified cars, and never across
+    // a lap.
     const marginFor = (a, b) => (a.finished || b.finished ||
-        Math.abs(towerScore(a) - towerScore(b)) > lapLen * 0.5) ? 0 : TOWER_MARGIN;
+        Math.abs(progressOf(a) - progressOf(b)) > lapLen * 0.5) ? 0 : TOWER_MARGIN;
 
     // Two settling passes a frame while the race is running, so the hysteresis
     // does its job. Once cars are taking the flag their order is a fact rather
@@ -405,7 +449,7 @@ function stableTowerOrder(sorted) {
     // lap-scale inversion is settled completely too.
     let lapGap = false;
     for (let i = 0; i < towerOrder.length - 1 && !lapGap; i++) {
-        if (towerScore(towerOrder[i + 1]) > towerScore(towerOrder[i]) + lapLen * 0.5) {
+        if (progressOf(towerOrder[i + 1]) > progressOf(towerOrder[i]) + lapLen * 0.5) {
             lapGap = true;
         }
     }
@@ -413,7 +457,11 @@ function stableTowerOrder(sorted) {
     for (let pass = 0; pass < nPasses; pass++) {
         for (let i = 0; i < towerOrder.length - 1; i++) {
             const a = towerOrder[i], b = towerOrder[i + 1];
-            if (towerScore(b) > towerScore(a) + marginFor(a, b)) {
+            const m = marginFor(a, b);
+            const swap = m > 0
+                ? progressOf(b) > progressOf(a) + m       // racing: needs to earn it
+                : raceCmp(b, a) < 0;                      // settled: the truth wins
+            if (swap) {
                 towerOrder[i] = b;
                 towerOrder[i + 1] = a;
             }
@@ -3651,6 +3699,9 @@ function updatePhysics(dt) {
     // Update all cars
     cars.forEach(car => car.update(dt, track));
 
+    // A car that has been classified stops counting - see raceCmp.
+    freezeClassified();
+
     // --- log: completed laps ------------------------------------------
     cars.forEach(c => {
         if (c.lap > c._prevLap) {
@@ -4922,8 +4973,12 @@ function updateHUD() {
             const ia = vscOrder.indexOf(a.uid), ib = vscOrder.indexOf(b.uid);
             if (ia !== -1 && ib !== -1 && ia !== ib) return ia - ib;
         }
-        const pa = a.trackProgress || 0, pb = b.trackProgress || 0;
-        if (pa !== pb) return pb - pa;
+        // The same comparator the tower settles towards - see raceCmp. These
+        // used to be two functions with two different answers for a finished
+        // car, so the live order and the results sheet could disagree about
+        // who came where.
+        const k = raceCmp(a, b);
+        if (k !== 0) return k;
         return (a.gridIndex || 0) - (b.gridIndex || 0);   // stable at lights-out
     });
 

@@ -1600,6 +1600,12 @@ button.menu-danger {
 }
 #timing-tower .tt-row.tt-lapped .tt-gap {
     color: #90a4ae;
-    font-style: italic;
+    /* "+1 LAP" is the longest thing this column ever has to say, and the
+       column clips what does not fit. The italic overhung the right edge
+       and took the P with it; a hair less size and letter-spacing, and the
+       label fits whole on every row. */
+    font-size: 12px;
+    letter-spacing: -0.2px;
+    padding-right: 1px;
 }
 #timing-tower .tt-row.tt-lapped.me { opacity: 1; }
