@@ -158,17 +158,22 @@
                             </div>
                             <div class="menu-group" data-modes="race champ">
                                 <label>Opponents</label>
-                                <select id="opponents-select">
+                                <!-- Ten, and autocomplete=off so it stays ten:
+                                     a full grid is how this game is played, and
+                                     Firefox was handing the box back as 1 after
+                                     the menu markup changed. Same treatment as
+                                     the car colour. -->
+                                <select id="opponents-select" autocomplete="off">
                                     <option value="1">1</option>
                                     <option value="2">2</option>
                                     <option value="3">3</option>
                                     <option value="4">4</option>
-                                    <option value="5" selected>5</option>
+                                    <option value="5">5</option>
                                     <option value="6">6</option>
                                     <option value="7">7</option>
                                     <option value="8">8</option>
                                     <option value="9">9</option>
-                                    <option value="10">10</option>
+                                    <option value="10" selected>10</option>
                                 </select>
                             </div>
                         </div>
