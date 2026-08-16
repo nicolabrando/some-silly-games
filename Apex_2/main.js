@@ -650,7 +650,10 @@ function setMenuMode(mode) {
 }
 
 menu.querySelectorAll('.mode-tab').forEach(b => {
-    b.addEventListener('click', () => setMenuMode(b.dataset.mode));
+    b.addEventListener('click', () => {
+        if (typeof disarmChampWipe === 'function') disarmChampWipe();
+        setMenuMode(b.dataset.mode);
+    });
 });
 setMenuMode('race');
 
@@ -676,6 +679,16 @@ startBtn.addEventListener('click', () => {
 });
 
 champBtn.addEventListener('click', () => {
+    // A season in progress is not thrown away on one click.
+    const saved = loadChampionshipSave();
+    if (saved && !champWipeArmed) {
+        champBtn.textContent = 'Discard round ' + (saved.currentTrackIndex + 1) +
+            ' of ' + saved.tracks.length + '? Press again';
+        champBtn.classList.add('menu-danger');
+        champWipeArmed = setTimeout(disarmChampWipe, 6000);
+        return;
+    }
+    disarmChampWipe();
     isChampionship = true;
     raceMode = 'championship';
     pendingGrid = null;
@@ -2555,15 +2568,51 @@ function clearChampionshipSave() {
     try { window.localStorage.removeItem(CHAMP_STORE_KEY); } catch (e) { }
     refreshChampResume();
 }
+// The saved season announces itself at the TOP of the menu, in its own
+// banner, on every tab. It used to be a button in the main row - which on
+// Nicola's window sat 736px down a scrollable menu, below the fold. He
+// never saw it, pressed Start Championship instead, and the season he was
+// running was replaced by a fresh one: same screens, same five rounds,
+// every score back to zero at round two. That is the bug he reported, and
+// the button's POSITION was half of it.
 function refreshChampResume() {
-    const btn = document.getElementById('champ-resume-btn');
-    if (!btn) return;
+    const bar = document.getElementById('champ-resume-banner');
+    const det = document.getElementById('crb-detail');
     const s = loadChampionshipSave();
-    btn.hidden = !s;
-    if (s) btn.textContent = 'Resume Championship — Round ' +
-        (s.currentTrackIndex + 1) + ' of ' + s.tracks.length;
+    if (bar) bar.hidden = !s;
+    if (det && s) {
+        const leader = Object.keys(s.points || {})
+            .sort((a, b) => (s.points[b] || 0) - (s.points[a] || 0))[0];
+        const who = leader && s.participants
+            ? (s.participants.find(p => p.color === leader) || {})
+            : null;
+        det.textContent = 'Round ' + (s.currentTrackIndex + 1) + ' of ' +
+            s.tracks.length + (leader
+                ? ' — ' + (who && who.isPlayer ? 'you lead' :
+                    ((who && who.driverName) || leader) + ' leads') +
+                  ' on ' + (s.points[leader] || 0)
+                : '');
+    }
+    disarmChampWipe();
+}
+
+// Starting a new championship over a saved one is destructive, so it asks.
+// Not a browser dialog - the game has never used one - but the button
+// itself: the first press turns it into the warning, the second goes
+// through, and it disarms itself after a few seconds or if you touch
+// anything else.
+let champWipeArmed = 0;
+function disarmChampWipe() {
+    const btn = document.getElementById('champ-btn');
+    if (champWipeArmed) clearTimeout(champWipeArmed);
+    champWipeArmed = 0;
+    if (btn) {
+        btn.textContent = 'Start Championship';
+        btn.classList.remove('menu-danger');
+    }
 }
 function resumeChampionship() {
+    disarmChampWipe();
     const s = loadChampionshipSave();
     if (!s) { refreshChampResume(); return; }
     championshipState = s;

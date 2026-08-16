@@ -1540,3 +1540,50 @@ button.chassis-opt:hover {
 .ex-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; position: relative; }
 .ex-bar > i { display: block; height: 100%; border-radius: 3px; }
 .ex-bar-row .num { text-align: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
+
+
+/* A championship in progress, announced above everything else in the menu.
+   It is the first thing on the screen because the alternative - a button
+   in the row below - was missed entirely on a short window, and the cost
+   of missing it was a season. */
+#champ-resume-banner {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0 0 14px 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid #b48a2a;
+    background: linear-gradient(180deg, rgba(255, 213, 79, 0.16), rgba(255, 213, 79, 0.07));
+}
+#champ-resume-banner[hidden] { display: none; }
+#champ-resume-banner .crb-text {
+    flex: 1;
+    text-align: left;
+    line-height: 1.35;
+}
+#champ-resume-banner .crb-text b {
+    display: block;
+    color: #ffd54f;
+    letter-spacing: 0.4px;
+}
+#champ-resume-banner #crb-detail {
+    font-size: 13px;
+    color: #d7cfae;
+}
+#champ-resume-banner #champ-resume-btn {
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0;
+    padding: 9px 20px;
+    background: #ffd54f;
+    color: #201800;
+    font-weight: bold;
+    border-radius: 6px;
+}
+
+/* Start Championship, while it is asking whether you really mean it. */
+button.menu-danger {
+    background: #c62828 !important;
+    color: #fff !important;
+}

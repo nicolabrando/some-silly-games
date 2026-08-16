@@ -80,6 +80,20 @@
                     <div id="menu-stripe"><span></span><span></span><span></span></div>
                 </div>
 
+                <!-- A season in progress announces itself HERE, above
+                     everything: the resume button used to live down in the
+                     button row, 736px into a scrollable menu, where a player
+                     on a short window never saw it - and pressed Start
+                     Championship instead, quietly throwing the season away.
+                     See refreshChampResume(). -->
+                <div id="champ-resume-banner" hidden>
+                    <div class="crb-text">
+                        <b>Championship in progress</b>
+                        <span id="crb-detail"></span>
+                    </div>
+                    <button id="champ-resume-btn" type="button">Resume</button>
+                </div>
+
                 <!-- One tab per way into the game. Every setting lives under the
                      only mode it applies to, so the "championship only" tags and
                      the paragraph explaining them have nothing left to explain. -->
@@ -229,7 +243,6 @@
                 <div class="menu-main-row">
                     <button id="start-btn" data-modes="race">Start Race</button>
                     <button id="champ-btn" data-modes="champ">Start Championship</button>
-                    <button id="champ-resume-btn" data-modes="champ" hidden>Resume Championship</button>
                     <button id="practice-btn" data-modes="practice">Start Practice</button>
                 </div>
                 <!-- the reading room: nothing here starts a session -->

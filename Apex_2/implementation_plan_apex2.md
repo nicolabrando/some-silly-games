@@ -231,6 +231,18 @@ Perché specchio e non inversione di marcia: `checkLapCross()` conta il giro att
 
 I tempi non cambiano: il circuito specchiato è **congruente**. Verificato — e con un agguato dentro: la prima misura dava il Peanut specchiato più lento del **21.8%**, giri identici al millisecondo, zero uscite. Colpa non trovata nel codice perché non c'era: le sessioni di prova pescano il bagnato al 20%, e il lato specchiato l'aveva pescato due volte di fila. Rimisurato controllando il meteo: sull'asciutto 9.2–9.6 secondi da specchiato contro 9.4–9.7 da originale. Record e personal best restano quindi validi; il **fantasma no** — la sua traccia sono coordinate, e un giro registrato in un verso attraverserebbe il mondo specchiato contromano — quindi l'orientamento fa parte della sua chiave (`circle~acw:dry`) e i giri vecchi restano orfani invece che sbagliati.
 
+### 2.4sexies-octies La stagione buttata via da un click (Apex 3)
+
+Nicola ha segnalato un campionato che al round 2 aveva **tutti i punteggi a zero**, con log e schermata. La schermata, verificata contro il log riga per riga, era **corretta**: 40 punti gara per lui sono 15 di Crossover più 25 di F1, il bonus +5 è quello dell'unico round in cui ha guadagnato posizioni, e tutti e undici i totali tornano. Il difetto non era nel conteggio: era che quella stagione **non era la sua**. Ne era cominciata una nuova, e lui non se n'era accorto.
+
+Colpa di due cose mie, che insieme fanno un buco.
+
+**Il pulsante Resume stava sotto il bordo dello schermo.** L'avevo messo nella riga dei pulsanti principali, che su una finestra di 800px cade a **y=736** — in un menu che è già scrollabile. Sulla finestra di Nicola (Firefox retina con schede, barra e segnalibri: la stessa che aveva già fatto uscire l'HUD) non si vedeva affatto. Ora la stagione salvata si annuncia **in cima al menu**, sopra le tab e visibile su tutte, con quanti round mancano e chi guida: *«Championship in progress — Round 3 of 5, Michael Schumacher leads on 36»*, e il pulsante Resume dentro il banner.
+
+**E «Start Championship» cancellava la stagione in corso in silenzio.** Un click, nessuna domanda, il salvataggio sovrascritto: chi non trova il Resume preme l'unico pulsante che vede, e la stagione è andata — stesse cinque schermate, stessi cinque round, punti da capo. Ora il primo click **chiede**: il pulsante diventa rosso e dice *«Discard round 3 of 5? Press again»*, il secondo procede, e si disarma da solo dopo sei secondi, cambiando tab o premendo Resume. Nessuna finestra di dialogo del browser — il gioco non ne ha mai usate — la domanda la fa il pulsante stesso.
+
+Verificato che il salvataggio in sé è sano, perché era il primo sospetto: due round giocati, ricarica della pagina, Resume — indice, punti e archivio delle gare identici al bit, e il round 3 riparte accumulando sopra. E l'accumulo dei punti è stato ripercorso su cinque round interi (skip e guidati): sempre cumulativo, mai parziale. La correzione è sui percorsi, non sull'aritmetica.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.
