@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 2</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20260816b">
 </head>
 <body>
     <div id="game-container">
@@ -109,6 +109,7 @@
                         <div class="menu-group" data-modes="race practice">
                             <label>Track</label>
                             <select id="track-select">
+                                <option value="anchor">Anchor</option>
                                 <option value="boomerang">Boomerang</option>
                                 <option value="circle">Circle</option>
                                 <option value="circomassimo">Circus Maximus</option>
@@ -118,7 +119,6 @@
                                 <option value="f1">F1 Circuit</option>
                                 <option value="harbour">Harbour</option>
                                 <option value="kart">Kart</option>
-                                <option value="anchor">Anchor &mdash; hand-drawn</option>
                                 <option value="kettle">Kettle</option>
                                 <option value="oval" selected>Oval</option>
                                 <option value="peanut">Peanut</option>
@@ -650,11 +650,17 @@
             </div>
         </div>
     </div>
-    <script src="racelog.js"></script>
-    <script src="track.js"></script>
-    <script src="car.js"></script>
-    <script src="ai.js"></script>
-    <script src="audio.js"></script>
+    <!-- Il ?v= non e' decorazione: aprendo il gioco da disco il browser
+         teneva in cache i .js e ricaricava solo la pagina, quindi il menu
+         mostrava un circuito nuovo e il gioco ne costruiva un altro
+         (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
+         cambia uno di questi file. Se un cambiamento non si vede lo
+         stesso: ricarica forzata, Cmd+Shift+R. -->
+    <script src="racelog.js?v=20260816b"></script>
+    <script src="track.js?v=20260816b"></script>
+    <script src="car.js?v=20260816b"></script>
+    <script src="ai.js?v=20260816b"></script>
+    <script src="audio.js?v=20260816b"></script>
     <script>
         window.onerror = function(msg, url, lineNo, columnNo, error) {
             const errDiv = document.createElement('div');
@@ -670,6 +676,6 @@
             return false;
         };
     </script>
-    <script src="main.js"></script>
+    <script src="main.js?v=20260816b"></script>
 </body>
 </html>

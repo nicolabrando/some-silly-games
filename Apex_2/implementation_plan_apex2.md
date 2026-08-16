@@ -300,6 +300,8 @@ Quindi del disegno si è preso la **forma**. La carreggiata è costante, 100px c
 
 **Gira in senso antiorario**, come chiede la freccia: 594° di curve a sinistra contro 234° a destra. Il calendario torna a **8 orari contro 10 antiorari**, dalla parte che risparmia l'anulare destro.
 
+**E una nota che non riguarda il circuito ma il modo in cui il gioco viene aperto.** Al primo giro di prova Nicola ha selezionato Anchor e si è ritrovato all'Oval. I file sul disco erano giusti — classe, `case 'anchor'`, etichetta, sigla, calendario — ma il browser aveva ricaricato solo `racing.html` e serviva `main.js` e `track.js` **dalla cache**: il menu mostrava la voce nuova e lo switch, vecchio, cadeva nel `default:` che è l'Oval. Ora ogni `<script>` e il foglio di stile portano un `?v=<data>` che va cambiato quando cambiano quei file; se un cambiamento non si vede lo stesso, ricarica forzata (Cmd+Shift+R). Vale la pena saperlo perché lo stesso inganno può far sembrare "non applicata" qualunque modifica futura.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.
