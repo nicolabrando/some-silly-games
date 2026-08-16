@@ -282,6 +282,24 @@ Rimisurato in simulazione su 60 gare con il 20% di bagnato: lo spread fra miglio
 
 **IL CARTELLO DEL VINCITORE** era una scatola al 20% dell'altezza, in mezzo allo schermo, cioè sulla strada — e compare proprio mentre qualcun altro sta ancora facendo le sue ultime curve. Ora è una striscia sottile appesa al bordo superiore, fuori dalla carreggiata e translucida.
 
+### 2.4septies-decies Anchor, dal foglio di Nicola (Apex 3)
+
+Un circuito nuovo arrivato come **fotografia di un disegno a penna**: un dito verticale in alto a sinistra, un lungo rettifilo in cima, un'ansa a destra che scende e risale, una conca larga a sinistra che riporta al traguardo. Con due indicazioni scritte sul foglio che valgono quanto il tratto: la **linea di partenza** a metà del rettifilo basso e una **freccia** che punta a destra, cioè il senso di marcia. E un avvertimento: «l'ho disegnato male, la larghezza della pista dovrebbe essere costante».
+
+Quindi del disegno si è preso la **forma**. La carreggiata è costante, 100px come Kart e Circo Massimo, e tutto il resto — muro, barriera, cordoli, tribune — lo deriva il gioco dalle stesse regole di ogni altro circuito. Il nome è mio: **Anchor**, perché è quello che sembra — l'asta verticale, il ceppo orizzontale e i due bracci che si arrotolano in basso.
+
+**Due cose il disegno non poteva sapere.** La prima: i due tornanti erano tracciati con le gambe attaccate, cioè con l'isola in mezzo di spessore zero. Il muro sta a 68px dalla mezzeria e la barriera a 80, quindi due tratti non adiacenti devono stare almeno **146px** l'uno dall'altro o non c'è dove disegnarli. Le gambe del dito sono a 176px, quelle dell'ansa a 166. La seconda: il rettifilo alto e quello del traguardo si toccavano, condividendo un bordo; ora stanno a 185px. Misurato sul giro finito, il punto più stretto fra tratti non adiacenti è **176px** contro i 146 richiesti.
+
+**La geometria** è un poligono con un arco tangente a ogni vertice, come Monaco: tangenza esatta per costruzione, e i raggi si stringono da soli finché ogni raccordo entra nel suo lato. Chiusura **0.010px**, rottura di tangenza **0.003°**, torsione esattamente −360°. Dodici curve, raggi da 75 a 140, giro **2925px** — il terzo più lungo del gioco dopo Kart e Comb. Il rettifilo alto è lungo 543px, ed è il punto in cui si sta più a lungo col gas aperto.
+
+**L'arena.** La prima stesura era larga 1156px contro i 1150 disponibili e `centreInArena()` la dichiarava fuori misura — quel controllo esiste apposta per non far passare in silenzio un circuito che non ci sta. Stretta del 2.5% in orizzontale: 1131 contro 1150, 740 contro 765 in altezza.
+
+**Il traguardo sta dove lo ha messo lui**, in fondo al rettifilo basso, che è l'unico tratto che si percorre verso destra — e `checkLapCross()` conta il giro solo attraversando `startX` in quel verso. Ci sono 312px di dritto prima della linea, il che serve anche alla corsia box: l'auto viene presa in carico fra 250 e 360px prima della linea e trascinata alla piazzola, e su un tratto curvo la manovra taglia fuori strada. Verificato con le soste attive: **13 pit stop** in una gara da sei giri, nessuna auto piantata in corsia, **zero fotogrammi fuori pista** durante la manovra.
+
+**Guidabile a tutti e quattro i livelli**: dieci arrivati su dieci e zero ritiri da facile a impossibile, tempo contro il muro fra 0.5% e 1.6% — fra i valori più bassi del gioco. Miglior giro da 19.9s a facile a 14.3s a impossibile.
+
+**Gira in senso antiorario**, come chiede la freccia: 594° di curve a sinistra contro 234° a destra. Il calendario torna a **8 orari contro 10 antiorari**, dalla parte che risparmia l'anulare destro.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.

@@ -1346,6 +1346,7 @@ function makeTrackRaw(trackType) {
         case 'harbour':      return new HarbourTrack();
         case 'crossover':    return new CrossoverTrack();
         case 'kart':       return new KartTrack();
+        case 'anchor':       return new AnchorTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2151,6 +2152,7 @@ function measureTrackStats(qTrack, raining) {
 }
 
 const TRACK_LABELS = {
+    anchor: 'Anchor',
     oval: 'Oval', peanut: 'Peanut', f1: 'F1 Circuit', circomassimo: 'Circus Maximus',
     // 'quadrato' is the internal key and stays put: it is written into saved
     // championships and into every race log already on disk. Only the label
@@ -2169,6 +2171,7 @@ const TRACK_LABELS = {
 // slicing the LABEL does not survive the circuits we have: Circle and Circus
 // Maximus both give CIR, Crown and Crossover both give CRO.
 const TRACK_CODES = {
+    anchor: 'ANC',
     oval: 'OVA', peanut: 'PEA', f1: 'F1C', circomassimo: 'CMX',
     circle: 'CIR', serpent: 'SER', quadrato: 'REC', triangle: 'TRI',
     boomerang: 'BOO', zipper: 'ZIP', kettle: 'KET',
@@ -6064,7 +6067,8 @@ refreshChampResume();
 // circuit to the game adds it to the season without touching anything else.
 const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent',
                      'quadrato', 'triangle', 'pettine', 'thunder', 'crown',
-                     'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'kart'];
+                     'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'kart',
+                     'anchor'];
 const SEASON_DEFAULT = 10;
 
 function seasonRounds() {

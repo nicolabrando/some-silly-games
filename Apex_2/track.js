@@ -2333,6 +2333,82 @@ class KartTrack extends SegmentedTrack {
 }
 
 // ===========================================================================
+//  ANCHOR
+// ===========================================================================
+//
+//  Disegnato a mano da Nicola su un foglio e fotografato: un dito verticale
+//  in alto a sinistra, un lungo rettifilo in cima, un'ansa a destra che
+//  scende e risale, e a sinistra una conca larga che riporta al traguardo.
+//  Il disegno era a larghezza variabile - lo dice lui stesso - quindi quello
+//  che si e' preso e' la FORMA; la carreggiata qui e' costante come su ogni
+//  altro circuito, 50px di semicarreggiata come Kart e Circo Massimo.
+//
+//  Due cose il disegno non poteva sapere. La prima: i due tornanti erano
+//  disegnati con le gambe attaccate, cioe' con l'isola in mezzo di spessore
+//  zero. Il muro sta a 58px dalla mezzeria e la barriera a 70, quindi due
+//  tratti non adiacenti devono stare almeno 126px l'uno dall'altro o non c'e'
+//  dove disegnarli: le gambe del dito sono a 180px e quelle dell'ansa a 170.
+//  La seconda: il rettifilo alto e quello del traguardo erano a contatto, e
+//  ora stanno a 185px. Misurato sul giro finito, il punto piu' stretto fra
+//  tratti non adiacenti e' 180px contro i 126 richiesti.
+//
+//  LA GEOMETRIA e' un poligono con un arco tangente a ogni vertice, come
+//  Monaco: la tangenza e' esatta per costruzione e non per taratura, e i
+//  raggi si stringono da soli finche' ogni raccordo entra nel suo lato.
+//  Chiusura 0.009px, rottura di tangenza 0.024 gradi, torsione esattamente
+//  -360. Dodici curve, raggi da 75 a 140, giro 2970px - il terzo piu' lungo
+//  del gioco dopo Kart e Comb.
+//
+//  Gira in senso ANTIORARIO, che e' quello che il disegno chiede: la freccia
+//  di Nicola punta a destra sul rettifilo del traguardo e l'infield sta a
+//  sinistra. Porta il calendario a 8 orari contro 10 antiorari, cioe' dalla
+//  parte che risparmia l'anulare destro.
+// ===========================================================================
+class AnchorTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 50;
+        this.grassWidth = 70;
+
+        this.segments = [
+            { type: 'arc', cx: 604.42, cy: 600.00, r: 140.00, start: -2.148661, end: -1.570796, ccw: false },
+            { type: 'line', x1: 604.42, y1: 460.00, x2: 916.80, y2: 460.00 },
+            { type: 'arc', cx: 916.80, cy: 535.00, r: 75.00, start: -1.570796, end: 0.000000, ccw: false },
+            { type: 'line', x1: 991.80, y1: 535.00, x2: 991.80, y2: 550.00 },
+            { type: 'arc', cx: 1066.80, cy: 550.00, r: 75.00, start: 3.141593, end: 1.570796, ccw: true },
+            { type: 'line', x1: 1066.80, y1: 625.00, x2: 1082.55, y2: 625.00 },
+            { type: 'arc', cx: 1082.55, cy: 550.00, r: 75.00, start: 1.570796, end: 0.000000, ccw: true },
+            { type: 'line', x1: 1157.55, y1: 550.00, x2: 1157.55, y2: 355.00 },
+            { type: 'arc', cx: 1077.55, cy: 355.00, r: 80.00, start: 0.000000, end: -1.570796, ccw: true },
+            { type: 'line', x1: 1077.55, y1: 275.00, x2: 534.68, y2: 275.00 },
+            { type: 'arc', cx: 534.67, cy: 191.00, r: 84.00, start: 1.570796, end: 3.141593, ccw: false },
+            { type: 'line', x1: 450.68, y1: 191.00, x2: 450.68, y2: 126.75 },
+            { type: 'arc', cx: 368.93, cy: 126.75, r: 81.75, start: 0.000000, end: -1.570796, ccw: true },
+            { type: 'line', x1: 368.93, y1: 45.00, x2: 356.93, y2: 45.00 },
+            { type: 'arc', cx: 356.93, cy: 126.75, r: 81.75, start: -1.570796, end: 3.141593, ccw: true },
+            { type: 'line', x1: 275.18, y1: 126.75, x2: 275.18, y2: 203.40 },
+            { type: 'arc', cx: 135.18, cy: 203.40, r: 140.00, start: 0.000000, end: 0.375510, ccw: false },
+            { type: 'line', x1: 265.42, y1: 254.75, x2: 194.28, y2: 435.20 },
+            { type: 'arc', cx: 302.77, cy: 477.97, r: 116.61, start: -2.766083, end: 2.737062, ccw: true },
+            { type: 'line', x1: 195.57, y1: 523.87, x2: 204.47, y2: 544.66 },
+            { type: 'arc', cx: 288.46, cy: 508.71, r: 91.36, start: 2.737062, end: 1.940585, ccw: true },
+            { type: 'line', x1: 255.44, y1: 593.89, x2: 270.74, y2: 599.82 },
+            { type: 'arc', cx: 307.55, cy: 504.86, r: 101.85, start: 1.940585, end: 0.992932, ccw: true },
+            { type: 'line', x1: 363.19, y1: 590.17, x2: 527.94, y2: 482.73 }
+        ];
+
+        // Sul rettifilo del traguardo, 324px di dritto fra la diagonale che
+        // arriva dalla conca e la staccata dell'ansa: la linea sta in fondo,
+        // cosi' la finestra da cui la corsia box prende in carico l'auto
+        // (250-360px prima della linea) cade ancora sull'asfalto dritto.
+        this.startX = 894;
+        this.startY = 460;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+// ===========================================================================
 //  COMB
 // ===========================================================================
 //
