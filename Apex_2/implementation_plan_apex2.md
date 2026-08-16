@@ -243,6 +243,20 @@ Colpa di due cose mie, che insieme fanno un buco.
 
 Verificato che il salvataggio in sé è sano, perché era il primo sospetto: due round giocati, ricarica della pagina, Resume — indice, punti e archivio delle gare identici al bit, e il round 3 riparte accumulando sopra. E l'accumulo dei punti è stato ripercorso su cinque round interi (skip e guidati): sempre cumulativo, mai parziale. La correzione è sui percorsi, non sull'aritmetica.
 
+### 2.4sexies-novies La torre e i doppiati (Apex 3)
+
+«Fa sempre confusione nell'ordine con i doppiati.» Misurato prima di toccare niente: l'**ordine** era giusto — nessun salto di distanza in una gara da quindici giri, e la fila mostrata non si discostava mai di più di due posizioni da quella vera, che è l'isteresi che impedisce a due auto affiancate di scambiarsi di posto sessanta volte al secondo. A essere sbagliata era la **colonna dei distacchi**, e in modo sistematico: su 458 righe di doppiati campionate, l'**85%** era scritto come un distacco a tempo. Un'auto un giro sotto leggeva «+0.0» sotto quella davanti. Impossibile capire chi stesse correndo con chi, che è l'unica cosa per cui esiste una torre.
+
+La causa è una definizione sbagliata. «Quanti giri sotto» veniva calcolato dalla **distanza**: *l'auto sulla riga sopra è più avanti di una lunghezza-giro?* Ma essere doppiati non è un fatto di distanza, è un fatto di **giri**, e le due cose non coincidono: Alonso al giro 5 contro il sesto degli altri era doppiato pur essendo sei secondi e mezzo — non un giro intero — dietro a chi lo precedeva in classifica. La domanda giusta è: il leader ha completato più giri di me **ed è davanti a me sulla strada**?
+
+    lapsDown = (leader.lap − c.lap) − (c.lapS > leader.lapS ? 1 : 0)
+
+Il termine di correzione è ciò che la rende esatta, e si vede subito in prova: quando il leader taglia il traguardo legge giro 8 mentre tutti gli altri sono al 7, e nessuno di loro è doppiato — sono semplicemente più indietro nel giro corrente di quanto lui sia avanti nel suo. Senza quel termine l'intera griglia si sarebbe marcata doppiata una volta a giro.
+
+Tre conseguenze sullo schermo. Il distacco di un doppiato è **«+1 LAP»**, sempre, per ognuno di loro e calcolato **contro il leader** invece che contro la riga di sopra. Un intervallo a tempo compare solo fra auto che si stanno davvero contendendo la posizione, cioè sullo stesso giro. E il gruppo del giro dei leader finisce con una **riga tratteggiata**: sotto quella riga nessuno sta correndo con chi sta sopra — metà della confusione non erano i numeri, era che la torre sembrava una coda unica.
+
+Verificato leggendo quello che la torre **disegna davvero**, non ricalcolando la stessa formula: su 445 righe di doppiati in Apex 3 e 475 nella build pit stop, **zero** etichettate male e **zero** righe del giro dei leader marcate per errore. L'ordine non è stato toccato — cambia solo ciò che la colonna dice — e alla bandiera la torre e il foglio dei risultati restano identici, pilota per pilota.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.

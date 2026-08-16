@@ -1587,3 +1587,19 @@ button.menu-danger {
     background: #c62828 !important;
     color: #fff !important;
 }
+
+
+/* Lapped cars in the timing tower: not racing the cars above them, and the
+   tower now says so twice - the gap column reads "+1 LAP", and the group is
+   set apart by a rule at its edge and a little less weight. */
+#timing-tower .tt-row.tt-lapped { opacity: 0.72; }
+#timing-tower .tt-row.tt-lapline {
+    border-top: 1px dashed #7a8a7a;
+    margin-top: 3px;
+    padding-top: 3px;
+}
+#timing-tower .tt-row.tt-lapped .tt-gap {
+    color: #90a4ae;
+    font-style: italic;
+}
+#timing-tower .tt-row.tt-lapped.me { opacity: 1; }
