@@ -263,28 +263,28 @@ const AI_PROFILES = {
 const AI_DRIVER_STYLES = {
     // Blinding through the quick stuff and peerless in the rain; gives it back
     // on the straights and lives closest to the edge - by far the most mistakes.
-    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.026, cleanAir: 1, trim: 0.9979 },
+    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.026, cleanAir: 1, look: -6, trim: 0.9999 },
     // The Professor: never errs, superb alone - and genuinely poor in the wet
     // and reluctant wheel to wheel.
-    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.988, cleanAir: 1.01, trim: 1.0114 },
+    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.988, cleanAir: 1.01, look: 10, trim: 1.0114 },
     // Relentless metronome, brutal on defence, superb in the rain; nothing
     // special in clean air.
-    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.050, cleanAir: 0.999, trim: 1.0002 },
+    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.050, cleanAir: 0.999, look: 4, trim: 0.9990 },
     // Latest braker on the grid, never yields - and error-prone with it.
-    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.949, cleanAir: 0.998, trim: 1.0126 },
+    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.949, cleanAir: 0.998, look: -8, trim: 1.0126 },
     // Thrives in the wet and in a fight; the weakest of the lot on his own.
-    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.038, cleanAir: 0.997, trim: 1.0010 },
+    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.038, cleanAir: 0.997, look: 8, trim: 1.0010 },
     // Unbeatable wheel to wheel, ordinary once the road is clear.
-    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.044, cleanAir: 0.997, trim: 0.9954 },
+    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.044, cleanAir: 0.997, look: 0, trim: 0.9954 },
     // Devastating in clean air and on a straight; hates traffic and the rain.
-    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.986, cleanAir: 1.014, trim: 0.9973 },
+    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.986, cleanAir: 1.014, look: -2, trim: 0.9973 },
     // Famously smooth and almost mistake-free; passive in a fight.
-    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.011, cleanAir: 1.005, trim: 0.9928 },
+    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.011, cleanAir: 1.005, look: 8, trim: 0.9928 },
     // The computer: calculated risk, no heroics, no mistakes - and no pace in
     // the wet.
-    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.014, cleanAir: 1.008, trim: 0.9919 },
+    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.014, cleanAir: 1.008, look: 10, trim: 0.9919 },
     // Wins at the slowest speed necessary: no weakness, no standout either.
-    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.015, cleanAir: 1.003, trim: 0.9988 }
+    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.015, cleanAir: 1.003, look: 4, trim: 0.9988 }
 };
 
 // Physics constants mirrored from car.js - keep in sync if the car changes.
@@ -1283,7 +1283,18 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
         // everything; Prost and Clark drive it round.
         p.provoke *= Math.max(0.25, Math.min(1.8,
             1 + (s.err - 0.7) * 0.30 + (1 - s.steerTau) * 0.45));
-        if (driverName === 'Lewis Hamilton') p.lookBase += 14;   // reads the track furthest ahead
+        // How far up the road they read, in pixels on top of the difficulty's
+        // own look-ahead. This used to be one line of special case - Hamilton,
+        // and nobody else, +14 - which is exactly the thing the balance rule
+        // at the top of this table forbids: a real advantage that nothing is
+        // traded against. It never entered the trim fit either, because trim
+        // only scales corner and straight pace. Measured across 110 of
+        // Nicola's own races, Hamilton finished 4.63 on average against 5.42
+        // for the next man and took 14 of the 47 races the AI won between
+        // them; he was the title rival every season, which is what he
+        // reported. It is a column now: a trait like any other, visible,
+        // spread across the field, and paid for in the refitted trim.
+        p.lookBase += (s.look || 0);
     }
 
     // Hard ceiling: a personality colours how a driver is quick, it never lets

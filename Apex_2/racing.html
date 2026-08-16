@@ -620,8 +620,11 @@
                     <button id="log-close-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #555;">Close</button>
                 </div>
             </div>
-            <div id="winner-announcement" style="display: none; position: absolute; top: 20%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; border: 2px solid #555; text-align: center; font-size: 24px;">
-                <h2 id="winner-text" style="margin: 0;"></h2>
+            <!-- Pinned to the top edge, styled in the stylesheet: a box in
+                 the middle of the screen covered the road while the player
+                 was still driving the last corners. -->
+            <div id="winner-announcement" style="display: none;">
+                <h2 id="winner-text"></h2>
             </div>
         </div>
         

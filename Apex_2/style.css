@@ -1609,3 +1609,31 @@ button.menu-danger {
     padding-right: 1px;
 }
 #timing-tower .tt-row.tt-lapped.me { opacity: 1; }
+
+
+/* The winner announcement. It used to be a box at 20% of the height, dead
+   centre - which is the road. Somebody is usually still driving their own
+   last corners when it appears, so it is now a slim strip pinned to the very
+   top edge, clear of the racing surface and translucent enough to see
+   through if a circuit does reach up there. */
+#winner-announcement {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 62%;
+    padding: 5px 22px 7px;
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid #6a6a6a;
+    border-top: none;
+    border-radius: 0 0 10px 10px;
+    text-align: center;
+    pointer-events: none;
+    z-index: 30;
+}
+#winner-announcement h2 {
+    margin: 0;
+    font-size: 17px;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+}

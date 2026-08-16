@@ -1687,7 +1687,9 @@ class SegmentedTrack {
         //    were missing, so the armco never floats on the background.
         this.drawPath(ctx);
         ctx.lineWidth = Math.max(this.grassWidth, this.barrierRadius()) * 2;
-        ctx.strokeStyle = '#2e7d32';
+        // Grass unless a circuit says otherwise: vergeColour is the hook a
+        // layout uses when its run-off is not lawn.
+        ctx.strokeStyle = this.vergeColour || '#2e7d32';
         ctx.stroke();
 
         // 2. Kerbs, on the INSIDE of every corner, wide enough to cover the

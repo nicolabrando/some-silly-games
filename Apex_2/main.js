@@ -2636,6 +2636,12 @@ function loadChampionshipSave() {
         if (!s || !Array.isArray(s.tracks) || !Array.isArray(s.participants) ||
             typeof s.currentTrackIndex !== 'number' || !s.points ||
             s.currentTrackIndex >= s.tracks.length) return null;
+        // A calendar can name a circuit this build no longer has - Monaco was
+        // added and then taken out again in the same afternoon. makeTrack()
+        // would quietly hand back an Oval and the season table would print
+        // "undefined" for the round, so the save is refused instead: better a
+        // fresh season than one that lies about where it raced.
+        if (!s.tracks.every(t => SEASON_POOL.indexOf(t) !== -1)) return null;
         return s;
     } catch (e) { return null; }
 }
@@ -3913,9 +3919,15 @@ function updatePhysics(dt) {
         for (let j = i + 1; j < cars.length; j++) {
             const c1 = cars[i];
             const c2 = cars[j];
-            // A wreck is being craned away, or already is off the circuit: it
-            // must not act as a barrier in the middle of the racing line.
-            if (c1.isBroken || c2.isBroken) continue;
+            // A wreck is DEBRIS: it sits where it stopped and you have to go
+            // round it. It stops being an obstacle only once it is off the
+            // ground - on the hook (liftAmount) or parked behind the
+            // barriers (recovered) - because then it genuinely is not there
+            // any more. It used to vanish the instant it broke, so a car
+            // that had just been destroyed in front of you was something you
+            // drove straight through.
+            const gone = (c) => c.recovered || (c.liftAmount || 0) > 0.05;
+            if ((c1.isBroken && gone(c1)) || (c2.isBroken && gone(c2))) continue;
             // On a circuit with a bridge, two cars can share a pixel and be
             // ten metres apart vertically.
             if (track.sameLevel && !track.sameLevel(c1, c2)) continue;
@@ -3931,10 +3943,15 @@ function updatePhysics(dt) {
                 const ny = dy / dist;
                 const pushX = nx * overlap * 0.5;
                 const pushY = ny * overlap * 0.5;
-                c1.x -= pushX;
-                c1.y -= pushY;
-                c2.x += pushX;
-                c2.y += pushY;
+                // Dead weight: a wreck does not spring out of the way, so the
+                // running car takes the whole displacement and the debris
+                // stays put. Two live cars share it, exactly as before.
+                const w1 = c1.isBroken ? 0 : 1, w2 = c2.isBroken ? 0 : 1;
+                const tot = (w1 + w2) || 1;
+                c1.x -= pushX * 2 * w1 / tot;
+                c1.y -= pushY * 2 * w1 / tot;
+                c2.x += pushX * 2 * w2 / tot;
+                c2.y += pushY * 2 * w2 / tot;
 
                 // Bounce velocities along the normal
                 const relVx = c2.velocity.x - c1.velocity.x;
@@ -4642,10 +4659,16 @@ function applyCraneCollisions() {
             // kill the component of velocity going INTO the crane, and take
             // the damage from it. Same shape as the barrier rule, so brushing
             // one is survivable and driving into it head-on is not.
+            // Cancel the component going INTO it and nothing more, so the
+            // car slides along the obstacle and can be steered round it -
+            // the way a wall works. It used to add 1.35 of that component
+            // back, which is a bounce: drivers were fired backwards off a
+            // stationary truck instead of squeezing past it. Nicola called
+            // them repulsors, which is exactly what 1.35 makes them.
             const into = -(c.velocity.x * nx + c.velocity.y * ny);
             if (into > 0) {
-                c.velocity.x += nx * into * 1.35;     // stop, plus a little bounce
-                c.velocity.y += ny * into * 1.35;
+                c.velocity.x += nx * into;
+                c.velocity.y += ny * into;
                 const hit = Math.max(0, into - 30) * 0.10;
                 if (hit > 0 && typeof c.takeDamage === 'function') {
                     c.takeDamage(hit * hit * 0.5);
@@ -5131,9 +5154,11 @@ function updateHUD() {
             || 13000;
         dnfWindowMs = Math.max(8000, Math.min(45000, refLap * 2.0));
 
-        // Show temporary winner announcement
+        // Show temporary winner announcement. It lives at the very top of
+        // the arena now - see the CSS - because in the middle of the screen
+        // it covered the road at the one moment somebody is still driving
+        // the last corners of their own race.
         winnerAnnouncement.style.display = 'block';
-        winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
         if (firstFinisher.isPlayer) {
             winnerText.innerHTML = twoPlayer
                 ? `${humanLabel(firstFinisher)} Finished First!` : 'You Finished First!';
@@ -5154,7 +5179,6 @@ function updateHUD() {
             (raceMode === 'race' || raceMode === 'championship')) {
             hc.notifiedBroken = true;
             winnerAnnouncement.style.display = 'block';
-            winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
             winnerText.innerHTML = twoPlayer
                 ? `${humanLabel(hc)} — Car Destroyed!` : 'Car Destroyed!';
             winnerText.style.color = "#F44336";
