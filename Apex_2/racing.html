@@ -205,8 +205,14 @@
                         </div>
                         <div class="menu-group">
                             <label id="p1-color-label">Your car</label>
-                            <select id="color-select">
-                                <option value="red">Red</option>
+                            <!-- autocomplete=off, and red says so explicitly:
+                                 Firefox restores <select> values across a
+                                 reload by itself, and once the menu's markup
+                                 changed it started handing this one back as
+                                 blue. The game's default has always been red
+                                 and now nothing else can decide otherwise. -->
+                            <select id="color-select" autocomplete="off">
+                                <option value="red" selected>Red</option>
                                 <option value="blue">Blue</option>
                                 <option value="yellow">Yellow</option>
                                 <option value="purple">Purple</option>
@@ -217,7 +223,7 @@
                         </div>
                         <div class="menu-group" id="p2-color-group" style="display: none;">
                             <label>Player 2 car</label>
-                            <select id="p2-color-select">
+                            <select id="p2-color-select" autocomplete="off">
                                 <option value="blue" selected>Blue</option>
                                 <option value="red">Red</option>
                                 <option value="yellow">Yellow</option>
