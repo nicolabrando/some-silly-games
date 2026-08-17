@@ -302,6 +302,42 @@ Quindi del disegno si è preso la **forma**. La carreggiata è costante, 100px c
 
 **E una nota che non riguarda il circuito ma il modo in cui il gioco viene aperto.** Al primo giro di prova Nicola ha selezionato Anchor e si è ritrovato all'Oval. I file sul disco erano giusti — classe, `case 'anchor'`, etichetta, sigla, calendario — ma il browser aveva ricaricato solo `racing.html` e serviva `main.js` e `track.js` **dalla cache**: il menu mostrava la voce nuova e lo switch, vecchio, cadeva nel `default:` che è l'Oval. Ora ogni `<script>` e il foglio di stile portano un `?v=<data>` che va cambiato quando cambiano quei file; se un cambiamento non si vede lo stesso, ricarica forzata (Cmd+Shift+R). Vale la pena saperlo perché lo stesso inganno può far sembrare "non applicata" qualunque modifica futura.
 
+### 2.4duodevicies Il rivale della stagione (Apex 3)
+
+Tolto il bonus cablato di Hamilton, il campionato e' diventato equo — e Nicola ha notato subito il rovescio: «le performance degli altri risultano un po' appiattite», nessuno contro cui scontrarsi. La sua proposta: in campionato, un pilota a caso prende un "boost" per quella stagione soltanto.
+
+**E' l'idea giusta, e per una ragione che il gioco aveva gia' in pancia.** `skillVariation` — l'estrazione fra 0.8 e 1.1 che ogni pilota fa a inizio stagione — vale il **7% di passo**, tre volte lo scarto fra i caratteri (2%) e piu' di qualunque differenza di telaio. Una gerarchia stagionale quindi esisteva gia', ed era casuale come vuole lui; solo che era **invisibile e senza nome**, quindi si leggeva come rumore e non come un rivale. Il lavoro non era creare la differenza: era darle un nome.
+
+**Come funziona.** All'apertura del campionato uno degli avversari viene estratto **dallo stesso flusso seminato** del calendario e della pioggia (stesso seme, stesso rivale) e per tutta la stagione:
+
+- non subisce l'estrazione di `skillVariation`: prende il massimo (1.1), quindi non esiste il rivale sfortunato al sorteggio;
+- prende un **+1.5%** su passo in curva e in rettilineo (`RIVAL_BOOST`);
+- **sbaglia il 20% in meno** — un rivale in forma non e' solo piu' veloce, e' anche piu' solido.
+
+Non e' un ritorno al caso Hamilton, ed e' utile dire perche': quello era cablato su un nome e non finiva mai. Questo cambia pilota ogni stagione e muore con la stagione.
+
+**E non e' scritto da nessuna parte.** La prima versione lo annunciava sulla schermata del Gran Premio e lo marcava in classifica con un'etichetta FORM; Nicola le ha fatte togliere entrambe, con la ragione giusta: «chi e' lo si dovrebbe vedere dai risultati, non da un'etichetta». Un rivale dichiarato in anticipo e' un'informazione; un rivale che si riconosce perche' e' sempre davanti e' una stagione. Resta la riga nel **log** — quello e' il registro di cosa e' successo, non un avviso prima che succeda. Nelle gare singole `AI.seasonRival` resta `null` e la griglia e' esattamente quella tarata.
+
+**I numeri sono misurati, non scelti.** Sedici stagioni intere simulate (5 round, 5 giri, dieci avversari), con le gare vere e il disegno saltato:
+
+| | titoli al rivale | piazzamento medio del rivale |
+|---|---|---|
+| solo boost +1.4%, `skillVariation` a sorte | **0 / 8** | 5.0 |
+| boost +1.5% **e** estrazione massima, difficile | **4 / 8** | 1.50 |
+| boost +1.5% **e** estrazione massima, medio | **3 / 8** | 1.88 |
+
+La prima riga e' la lezione: col solo boost, il rivale finiva quinto e non vinceva niente — l'estrazione casuale se lo mangiava. Con le due cose insieme e' il favorito dichiarato e perde comunque **nove stagioni su sedici**, che e' quello che serve: qualcuno da battere, non un muro. Il titolo continua ad andare a cinque o sei piloti diversi su otto stagioni.
+
+### 2.4undevicies Il ponte di Crossover: due strade, non un piazzale
+
+Tre segnalazioni in una: sotto il ponte c'e' una barriera che sporge in pista e non si vede, dal ponte si scende di lato, e da sotto in qualche modo si sale.
+
+Sono lo stesso bug. `getClosestPoint()` risponde alla domanda «quanto e' lontano il pezzo di strada **piu' vicino**», e dove due strade si incrociano quella e' la domanda sbagliata: l'unione dei due corridoi e' una X aperta, e dentro la X **non c'e' nessun muro**. Da sopra si esce di lato e si atterra sulla strada di sotto; da sotto si sale sul ponte. E nei quattro cunei d'erba fra le due strade i muri ci sono eccome — con il piano del ponte disegnato sopra, invisibili: e' la barriera contro cui Nicola e' andato a sbattere due volte.
+
+Ora, sui circuiti con ponte, il muro si misura contro la **propria** strada: i nodi della linea attorno all'indice che l'auto sta gia' inseguendo (`car._nodeIdx`, tenuto da car.js con una ricerca a finestra). Lontano dall'incrocio le due risposte sono lo stesso numero; all'incrocio questa tiene ciascuno sulla carreggiata su cui e'. Con una via d'uscita: un'auto trottolata e mal localizzata verrebbe misurata contro una strada dove non e', quindi oltre un muro di margine torna a valere la risposta globale. Verificato spingendo un'auto di traverso a 260 px/s in mezzo all'incrocio: si ferma a 86px dalla **sua** mezzeria — il parapetto — mentre si trova a 1px dalla mezzeria dell'altra strada. Prima ci passava sopra.
+
+Due ritocchi al disegno del ponte, gia' che c'era. Il piano era largo `trackWidth + 30`, cioe' dodici pixel **oltre** la linea dove l'auto viene fermata: grigio che si legge come strada e non lo e'. Ora e' largo quanto il muro, quindi il parapetto sta dove sta il muro. Ed era opaco, quindi il sottopasso si guidava alla cieca: ora e' all'88%, e la strada di sotto con le auto che ci passano si intravede.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.

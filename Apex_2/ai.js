@@ -1247,6 +1247,10 @@ class AI {
 // -----------------------------------------------------------------------------
 //  Profile construction, shared by the live AI and by qualifying simulation.
 // -----------------------------------------------------------------------------
+// Chi ha il pacchetto buono quest'anno: { driver, boost } in campionato,
+// null in gara singola. Lo scrive main.js a ogni sessione.
+AI.seasonRival = null;
+
 AI.buildProfile = function (driverName, difficulty, skillVariation) {
     const base = AI_PROFILES[difficulty] ? AI_PROFILES[difficulty] : AI_PROFILES.medium;
     const p = Object.assign({}, base);
@@ -1295,6 +1299,26 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
         // reported. It is a column now: a trait like any other, visible,
         // spread across the field, and paid for in the refitted trim.
         p.lookBase += (s.look || 0);
+    }
+
+    // ---- il rivale della stagione ---------------------------------------
+    // Dieci piloti tarati per finire a due decimi l'uno dall'altro sono equi
+    // e, su cinque round, piatti: non c'e' nessuno da battere in particolare.
+    // Quindi in campionato UNO di loro - estratto a sorte a inizio stagione,
+    // mai il giocatore - passa l'anno con qualcosa in piu'. Non e' un ritorno
+    // al caso Hamilton: quello era cablato su un nome, invisibile e per
+    // sempre; questo cambia pilota ogni stagione, e' annunciato, e muore con
+    // la stagione. Vale solo in campionato: nelle gare singole seasonRival
+    // resta null.
+    const rv = AI.seasonRival;
+    if (rv && rv.driver === driverName) {
+        const boost = rv.boost || 1;
+        p.cornerFactor *= boost;
+        p.straightFactor *= boost;
+        // e sbaglia un po' meno: un rivale in forma non e' solo piu' veloce,
+        // e' anche piu' solido. Senza questo il vantaggio se lo mangiavano
+        // gli errori nei giri di traffico.
+        p.errorChance *= (rv.errScale === undefined ? 0.80 : rv.errScale);
     }
 
     // Hard ceiling: a personality colours how a driver is quick, it never lets

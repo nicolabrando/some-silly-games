@@ -1328,6 +1328,15 @@ function makeTrack(trackType) {
     return t;
 }
 function trackKeyOf(t) { return (t && t.trackKey) || null; }
+
+// Il rivale della stagione vale SOLO in campionato: in gara singola la griglia
+// torna quella tarata. Questa riga gira all'inizio di ogni sessione, quindi
+// una stagione ripresa da localStorage si riporta dietro il suo rivale senza
+// che nessuno debba ricordarselo.
+function applySeasonRival() {
+    AI.seasonRival = (isChampionship && championshipState && championshipState.rival)
+                   ? championshipState.rival : null;
+}
 function makeTrackRaw(trackType) {
     switch (trackType) {
         case 'f1':           return new F1Track();
@@ -1602,6 +1611,7 @@ function startQualifying(forceTrackType) {
 
     applyDifficultyRules(isChampionship ? championshipState.difficulty
                                        : document.getElementById('difficulty-select').value);
+    applySeasonRival();
     TOTAL_LAPS = 9999;              // the session ends on lap count, not the flag
     vscActive = false;
     vscEndsAt = null;
@@ -3357,6 +3367,7 @@ function startGame(forceTrackType = null) {
     const color = document.getElementById('color-select').value;
     const difficulty = document.getElementById('difficulty-select').value;
     applyDifficultyRules(isChampionship ? championshipState.difficulty : difficulty);
+    applySeasonRival();
 
     track = makeTrack(trackType);
 
@@ -5532,6 +5543,9 @@ function updateHUD() {
                 else if (idx === 2) tr.style.color = '#cd7f32';
                 
                 const participant = championshipState.participants.find(p => p.color === col);
+                // Nessun contrassegno per il rivale della stagione: chi e' lo
+                // dicono i risultati. La riga nel log resta - quello e' il
+                // registro della stagione, non un avviso in anticipo.
                 const nameDisplay = participant && participant.driverName ? `${participant.driverName} (${col})` : col;
                 
                 const b = (championshipState.bonusPoints || {})[col] || 0;
@@ -6071,6 +6085,12 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      'anchor'];
 const SEASON_DEFAULT = 10;
 
+// Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:
+// simulando stagioni intere, sotto l'1% non lo si distingue dal rumore (chi
+// vince cambia comunque ogni anno), sopra il 2% il campionato e' deciso a
+// meta' calendario. Vedi 2.4duodevicies nel piano.
+let RIVAL_BOOST = 1.015;
+
 function seasonRounds() {
     const el = document.getElementById('rounds-select');
     const n = parseInt(el && el.value, 10);
@@ -6282,6 +6302,29 @@ function startChampionship() {
             championshipState.points[aiCol] = 0;
             championshipState.bonusPoints[aiCol] = 0;
         }
+    }
+
+    // ---- il rivale della stagione --------------------------------------
+    // Uno degli avversari - estratto dallo stesso flusso seminato del
+    // calendario e della pioggia, quindi lo stesso seme da' lo stesso rivale -
+    // corre tutta la stagione con qualcosa in piu'. Mai il giocatore, mai la
+    // gara singola, e finisce con la stagione.
+    const aiNames = championshipState.participants.filter(p => !p.isPlayer)
+                                                  .map(p => p.driverName);
+    if (aiNames.length) {
+        const pick = aiNames[Math.floor(rng() * aiNames.length)];
+        championshipState.rival = { driver: pick, boost: RIVAL_BOOST };
+        // Due cose, non una. La prima: skillVariation, che ogni pilota pesca
+        // fra 0.8 e 1.1 a inizio stagione, vale il 7% di passo - tre volte lo
+        // scarto fra i caratteri. Un rivale con una pescata storta e' un
+        // rivale invisibile, quindi al rivale la pescata non tocca: prende il
+        // massimo. La seconda: RIVAL_BOOST sopra, che e' quello che lo stacca
+        // anche da chi ha pescato bene. Da sole nessuna delle due basta -
+        // misurato: col solo boost all'1.4% il rivale finiva quinto di media
+        // e non vinceva un titolo su otto.
+        const rp = championshipState.participants.find(p => p.driverName === pick);
+        if (rp) rp.skillVariation = 1.1;
+        RaceLog.event('SEASON', `rival — ${pick}, +${((RIVAL_BOOST - 1) * 100).toFixed(1)}% pace for the season`);
     }
 
     // Chassis for the season. Drawn once for the whole AI field so the grid

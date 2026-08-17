@@ -387,7 +387,11 @@ class SegmentedTrack {
             y: (o.cy + u.cy) / 2,
             angle: Math.atan2(o.ty, o.tx),      // the deck runs along the upper road
             half: half,                          // half its length, along the road
-            wide: this.trackWidth + 30,          // half its width
+            // Half its width - and it is the WALL, not the road, because that
+            // is where the parapet stands. It used to be trackWidth + 30, so
+            // the deck was painted twelve pixels past the line where a car is
+            // actually stopped: grey that reads as road and is not.
+            wide: this.wallRadius(),
             over: win(overIdx),
             under: win(underIdx)
         };
@@ -435,9 +439,15 @@ class SegmentedTrack {
         ctx.fillRect(-hl + 5, -hw + 6, hl * 2, hw * 2);
 
         // the deck: the same tarmac as the rest of the circuit, so it reads as
-        // road rather than as a lid
+        // road rather than as a lid - but not quite opaque. Solid, it hid the
+        // road underneath completely: you drove the underpass blind, with the
+        // grass wedges of the crossing invisible under it. At 0.88 the road
+        // below and the cars on it show through as shapes, which is enough to
+        // place yourself, and the deck still reads as being on top.
+        ctx.globalAlpha = 0.88;
         ctx.fillStyle = '#6b6f73';
         ctx.fillRect(-hl, -hw, hl * 2, hw * 2);
+        ctx.globalAlpha = 1;
         // a slightly lighter strip down the middle: the running surface
         ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
         ctx.fillRect(-hl, -this.trackWidth, hl * 2, this.trackWidth * 2);
@@ -1025,8 +1035,57 @@ class SegmentedTrack {
         return 'grass';
     }
     
+    // =====================================================================
+    //  THE CROSSING IS TWO ROADS, NOT ONE OPEN SQUARE
+    //  getClosestPoint() answers "how far is the nearest piece of road", and
+    //  where two roads cross that is the wrong question. The union of the two
+    //  corridors is an open X, so inside it there is no wall at all: you could
+    //  steer off the bridge deck sideways and land on the road underneath, or
+    //  climb from the underpass up onto the deck. Both of which Nicola did.
+    //  And in the middle of that X sit the four grass wedges between the two
+    //  roads, whose tips ARE solid - hidden under the deck, which is how you
+    //  hit a barrier you cannot see.
+    //
+    //  So on a circuit with a bridge the wall is measured against the car's
+    //  OWN stretch of road: the racing line nodes around the index the car is
+    //  already tracking (car._nodeIdx, kept by car.js with a windowed search).
+    //  Away from the crossing the two answers are the same number; at the
+    //  crossing this one keeps everybody on the deck they are actually on.
+    //
+    //  The fallback matters: a car that has been spun and mis-localised would
+    //  otherwise be measured against a road it is nowhere near and pushed
+    //  across the circuit. Past a wall's worth of margin the global answer
+    //  wins again.
+    // =====================================================================
+    closestOnOwnRoad(car) {
+        if (!car || car._nodeIdx === undefined) return null;
+        const line = this.getRacingLine('standard');
+        const nodes = line.nodes, N = line.count;
+        if (!N) return null;
+        const W = Math.ceil((this.wallRadius() * 2.5) / (line.ds || 1)) + 2;
+        let bd = Infinity, bx = 0, by = 0;
+        for (let o = -W; o <= W; o++) {
+            const a = nodes[(car._nodeIdx + o + N * 4) % N];
+            const b = nodes[(car._nodeIdx + o + 1 + N * 4) % N];
+            const dx = b.cx - a.cx, dy = b.cy - a.cy;
+            const l2 = dx * dx + dy * dy;
+            let t = l2 > 1e-9 ? ((car.x - a.cx) * dx + (car.y - a.cy) * dy) / l2 : 0;
+            t = t < 0 ? 0 : (t > 1 ? 1 : t);
+            const px = a.cx + t * dx, py = a.cy + t * dy;
+            const d = (car.x - px) * (car.x - px) + (car.y - py) * (car.y - py);
+            if (d < bd) { bd = d; bx = px; by = py; }
+        }
+        if (!isFinite(bd)) return null;
+        return { dist: Math.sqrt(bd), projX: bx, projY: by, segType: 'line', seg: null };
+    }
+
     checkBarrierCollision(car) {
-        const distData = this.getClosestPoint(car.x, car.y);
+        let distData = this.getClosestPoint(car.x, car.y);
+        if (this.hasBridge) {
+            const own = this.closestOnOwnRoad(car);
+            if (own && own.dist > distData.dist &&
+                own.dist < this.wallRadius() + 70) distData = own;
+        }
         const currentRadius = distData.dist;
         
         // Boundaries (using 12 as car collision radius). One definition, shared
