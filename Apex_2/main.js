@@ -160,7 +160,17 @@ let raceMode = 'race';     // 'race' | 'championship' | 'practice'
 // reads vscPowerFactor, ai.js caps its target speed with it.
 let vscActive = false;
 let vscPowerFactor = 1;
-const VSC_POWER = 0.28;    // engine power while the VSC is out
+// La VSC e' un limite di VELOCITA', non di potenza. Nella prima versione era
+// solo potenza al 28%, e la potenza e' relativa: la velocita' che ne esce e'
+// proporzionale al motore, quindi al TELAIO. Misurato su Oval, sotto VSC il
+// piu' veloce del gruppo viaggiava il 32% piu' del piu' lento (95 contro 72
+// px/s) - un Bolt (top 1.098) contro un Aero (0.928), piu' il carattere del
+// pilota. Sotto una neutralizzazione i distacchi non devono cambiare, quindi
+// il numero che conta e' assoluto e uguale per tutti; la potenza resta
+// limitata solo per rendere la ripartenza morbida, ed e' abbastanza alta che
+// anche il telaio piu' lento arrivi al tetto.
+const VSC_SPEED = 90;     // px/s: la velocita' della VSC, uguale per chiunque
+const VSC_POWER = 0.50;   // engine power while the VSC is out
 // Once the track is clear the VSC runs 3 more seconds, counted down on the
 // banner in tenths, so the restart is never a surprise.
 const VSC_ENDING_MS = 3000;
@@ -4604,7 +4614,7 @@ function updateRecovery(dt) {
             vscPowerFactor = VSC_POWER;
             showVscBanner(true);
             renderVscCountdown(null);
-            RaceLog.event('VSC', `deployed — engine power limited to ${Math.round(VSC_POWER * 100)}%`);
+            RaceLog.event('VSC', `deployed — speed limited to ${VSC_SPEED} px/s for everyone`);
         }
     } else if (vscActive) {
         if (vscEndsAt === null) {

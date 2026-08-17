@@ -338,6 +338,22 @@ Ora, sui circuiti con ponte, il muro si misura contro la **propria** strada: i n
 
 Due ritocchi al disegno del ponte, gia' che c'era. Il piano era largo `trackWidth + 30`, cioe' dodici pixel **oltre** la linea dove l'auto viene fermata: grigio che si legge come strada e non lo e'. Ora e' largo quanto il muro, quindi il parapetto sta dove sta il muro. Ed era opaco, quindi il sottopasso si guidava alla cieca: ora e' all'88%, e la strada di sotto con le auto che ci passano si intravede.
 
+### 2.4vicies La VSC era relativa, e si vedeva (Apex 3)
+
+Domanda di Nicola, e la domanda conteneva gia' la diagnosi: «durante la VSC alcune macchine vanno piu' veloce di altre. La velocita' ridotta e' assoluta o relativa a quella massima? In questo caso alcuni telai andrebbero piu' veloce di altri».
+
+**Era relativa.** `vscPowerFactor` valeva 0.28 e moltiplicava la *potenza*: in car.js la spinta del motore, in ai.js il tetto di velocita' `aiTopOf(car) * straightFactor * condition * 0.28`. Tutti e due i fattori portano dentro il **telaio** — `aiTopOf` e' potenza/attrito, cioe' la velocita' massima di quella macchina — e il **carattere del pilota**. Un Bolt (top 1.098) contro un Aero (0.928) sono gia' il 18%; sommato al passo in rettilineo (±2.8%) e alla pescata di `skillVariation`, il risultato misurato su Oval e' che sotto VSC **il piu' veloce del gruppo viaggiava il 32% piu' del piu' lento**: 95 px/s contro 72.
+
+Il muro anti-sorpasso (`applyVscHold`) nascondeva meta' del problema e non l'altra: chi e' incolonnato entro 62px viene limitato alla velocita' di chi ha davanti, ma chi corre in aria libera va al proprio passo, quindi **i distacchi cambiavano durante la neutralizzazione**. Che e' esattamente cio' che una neutralizzazione non deve fare.
+
+**Ora e' assoluta.** `VSC_SPEED = 90` px/s, lo stesso numero per ogni telaio, ogni pilota e ogni livello di difficolta':
+
+- l'IA, sotto VSC, non scala piu' il proprio tetto ma lo sostituisce con `VSC_SPEED` (e continua a frenare per le curve, perche' il limite di curva resta il minore dei due);
+- il giocatore ha un **limitatore**: il gas si chiude linearmente negli ultimi 8 px/s prima del tetto e sopra il tetto entra un filo di freno, cosi' chi arriva lanciato scende alla velocita' della VSC in meno di un secondo invece che per solo attrito;
+- la potenza resta limitata — al **50%** invece che al 28% — non piu' per fissare la velocita' ma per rendere morbida la ripresa: serve che anche il telaio piu' lento arrivi al tetto, altrimenti il tetto non lega e lo scarto resta.
+
+Misurato di nuovo su Oval, stessa gara, stessa VSC: scarto fra il piu' veloce e il piu' lento **1 px/s, l'1.2%**, e nessuna correlazione col telaio — aero, bolt e ridge stanno tutti fra 86 e 87 px/s. Su Harbour lo stesso. La velocita' di crociera della VSC e' rimasta dov'era (mediana 81 prima, 86 adesso), quindi la neutralizzazione dura quanto durava.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.

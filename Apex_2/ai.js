@@ -736,6 +736,10 @@ class AI {
         // aim lower too rather than sitting at full throttle pointlessly.
         const vscF = (typeof vscPowerFactor !== 'undefined') ? vscPowerFactor : 1;
         let vTop = aiTopOf(car) * this.p.straightFactor * condition * vscF;
+        // ...e sotto la VSC il tetto e' quello e basta: uguale per tutti i
+        // telai e tutti i piloti, altrimenti la neutralizzazione cambia i
+        // distacchi invece di congelarli.
+        if (vscF < 1 && typeof VSC_SPEED !== 'undefined') vTop = VSC_SPEED;
         if (car.draftStrength > 0) vTop *= 1 + 0.17 * car.draftStrength;
         if (onGrass) vTop = Math.min(vTop, 150);
         else if (onKerb) vTop *= 0.95;

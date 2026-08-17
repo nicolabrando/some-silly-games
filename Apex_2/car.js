@@ -693,12 +693,24 @@ class Car {
             ? Math.max(0, Math.min(1, this.inputs.brake))
             : (this.inputs.down ? 1 : 0);
 
+        // Il limitatore della VSC. Il gas si chiude avvicinandosi al tetto e
+        // sopra il tetto entra un filo di freno: cosi' anche chi ci arriva
+        // lanciato scende alla velocita' della VSC in qualche decimo invece
+        // che per attrito. Vale per il giocatore come per l'IA - e' lo stesso
+        // numero, che e' il punto.
+        let vscLimit = 1;
+        if (vsc < 1 && typeof VSC_SPEED !== 'undefined') {
+            const vNow = Math.hypot(this.velocity.x, this.velocity.y);
+            vscLimit = Math.max(0, Math.min(1, (VSC_SPEED - vNow) / 8));
+            if (vNow > VSC_SPEED + 6) forwardForce -= this.brakingPower * 0.30;
+        }
+
         if (thr > 0) {
-            forwardForce += this.enginePower * this.condition * vsc * thr;
+            forwardForce += this.enginePower * this.condition * vsc * thr * vscLimit;
             // Slipstream: continuous with distance rather than an on/off cone,
             // so the tow builds as you close in instead of snapping on.
             if (this.draftStrength > 0) {
-                forwardForce += this.enginePower * 0.26 * this.draftStrength * vsc * thr;
+                forwardForce += this.enginePower * 0.26 * this.draftStrength * vsc * thr * vscLimit;
             }
         }
         if (brk > 0) {
