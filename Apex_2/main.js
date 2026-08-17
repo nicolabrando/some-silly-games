@@ -2572,6 +2572,50 @@ const exBuild = { jobs: null, i: 0, done: 0, total: 0, running: false, t0: 0 };
 // profile and the stored book is thrown away rather than quietly shown next to
 // numbers it no longer matches. That has to be automatic - a record book that
 // silently outlives the balance it measured is worse than no record book.
+// L'impronta e' DUE impronte, e la ragione e' pratica. La prima versione ne
+// aveva una sola, che sommava la fisica E la geometria di tutti i circuiti:
+// aggiungere una pista - o toglierne una, o spostarne un vertice - buttava via
+// il libro INTERO e faceva ricostruire milleduecento giri per diciotto
+// circuiti che non erano cambiati. Nicola se ne e' accorto dal fatto che il
+// libro si ricostruiva ogni volta che apriva "The Circuits", ed e' esattamente
+// quello che succedeva: in quei giorni ogni build cambiava la geometria.
+//
+// Ora: la fisica (gomme, bagnato, profili IA, caratteri, EX_RUNS) e' globale e
+// se cambia butta tutto, perche' un tempo misurato con altre gomme non e' un
+// tempo. La geometria e' PER CIRCUITO, e invalida solo il suo. Aggiungere un
+// diciannovesimo circuito ora costa i giri di quel circuito e basta.
+function exPhysHash() {
+    const bits = [JSON.stringify(TYRES), String(WET_GRIP),
+                  JSON.stringify(AI_PROFILES.alien || {}),
+                  JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS)];
+    return exHash(bits.join('|'));
+}
+
+// Sommata dai SEGMENTI, non dalla linea ideale: la linea costa 5-25ms per
+// circuito a rilassarsi e questa gira a ogni salvataggio e a ogni caricamento,
+// che sarebbe quasi un secondo per scoprire che non e' cambiato niente.
+//
+// La geometria ci deve stare: un tempo sul giro e' un fatto su una forma. Il
+// pomeriggio in cui i tracciati sono stati scalati per entrare nell'arena,
+// Comb ha perso il 4.6% della sua lunghezza e ogni tempo salvato per lui e'
+// diventato il tempo di un circuito che non esisteva piu'.
+function exGeomHash(key) {
+    try {
+        const t = makeTrack(key);
+        let geom = t.trackWidth * 7 + t.grassWidth * 3;
+        for (const s of t.segments)
+            geom += s.type === 'line' ? (s.x1 + s.y1 + s.x2 + s.y2)
+                                      : (s.cx + s.cy + s.r * 13);
+        return exHash(geom.toFixed(1));
+    } catch (e) { return 'x'; }
+}
+
+function exHash(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return h.toString(36);
+}
+
 function exFingerprint() {
     // The GEOMETRY belongs in here too, and it was missing. A record book is
     // lap times, and a lap time is a fact about a shape: the afternoon the
@@ -2583,24 +2627,7 @@ function exFingerprint() {
     // Summed from the SEGMENTS, not from the racing line: the racing line
     // costs 5-25ms per circuit to relax and this runs on every save and load,
     // which would be most of a second to notice that nothing has changed.
-    let geom = 0;
-    for (const k of Object.keys(TRACK_LABELS)) {
-        try {
-            const t = makeTrack(k);
-            geom += t.trackWidth * 7 + t.grassWidth * 3;
-            for (const s of t.segments)
-                geom += s.type === 'line' ? (s.x1 + s.y1 + s.x2 + s.y2)
-                                          : (s.cx + s.cy + s.r * 13);
-        } catch (e) { /* ignore */ }
-    }
-    const bits = [JSON.stringify(TYRES), String(WET_GRIP),
-                  JSON.stringify(AI_PROFILES.alien || {}),
-                  JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS),
-                  geom.toFixed(1)];
-    let h = 5381;
-    const s = bits.join('|');
-    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
-    return h.toString(36);
+    return exPhysHash();
 }
 const EX_STORE_KEY = 'apex2.explore.records';
 
@@ -2904,10 +2931,11 @@ function exSaveRecords() {
         const out = {};
         for (const k of Object.keys(exRecords)) {
             const r = exRecords[k];
-            if (r.done >= r.total) out[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre };
+            if (r.done >= r.total && (r.dry || r.wet))
+                out[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre, g: exGeomHash(k) };
         }
         window.localStorage.setItem(EX_STORE_KEY,
-            JSON.stringify({ v: exFingerprint(), tracks: out }));
+            JSON.stringify({ v: exPhysHash(), tracks: out }));
     } catch (e) { /* file:// origins, private mode, quota - all fine, just slower */ }
 }
 function exLoadRecords() {
@@ -2915,10 +2943,12 @@ function exLoadRecords() {
         const raw = window.localStorage.getItem(EX_STORE_KEY);
         if (!raw) return false;
         const box = JSON.parse(raw);
-        if (!box || box.v !== exFingerprint()) return false;
+        if (!box || box.v !== exPhysHash()) return false;   // altra fisica: si butta tutto
         let n = 0;
         for (const k of Object.keys(box.tracks || {})) {
+            if (SEASON_POOL.indexOf(k) === -1) continue;    // circuito non piu' nel gioco
             const r = box.tracks[k];
+            if (!r || r.g !== exGeomHash(k)) continue;      // quel tracciato e' cambiato
             exRecords[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre || {},
                              done: 1, total: 1 };
             n++;
@@ -2928,9 +2958,9 @@ function exLoadRecords() {
 }
 
 // Every lap this build needs to run, for every circuit, in one list.
-function exBuildJobs() {
+function exBuildJobs(keys) {
     const jobs = [];
-    for (const key of SEASON_POOL) {
+    for (const key of (keys && keys.length ? keys : SEASON_POOL)) {
         for (let run = 0; run < EX_RUNS; run++) {
             for (const name of EX_DRIVER_NAMES)
                 jobs.push({ key, name, wet: false, tyre: 'soft', rec: true });
@@ -2946,11 +2976,18 @@ function exBuildJobs() {
 
 function exStartBuild() {
     if (exBuild.running) return;
-    if (Object.keys(exRecords).length >= SEASON_POOL.length) return;   // already have it
-    exBuild.jobs = exBuildJobs();
+    // Solo i circuiti che mancano davvero: quelli caricati dal libro salvato
+    // restano dove sono. Un circuito nuovo costa i suoi giri, non quelli di
+    // tutti e diciotto.
+    const missing = SEASON_POOL.filter(k => {
+        const r = exRecords[k];
+        return !r || r.done < r.total || (!r.dry && !r.wet);
+    });
+    if (!missing.length) return;
+    exBuild.jobs = exBuildJobs(missing);
     exBuild.i = 0; exBuild.done = 0; exBuild.total = exBuild.jobs.length;
     exBuild.running = true; exBuild.t0 = performance.now();
-    for (const key of SEASON_POOL)
+    for (const key of missing)
         exRecords[key] = { dry: null, wet: null, byTyre: {}, done: 0, total: 0 };
     for (const j of exBuild.jobs) exRecords[j.key].total++;
     exStep();

@@ -354,6 +354,18 @@ Il muro anti-sorpasso (`applyVscHold`) nascondeva meta' del problema e non l'alt
 
 Misurato di nuovo su Oval, stessa gara, stessa VSC: scarto fra il piu' veloce e il piu' lento **1 px/s, l'1.2%**, e nessuna correlazione col telaio — aero, bolt e ridge stanno tutti fra 86 e 87 px/s. Su Harbour lo stesso. La velocita' di crociera della VSC e' rimasta dov'era (mediana 81 prima, 86 adesso), quindi la neutralizzazione dura quanto durava.
 
+### 2.4unetvicies Il libro dei record non si ricostruisce piu' per intero (Apex 3)
+
+«Perche' ricostruisce tutto il libro dei record ogni volta che apro The Circuits? Non li tiene in memoria?»
+
+Li teneva: `exRecords` in memoria e una copia in `localStorage`, con un'**impronta** della fisica che li ha misurati, cosi' che un libro misurato con altre gomme non venga mostrato accanto a numeri che non gli appartengono piu'. Verificato: da zero sono 1224 giri di qualifica in 31 secondi, salvati in 5.6 KB, e alla riapertura si caricano senza ricostruire niente.
+
+Il problema era **cosa** invalidava l'impronta. Era una sola, e sommava la fisica **e la geometria di tutti i circuiti insieme**: bastava spostare un vertice, aggiungere una pista o toglierne una perche' l'intero libro finisse nel cestino e si ricostruissero milleduecento giri per diciotto circuiti di cui diciassette erano identici a prima. Nei giorni in cui e' arrivata questa domanda ogni build cambiava la geometria — Monaco dentro, Monaco fuori, Anchor dentro, Anchor ristretto del 2.5% — quindi il libro si ricostruiva praticamente a ogni apertura. Funzionava come scritto, ed era scritto male.
+
+Ora le impronte sono **due**: la fisica (gomme, bagnato, profili IA, caratteri dei piloti) resta globale, perche' se cambia quella nessun tempo vale piu'; la geometria e' **per circuito** e invalida solo il proprio. E `exStartBuild` costruisce **solo i circuiti che mancano** invece di azzerare tutto.
+
+Misurato sui quattro casi: da zero 1224 giri e 31s; riapertura 0 giri; **un solo circuito ridisegnato 68 giri e 4 secondi** invece di 1224 e 31; fisica cambiata, di nuovo tutto, che e' giusto. Un diciannovesimo circuito ora costa i suoi giri e basta.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.
