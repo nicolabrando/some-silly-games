@@ -366,6 +366,18 @@ Ora le impronte sono **due**: la fisica (gomme, bagnato, profili IA, caratteri d
 
 Misurato sui quattro casi: da zero 1224 giri e 31s; riapertura 0 giri; **un solo circuito ridisegnato 68 giri e 4 secondi** invece di 1224 e 31; fisica cambiata, di nuovo tutto, che e' giusto. Un diciannovesimo circuito ora costa i suoi giri e basta.
 
+### 2.4duo-et-vicies Tre ritocchi ai circuiti: le punte del muro, la linea di Anchor, il nome di Crossover (Apex 3)
+
+**LE PUNTE DEL MURO.** Screenshot di Thunder: alle punte dei cunei d'erba — dove il muro gira uno spigolo — un uncino di barriera che sporge verso la pista, «piccole barriere che spuntano in mezzo alla pista, e ce ne sono anche in altri». C'erano: **18 punte su 8 circuiti** (F1, Serpent, Triangle, Boomerang, Crossover, Comb, Thunder, Anchor), trovate con una scansione e non a occhio.
+
+La causa sta nel modo in cui il muro dipinto viene ricavato dal muro fisico. La barriera e' il muro (livello R) spinto in fuori di 12px lungo la normale, «mai oltre il crinale». A una punta il cui raggio interno a R e' minore di 12 — un arco da 85.75 contro un muro da 78, a Thunder — i vertici sulla calotta e subito accanto non ce la fanno: il crinale e' li', si fermano a R+4, R+7, in mezzo a vicini arrivati a R+12. Disegnato, e' un uncino di 10-16px che esce dallo spigolo. Misurato su tutte e diciotto: il gruppo di vertici "corti" e' lungo 6-40px di traccia, e i due vertici pieni che lo delimitano cadono **entro un pixel** l'uno dall'altro — perche' e' esattamente li' che i muri a +12 dei due lati si incontrano. Quindi il gruppo si toglie e lo spigolo si chiude su se stesso. Un'isola stretta — i denti di Comb, la spina di Kart, tutta quella di Circo Massimo — e' spinta corta per centinaia di pixel e ha gli estremi lontani: resta com'era.
+
+Chiuso lo spigolo ne e' saltato fuori un secondo, a Triangle. I suoi angoli interni sono di **23 gradi**: oltre lo spigolo i due lati stanno dentro una larghezza di pennello l'uno dall'altro per i primi 19px, piu' dei 24px d'arco che la finestra "innocente" del dedupe protegge. Il tracciato si spezzava li' e lasciava un moncone di muro attraverso lo spigolo, un buco di 14px, e il muro che ricomincia: un pezzo di barriera sciolto sulla punta. Ora un salto breve (≤30px) e' scavalcato dalla corda al vertice successivo — che su un muro E' il muro — e solo un salto lungo, un intero lato d'isola, spezza. Verificato su tutti i circuiti: nessun tratto di barriera che entri nel raggio del muro, 2 run per circuito (piu' le isole di Crossover, Kart e Comb), le 18 punte pulite in un foglio di contatto.
+
+**LA LINEA DI ANCHOR** stava a 23px dalla staccata della prima curva: si passava sotto la bandiera gia' in frenata. Spostata indietro di 70px, a 93 dalla staccata; la griglia (sei file, 180px) resta tutta sul dritto e la finestra da cui la corsia box prende in carico l'auto cade sull'ultimo tratto della diagonale, dentro i 50px di scostamento che tollera. Verificato con le soste: 15 pit stop, nessuno fuori pista in manovra; dieci arrivati e zero ritiri a tutti e quattro i livelli.
+
+**CROSSOVER** si chiama Crossover. Il « — bridge» nella tendina era una didascalia, non un nome.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.

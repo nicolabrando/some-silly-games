@@ -755,9 +755,26 @@ class SegmentedTrack {
         // and the paint is about to cross onto somebody else's strip: stop
         // on the last honest step. (And never onto reachable ground,
         // R - 0.75, same rule as ever.)
+        //
+        // And then the TIPS. Where the wall turns a corner whose inside
+        // radius at R is smaller than `out`, the vertices on the cap and just
+        // beside it cannot make the full push - the ridge is right there -
+        // and they stop short, at R+4 or R+7, between neighbours that reached
+        // R+12. Drawn, that is a hook of barrier poking out of the corner
+        // towards the road: the spike Nicola saw at Thunder, and there was
+        // one on the same corner of F1, Serpent, Triangle, Boomerang, Comb,
+        // Crossover and Anchor. Measured over all of them: the group of
+        // short-pushed vertices is 6 to 40px of trace, and the two full-push
+        // vertices either side of it land within a pixel of one another -
+        // because that is where the offset-12 walls of the two sides MEET.
+        // So the group is dropped and the corner closes on itself. A narrow
+        // island - Comb's teeth, Kart's spina, the whole of Circus Maximus's -
+        // is a short push for hundreds of pixels on end and its ends are far
+        // apart: left exactly as it was.
+        const TIP_LEN = 45, TIP_GAP = 6;
         const pushed = [];
         for (const pts of loops) {
-            const q = [];
+            const px = [], py = [], pt = [], raw = [];
             for (let i = 0; i < pts.length; i += 2) {
                 const cp = this.getClosestPoint(pts[i], pts[i + 1]);
                 if (cp.dist < 1e-6) continue;
@@ -770,8 +787,42 @@ class SegmentedTrack {
                     if (d < R - 0.75 || d < R + s - 0.9) break;
                     t = s;
                 }
-                q.push(bx + nx * t, by + ny * t);
+                px.push(bx + nx * t); py.push(by + ny * t); pt.push(t);
+                raw.push(pts[i], pts[i + 1]);
             }
+            const n = px.length;
+            const keep = new Array(n).fill(true);
+            if (n > 8 && out > 0) {
+                const closed = Math.hypot(raw[0] - raw[2 * n - 2], raw[1] - raw[2 * n - 1]) < 3;
+                const full = (i) => pt[((i % n) + n) % n] >= out;
+                let start = -1;
+                for (let i = 0; i < n; i++) if (full(i)) { start = i; break; }
+                if (start >= 0) {
+                    let i = start, seen = 0;
+                    while (seen < n) {
+                        const idx = i % n;
+                        if (full(idx)) { i++; seen++; continue; }
+                        // a run of short pushes: measure it
+                        let cnt = 0, len = 0, j = idx;
+                        while (!full(j) && cnt < n) {
+                            if (cnt) len += Math.hypot(raw[2 * (j % n)] - raw[2 * ((j - 1) % n)],
+                                                       raw[2 * (j % n) + 1] - raw[2 * ((j - 1) % n) + 1]);
+                            j++; cnt++;
+                        }
+                        const b0 = ((idx - 1) % n + n) % n, a0 = j % n;
+                        // an open loop has no vertex before its first / after
+                        // its last: never bridge across the seam of one
+                        const bridgeable = closed || (idx > 0 && a0 > idx);
+                        if (bridgeable && len <= TIP_LEN &&
+                            Math.hypot(px[b0] - px[a0], py[b0] - py[a0]) <= TIP_GAP) {
+                            for (let k = 0; k < cnt; k++) keep[(idx + k) % n] = false;
+                        }
+                        i += cnt; seen += cnt;
+                    }
+                }
+            }
+            const q = [];
+            for (let i = 0; i < n; i++) if (keep[i]) q.push(px[i], py[i]);
             if (q.length >= 4) pushed.push(q);
         }
 
@@ -808,6 +859,20 @@ class SegmentedTrack {
                 if (cur.length >= 4 && polyLen(cur) >= 14) runs.push(cur);
                 cur = [];
             };
+            // A clash drops the vertex; whether it also BREAKS the run depends
+            // on how much has been dropped in a row. Breaking at the first
+            // clash was right for a thin island - its far side is hundreds of
+            // pixels of clash and must not be bridged - and wrong at a sharp
+            // tip: Triangle's infield corners are 23 degrees, so past the
+            // corner the two sides sit inside a stroke width of each other
+            // for the first 19px, further than the 24px-of-arc window
+            // protects. The run broke there and left a stub of wall through
+            // the corner, a 14px gap, and the wall starting again - a loose
+            // piece of barrier lying at the tip. Now a short skip is bridged
+            // by the chord to the next kept vertex, which on a wall is the
+            // wall; only a long one - a whole side of an island - breaks.
+            const SKIP_BREAK = 30;
+            let skipped = 0;
             for (let i = 0; i < n; i++) {
                 const x = q[i * 2], y = q[i * 2 + 1];
                 const cx = Math.round(x / CELL), cy = Math.round(y / CELL);
@@ -826,7 +891,12 @@ class SegmentedTrack {
                         }
                     }
                 }
-                if (clash) { flush(); continue; }
+                if (clash) {
+                    skipped += i ? arc[i] - arc[i - 1] : 0;
+                    if (skipped > SKIP_BREAK) flush();
+                    continue;
+                }
+                skipped = 0;
                 cur.push(x, y);
                 const bk = cx * 100003 + cy;
                 let list = bins.get(bk);
@@ -2456,11 +2526,16 @@ class AnchorTrack extends SegmentedTrack {
             { type: 'line', x1: 363.19, y1: 590.17, x2: 527.94, y2: 482.73 }
         ];
 
-        // Sul rettifilo del traguardo, 324px di dritto fra la diagonale che
-        // arriva dalla conca e la staccata dell'ansa: la linea sta in fondo,
-        // cosi' la finestra da cui la corsia box prende in carico l'auto
-        // (250-360px prima della linea) cade ancora sull'asfalto dritto.
-        this.startX = 894;
+        // Sul rettifilo del traguardo, 312px di dritto fra la diagonale che
+        // arriva dalla conca e la staccata dell'ansa. La linea stava a 23px
+        // dalla staccata - "troppo vicina alla prima curva", e lo era: si
+        // passava sotto la bandiera gia' in frenata. Ora sta a 93px, con la
+        // griglia (sei file, 180px) ancora tutta sul dritto e la finestra da
+        // cui la corsia box prende in carico l'auto (250-360px prima della
+        // linea) sull'ultimo tratto della diagonale, entro i 50px di
+        // scostamento che quella finestra tollera. Verificato con le soste:
+        // 13 pit stop, nessuno fuori pista in manovra.
+        this.startX = 824;
         this.startY = 460;
 
         this.waypoints = this.generateWaypoints();
