@@ -790,7 +790,20 @@ if (champResumeBtn) champResumeBtn.addEventListener('click', resumeChampionship)
 practiceBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'practice';
-    chooseChassisForWeekend(() => startGame());
+    pendingGrid = null;
+    // A fresh roll of the weather, as for a race: without this a practice
+    // run after a wet weekend inherited that weekend's rain.
+    pendingWeather = null; pendingWetLevel = null;
+    // The same two screens a race weekend opens with. Practice used to skip
+    // the second and start on whatever set was chosen last, under weather it
+    // never announced - so you could pull out on slicks into the rain and only
+    // find out at the first corner. Nothing wears in free running (TOTAL_LAPS
+    // is 9999), so the life line says so instead of quoting a race distance.
+    chooseChassisForWeekend(() => {
+        chooseTyres('Practice tyres',
+            'Free running: nothing wears out here. Take the set you want to learn.',
+            0, () => startGame());
+    });
 });
 
 logBtn.addEventListener('click', () => {
@@ -1839,12 +1852,18 @@ const TYRE_NOTE = {
 };
 
 function tyreLapsText(key, laps) {
+    // Free practice: unlimited running and no wear to speak of.
+    if (!laps || !isFinite(laps)) return 'no wear in free practice';
     const t = TYRES[key];
     // Wear runs dryWear times faster on a road this tyre was not built for, so
     // the number on the button has to depend on the weather. A full wet reads
     // "lasts the distance" in the rain and "~1.5 of 5 laps" in the dry, which
     // is the whole of what makes choosing it a decision.
-    const dry = !(typeof isRaining !== 'undefined' && isRaining);
+    // upcomingWeather(), not isRaining: the global is set when the session
+    // STARTS, and this runs on the screen before it, so it was reading the
+    // previous session's weather. Under a DAMP banner the intermediate read
+    // '~0.5 of 2 laps' - its life at the dry-road wear rate.
+    const dry = !upcomingWeather();
     const rate = dry ? (t.dryWear || 1) : 1;
     const life = t.life * laps / rate;
     return life >= laps ? 'lasts the distance'
@@ -1992,7 +2011,7 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
     // is hidden either way - a slick in the wet is a legitimate gamble and a
     // wet tyre in the dry is a legitimate mistake - but the list should not
     // open with the wrong half of it.
-    const wetNow = typeof isRaining !== 'undefined' && isRaining;
+    const wetNow = upcomingWeather();   // the same answer the banner above gives
     const order = wetNow ? RAIN_TYRE_KEYS.concat(DRY_TYRE_KEYS)
                          : DRY_TYRE_KEYS.concat(RAIN_TYRE_KEYS);
     tyreOptions.innerHTML = order.map(k => {

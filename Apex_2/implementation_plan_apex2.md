@@ -378,6 +378,12 @@ Chiuso lo spigolo ne e' saltato fuori un secondo, a Triangle. I suoi angoli inte
 
 **CROSSOVER** si chiama Crossover. Il « — bridge» nella tendina era una didascalia, non un nome.
 
+### 2.4ter-et-vicies Practice apre come un weekend, e la schermata delle gomme legge il meteo giusto (Apex 3)
+
+«In Practice non viene mostrato il meteo e la scelta delle gomme prima di cominciare.» Vero: il pulsante Practice chiedeva il telaio e partiva — sull'ultimo treno scelto, con un meteo tirato a sorte e mai annunciato. Si poteva uscire dai box con le slick sotto la pioggia e scoprirlo alla prima curva. Ora Practice apre con le stesse due schermate di un weekend di gara: telaio, poi gomme sotto la fascia del meteo. Il meteo viene ritirato a sorte a ogni sessione (prima una practice dopo un weekend bagnato ereditava la pioggia di quel weekend). In prova libera niente si consuma — `TOTAL_LAPS` e' 9999 — quindi la riga della durata dice «no wear in free practice» invece di citare una distanza di gara che non c'e'.
+
+Nel verificarlo e' saltato fuori un errore che c'era **anche in gara**. La schermata delle gomme prende il meteo da due posti: la fascia in alto legge `upcomingWeather()`, cioe' il meteo appena fissato per la sessione, ma l'ordine della lista e la riga della durata leggevano `isRaining` — la globale che viene scritta **quando la sessione parte**, cioe' dopo. Al primo weekend bagnato dopo un caricamento la fascia diceva DAMP e la lista si apriva con le slick, con l'intermedia quotata «~0.5 of 2 laps» — la sua vita al tasso di usura dell'asciutto. Due risposte diverse sulla stessa schermata, una giusta e una no. Ora legge tutto dalla stessa fonte: sotto la fascia DAMP la lista si apre con intermedia e full wet, «lasts the distance». Il pannello dei box a gara in corso continua a leggere `isRaining`, che li' e' la verita'.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.
