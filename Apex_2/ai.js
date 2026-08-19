@@ -731,7 +731,7 @@ class AI {
             // tyre's potential in a person's hands can be MEASURED with the
             // game's own driver (driftsend.js), which is how SCRUB_RATE in
             // car.js was set.
-            if (AI.driftSend && car.tyre && car.tyre.loose && vSteer > AI_PROVOKE_SPEED)
+            if (AI.driftSend && car.tyre && car.tyre.loose && vSteer > AI.driftSendFrom)
                 vSteer *= 1 + AI.driftSend;
             const vGrip = Math.sqrt(latLimit * tyreG * R);
             const cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
@@ -1304,16 +1304,17 @@ class AI {
 AI.seasonRival = null;
 // How much extra corner speed the AI commits to on a loose compound, driving
 // it SENT - throttle down, tail out, lifting only past 29 degrees of slide -
-// rather than feathered (block 5c). Measured with the game's own driver on one
-// pinned profile and chassis, dry, solo (driftsend.js): feathered, the drift
-// tyre was 7-9% slower than the medium; sent at 0.16-0.24 it was level. Then
-// with the full grid of ten (aidrift.js, random talent and chassis, which is
-// the race as played) 0.20 came out 2-6% QUICKER at the Oval, Kart and
-// Circle, which is a free advantage and against the rule; 0.12 is level
-// within the noise - a little up here, a little down there - and the AI
-// drifts visibly, which is what Nicola asked for ("the AI cannot use it to
-// drift through the corners"). 0 turns it off.
-AI.driftSend = 0.12;
+// rather than feathered (block 5c), and from what corner speed up (0 = in
+// the hairpins too, which is where the tyre is now meant to be driven).
+// Measured with the full grid of ten, random talent and chassis, dry
+// (aidrift.js), drift against medium with the third-pass physics: at 0.20
+// from 0 the AI on the drift tyre is level on Comb, Kart and Thunder and
+// 1-5% off on Harbour, F1 and the Oval - the specialist's shape - with no
+// retirements and nobody backwards; feathered it was 3-7% off everywhere.
+// And it drifts visibly, which is what Nicola asked for ("the AI cannot use
+// it to drift through the corners"). 0 turns it off.
+AI.driftSend = 0.20;
+AI.driftSendFrom = 0;
 
 AI.buildProfile = function (driverName, difficulty, skillVariation) {
     const base = AI_PROFILES[difficulty] ? AI_PROFILES[difficulty] : AI_PROFILES.medium;

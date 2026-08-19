@@ -180,9 +180,29 @@ const TYRES = {
     //  compound is a toy for a person now, not a strategy for the grid, and
     //  the pick logic - temperament times slow-corner share, never above 30%
     //  - was already keeping it off the fast circuits.
+    //
+    //  THIRD PASS, after two seasons on it with `loose` and the scrub in
+    //  (14 wins out of 15 against the Impossible grid): the slide at speed
+    //  was paid for, and it was still the quickest tyre on anything with a
+    //  hairpin in it. Measured with the game's own driver sent on the tyre at
+    //  EVERY speed and pinning the throttle in the slow corners - the way
+    //  Nicola's telemetry says he drives it - it was 5-7% quicker than the
+    //  medium at Comb, 2-4% at Kart and Thunder, however hard the slide was
+    //  charged for. Scrub cannot buy that back because the gain was not the
+    //  slide: it was `hook`, the slow-corner steering bonus fitted in the
+    //  first pass, when the tyre had no slide to speak of and needed SOMETHING
+    //  to be quick with. At 0.58 it out-steered a medium below 171 px/s on
+    //  the rack alone, and now the tail rotates the car on top of that. So
+    //  the hook goes to 0.30: the rack is slower than a medium's everywhere,
+    //  and what the tyre has in a hairpin it has from the throttle. Same
+    //  measurement after: Comb -1.2%, Kart -1.1%, Thunder +0.8%, Anchor
+    //  +4.7%, Serpent +0.8%, Harbour +2.8%, Kettle -0.5%, Oval -1.7% - a
+    //  specialist's shape at a specialist's size. The scrub was moved to the
+    //  EXTRA oversteer (over a slick's at the same demand) from 0 px/s, so a
+    //  slick pays nothing in a hairpin either.
     drift:  { key: 'drift',  label: 'Drift',  short: 'D', colour: '#ab47bc',
               grip: 0.780, falloff: 0.0150, life: 2.00, bite: 1.000, slide: 1.55,
-              hook: 0.58, hookBand: 320, loose: 1.0 },
+              hook: 0.30, hookBand: 320, loose: 1.0 },
     // ---- RAIN -----------------------------------------------------------
     //  Two treaded compounds. What separates them is not simply "more wet
     //  grip": the wet road and the standing water on it are two different
@@ -299,10 +319,11 @@ const HOOK_BAND = 160;
 // 1.22 of slide in a hairpin - a fifth more oversteer than a slick rather than
 // half again as much.
 const SLIDE_DECOUPLE = 0.6;
-// A slide above this speed sheds speed (see the oversteer block in update()):
-// SCRUB_RATE px/s^2 per unit of powerOversteer per px/s above SCRUB_FROM.
-let SCRUB_FROM = 150;
-let SCRUB_RATE = 2.5;
+// A slide sheds speed (see the oversteer block in update()): SCRUB_RATE px/s^2
+// per unit of EXTRA oversteer - what the compound has above a slick at the
+// same demand - per px/s of speed above SCRUB_FROM. Slicks have no extra.
+let SCRUB_FROM = 0;
+let SCRUB_RATE = 1.0;
 // Fraction of the 160 px/s yaw gain still available at 400 px/s and above.
 let YAW_HIGH_FLOOR = 0.40;
 // `wet` is passed because a band measured in px/s means something completely
@@ -828,6 +849,13 @@ class Car {
             const onset = 1.45 - ((this.tyre && this.tyre.loose) || 0);
             powerOversteer = Math.max(0, Math.min(1,
                 ((demand - onset) / 2.2) * slipperiness * effSlide));
+            // What a plain slick would be doing here - same car, same surface,
+            // same pedal, compound traits stripped. The difference is what
+            // the loose compound is getting for free, and it is what the
+            // scrub below is charged on.
+            this._osSlick = Math.max(0, Math.min(1, ((demand - 1.45) / 2.2) * slipperiness));
+        } else {
+            this._osSlick = 0;
         }
         this.powerOversteer = powerOversteer;
 
@@ -875,8 +903,17 @@ class Car {
             // level within the noise. Slicks do not oversteer above 207 px/s
             // at all and only faintly above 150, so nothing about them or
             // about the AI's laps changes.
-            if (speed > SCRUB_FROM) {
-                const k = SCRUB_RATE * powerOversteer * (speed - SCRUB_FROM) / speed;
+            // Charged on the EXTRA oversteer only - what this compound has
+            // above a slick at the same demand - so a slick is untouched, in
+            // a hairpin and everywhere else. Deceleration SCRUB_RATE per
+            // unit of extra oversteer per px/s of speed: for the drift tyre
+            // at 1.0 that is about 30 px/s^2 at 100 px/s, 110 at 150, 170 at
+            // 200, 160 at 240, 150 at 300 - against 150-230 of surplus
+            // thrust, so a held slide bleeds speed above ~230 and still
+            // accelerates out of a hairpin, just less than a slick does.
+            const extra = Math.max(0, powerOversteer - (this._osSlick || 0));
+            if (extra > 0 && speed > SCRUB_FROM) {
+                const k = SCRUB_RATE * extra * (speed - SCRUB_FROM) / speed;
                 this.velocity.x -= this.velocity.x * k * dt;
                 this.velocity.y -= this.velocity.y * k * dt;
             }
