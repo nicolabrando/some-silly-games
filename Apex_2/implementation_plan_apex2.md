@@ -406,6 +406,18 @@ Il carattere che ne esce: sulla Drift **si ruota col gas o si va larghi**. Col g
 
 Il libro dei record si ricostruisce da solo, una volta: le gomme fanno parte dell'impronta della fisica.
 
+**Seconda passata, dal log della stagione successiva.** «Adesso Drift funziona, ma forse funziona troppo bene per me: l'IA non riesce a usarla per fare le curve driftando, io ho fatto tutta una stagione con quella gomma e sono quasi sempre arrivato primo.» Il log: contro l'IA a *impossible*, nove pole su dieci e otto vittorie, con distacchi sul giro del 10-13% a Harbour, F1, Thunder e Anchor. Confrontato con i suoi stessi tempi sulla Medium nei log precedenti: la Drift gli valeva il **4-6% in meno** sui circuiti filanti (F1, Harbour, Boomerang), zero a Kart, +2.7% a Triangle.
+
+La causa era una sola: la rotazione in più **era gratis**. Scavalca il limite di sterzata e niente nel modello la faceva pagare. Sotto i 160 px/s è il perno di sempre e resta gratis; sopra, nel momento in cui una mescola ci arrivava, era un superpotere: a 300 px/s col gas giù la Drift girava a 1.25 rad/s dove una slick è ferma a 0.87, quindi una curva che la slick fa a 217 lei la faceva a 300. Tre correzioni, tutte e tre misurate:
+
+- **la scivolata in velocità costa velocità** (`SCRUB_RATE` 2.5): sopra i 150 px/s il posteriore che pattina frena l'auto, in proporzione al sovrasterzo e alla velocità. A 300 e 0.5 di sovrasterzo sono 187 px/s² contro 120 di spinta disponibile — la scivolata tenuta perde una sessantina di px/s al secondo; a 240 tiene la velocità; sotto i 230 si accelera ancora in derapata. La fascia del divertimento (150-250, dove la telemetria di Nicola dice che drifta) tiene la coda fuori; il curvone veloce smette di essere un regalo;
+- **la rotazione gratis si assottiglia sopra i 160 px/s** (`YAW_HIGH_FLOOR` 0.40): a 400 px/s resta il 40% di quella a 160. Le slick non sovrasterzano lì, quindi lo sente solo la mescola sciolta;
+- **l'IA la guida "sparata"** (`AI.driftSend` 0.12): gas giù e coda fuori, alza solo oltre i 29° di deriva, e si concede un po' di velocità in più in curva perché la rotazione gliela dà. Prima dosava il gas e sulla Drift era 7-9% più lenta della Medium; ora **drifta a vista** ed è pari entro il rumore.
+
+I numeri sono stati fissati con **il pilota del gioco stesso**, profilo e telaio inchiodati, da solo, all'asciutto (`driftsend.js`), guidando la Drift sparata contro la Medium: con lo scrub a 1.0 la Drift restava 2% avanti, a 3.0 finiva 0.5% dietro, a 2.5 è pari entro il rumore su F1, Harbour, Boomerang, Kart, Oval e Comb. Resta un'eccezione onesta: **Circle**, un giro che è una curva sola a raggio costante, dove una scivolata piccola e tenuta paga ancora — il modello dice 5% per una persona. E il test a sterzo tutto e gas tutto per 1.2 s adesso dice: a 300 px/s la Drift deriva di 37° e finisce a 159 px/s (la Hard: 11°, 286); a 240 44° e 142. Chi tiene la scivolata la paga, e chi la dosa la guida.
+
+Tre manopole, una riga ciascuna in `car.js` e `ai.js`: `SCRUB_RATE`, `YAW_HIGH_FLOOR`, `AI.driftSend`. Se dopo qualche gara Nicola vince ancora troppo, la prima va su; se la gomma non è più divertente, la prima va giù.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.

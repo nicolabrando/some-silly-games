@@ -723,6 +723,16 @@ class AI {
                 const s = flat * tyreHookAt(car.tyre, vSteer);
                 vSteer = s / (1 / R + s / 500);
             }
+            // A loose compound driven "sent" - throttle down through the
+            // corner, the tail out - rotates faster than its steering rate
+            // says (the oversteer yaw adds to it), so the car can commit to
+            // more speed. AI.driftSend is how much more; 0 is the default and
+            // means the AI feathers it instead (block 5c). It exists so the
+            // tyre's potential in a person's hands can be MEASURED with the
+            // game's own driver (driftsend.js), which is how SCRUB_RATE in
+            // car.js was set.
+            if (AI.driftSend && car.tyre && car.tyre.loose && vSteer > AI_PROVOKE_SPEED)
+                vSteer *= 1 + AI.driftSend;
             const vGrip = Math.sqrt(latLimit * tyreG * R);
             const cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
                                 Math.max(this.p.cornerFactor, AI_ATTACK_CORNER_CAP));
@@ -874,11 +884,22 @@ class AI {
         //  price of the compound, and not sideways.
         if (car.tyre && car.tyre.loose && car.inputs.up && this.steerDir !== 0 &&
             speed >= AI_PROVOKE_SPEED) {
-            const onset = 1.45 - car.tyre.loose;
-            const P = (car.enginePower || 296) * (car.condition || 1);
-            const cap = Math.max(0.25, Math.min(1, onset * 0.9 * Math.max(70, speed) / Math.max(1, P)));
-            const had = car.inputs.throttle !== undefined ? car.inputs.throttle : 1;
-            car.inputs.throttle = Math.min(had, cap);
+            if (AI.driftSend) {
+                // Sent: keep it lit, lift only when the slide is past catching.
+                // This is the default; the feathering branch below is kept for
+                // AI.driftSend = 0 and is what the first version did.
+                const vdir = Math.atan2(car.velocity.y, car.velocity.x);
+                let slip = car.angle - vdir;
+                while (slip > Math.PI) slip -= 2 * Math.PI;
+                while (slip < -Math.PI) slip += 2 * Math.PI;
+                if (Math.abs(slip) > 0.50) { car.inputs.up = false; car.inputs.throttle = 0; }
+            } else {
+                const onset = 1.45 - car.tyre.loose;
+                const P = (car.enginePower || 296) * (car.condition || 1);
+                const cap = Math.max(0.25, Math.min(1, onset * 0.9 * Math.max(70, speed) / Math.max(1, P)));
+                const had = car.inputs.throttle !== undefined ? car.inputs.throttle : 1;
+                car.inputs.throttle = Math.min(had, cap);
+            }
         }
 
         // Never let a car sit still (or start reversing) on the racing line:
@@ -1281,6 +1302,18 @@ class AI {
 // Chi ha il pacchetto buono quest'anno: { driver, boost } in campionato,
 // null in gara singola. Lo scrive main.js a ogni sessione.
 AI.seasonRival = null;
+// How much extra corner speed the AI commits to on a loose compound, driving
+// it SENT - throttle down, tail out, lifting only past 29 degrees of slide -
+// rather than feathered (block 5c). Measured with the game's own driver on one
+// pinned profile and chassis, dry, solo (driftsend.js): feathered, the drift
+// tyre was 7-9% slower than the medium; sent at 0.16-0.24 it was level. Then
+// with the full grid of ten (aidrift.js, random talent and chassis, which is
+// the race as played) 0.20 came out 2-6% QUICKER at the Oval, Kart and
+// Circle, which is a free advantage and against the rule; 0.12 is level
+// within the noise - a little up here, a little down there - and the AI
+// drifts visibly, which is what Nicola asked for ("the AI cannot use it to
+// drift through the corners"). 0 turns it off.
+AI.driftSend = 0.12;
 
 AI.buildProfile = function (driverName, difficulty, skillVariation) {
     const base = AI_PROFILES[difficulty] ? AI_PROFILES[difficulty] : AI_PROFILES.medium;

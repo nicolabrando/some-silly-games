@@ -299,6 +299,12 @@ const HOOK_BAND = 160;
 // 1.22 of slide in a hairpin - a fifth more oversteer than a slick rather than
 // half again as much.
 const SLIDE_DECOUPLE = 0.6;
+// A slide above this speed sheds speed (see the oversteer block in update()):
+// SCRUB_RATE px/s^2 per unit of powerOversteer per px/s above SCRUB_FROM.
+let SCRUB_FROM = 150;
+let SCRUB_RATE = 2.5;
+// Fraction of the 160 px/s yaw gain still available at 400 px/s and above.
+let YAW_HIGH_FLOOR = 0.40;
 // `wet` is passed because a band measured in px/s means something completely
 // different once it is raining. Grip falls to 0.13 of dry, so EVERY corner on
 // the circuit drops inside the band and a slow-corner bonus turns into a
@@ -834,8 +840,46 @@ class Car {
             // round far faster than the steering alone ever could, which is
             // how you get a slow hairpin or a spin turn done.
             const lowSpeed = Math.max(0, Math.min(1, 1 - speed / 160));
-            const yawGain = 1.15 + 1.75 * lowSpeed;
+            // ...and above the pivot band the free rotation tapers off: the
+            // faster the car the less the rear can turn it. YAW_HIGH_FLOOR of
+            // the 160 px/s figure is left at 400 px/s and beyond. Slicks have
+            // no oversteer above 207 px/s, so only a loose compound feels it,
+            // and for that compound it is the difference between a tail that
+            // is out and a corner that is being taken 13% faster than a
+            // slick can take it (see SCRUB_RATE: the pair were set together).
+            const highSpeed = Math.max(0, Math.min(1, (speed - 160) / 240));
+            const yawGain = (1.15 + 1.75 * lowSpeed) * (1 - (1 - YAW_HIGH_FLOOR) * highSpeed);
             this.angle += steerInput * powerOversteer * yawGain * dt;
+
+            // AND A SLIDE AT SPEED COSTS SPEED. The rotation above used to be
+            // free: it bypasses the steering-rate limit, and nothing in the
+            // model charged for it. Below 160 px/s that is the pivot and it
+            // stays free. Above, it was a superpower the moment a compound
+            // could oversteer there - Nicola ran a season on the drift tyre
+            // with `loose` and took nine poles out of ten against the
+            // Impossible grid, 4-13% clear: at 300 px/s, throttle down, the
+            // tyre turned at 1.25 rad/s where a slick is steering-limited to
+            // 0.87, so a corner the slick takes at 217 it took at 300.
+            //
+            // So a rear that is spinning up at speed scrubs: SCRUB_RATE of
+            // deceleration per unit of oversteer per px/s above SCRUB_FROM.
+            // At 300 px/s and 0.5 of oversteer that is 187 px/s^2 against 120
+            // of surplus thrust: a held slide there bleeds about 60 px/s a
+            // second. At 240 and 0.66 it is 148 against 156 - the slide holds
+            // its speed - and below ~230 the car still accelerates out of it.
+            // So the fun band (150-250, where Nicola's telemetry says he
+            // drifts) keeps its slide, and the fast sweeper stops being a
+            // corner the tyre takes 13% quicker than a slick can. Set with
+            // the game's own driver sent on the tyre (driftsend.js) against
+            // the medium: 1.0 left it 2% up, 3.0 put it 0.5% down, 2.5 is
+            // level within the noise. Slicks do not oversteer above 207 px/s
+            // at all and only faintly above 150, so nothing about them or
+            // about the AI's laps changes.
+            if (speed > SCRUB_FROM) {
+                const k = SCRUB_RATE * powerOversteer * (speed - SCRUB_FROM) / speed;
+                this.velocity.x -= this.velocity.x * k * dt;
+                this.velocity.y -= this.velocity.y * k * dt;
+            }
         }
 
         // Direction vectors
