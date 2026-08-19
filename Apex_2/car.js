@@ -155,9 +155,34 @@ const TYRES = {
     //  The rest of the character comes from `slide`, which touches nothing but
     //  the oversteer term. 1.282 of slipperiness times 1.55 of slide is a tail
     //  that steps out twice as readily as the medium's.
+    //
+    //  AND `loose`, WHICH IS WHAT FINALLY MADE IT A DRIFT TYRE. All of the
+    //  above multiplies powerOversteer, and powerOversteer only exists once
+    //  demand (engine over speed) clears 1.45 - about 207 px/s - and is at
+    //  its cap below 80. So in a hairpin every compound was at the cap and
+    //  felt the same, and in a fast corner none of them moved at all: Nicola
+    //  measured it with his hands ("I can break the rear loose in the tight
+    //  stuff exactly as I do on the hard, and it has no advantage") and
+    //  drifttest.js measured it with numbers - full lock and full throttle
+    //  for 1.2s at 240 px/s gave a slip angle of 10 degrees on this tyre
+    //  against 12 on the hard. Slower AND straighter. `loose` moves the onset
+    //  down by that much demand: 1.0 puts it at 0.45, which is 660 px/s, so
+    //  the tail is available in every corner in the game. Same test after:
+    //  30 degrees at 240, 22 at 300, 16 at 360, against the hard's 12, 11
+    //  and 9; and at 120 the car will spin in a second if you let it. Lift
+    //  and it all goes away and the 0.78 of steering rate is what is left,
+    //  so on this tyre you rotate with the throttle or you push wide.
+    //
+    //  The AI feeds the throttle in on it above 190 px/s (ai.js, 5c), the way
+    //  a person would; measured in the dry with all ten cars on it: level
+    //  with the medium at Kart, Comb and F1, 2% off at Circle, 10-12% off at
+    //  Harbour and the Oval. It was 3% up on the tight circuits before; the
+    //  compound is a toy for a person now, not a strategy for the grid, and
+    //  the pick logic - temperament times slow-corner share, never above 30%
+    //  - was already keeping it off the fast circuits.
     drift:  { key: 'drift',  label: 'Drift',  short: 'D', colour: '#ab47bc',
               grip: 0.780, falloff: 0.0150, life: 2.00, bite: 1.000, slide: 1.55,
-              hook: 0.58, hookBand: 320 },
+              hook: 0.58, hookBand: 320, loose: 1.0 },
     // ---- RAIN -----------------------------------------------------------
     //  Two treaded compounds. What separates them is not simply "more wet
     //  grip": the wet road and the standing water on it are two different
@@ -786,8 +811,17 @@ class Car {
             const hookFrac = this.tyre && this.tyre.hook
                 ? (hookNow - 1) / this.tyre.hook : 0;
             const effSlide = 1 + ((this.tyreSlide || 1) - 1) * (1 - SLIDE_DECOUPLE * hookFrac);
+            // Where the tail starts to go. 1.45 of demand is engine over speed
+            // at about 207 px/s on 300 of power, so a slick only ever steps
+            // out below that - and saturates below 80, which is why every
+            // compound felt the same in a hairpin: they were all at the cap.
+            // A compound's `loose` pulls the onset down the demand scale, i.e.
+            // up the speed scale: the drift tyre's 1.0 puts it at 0.45, which
+            // is 660 px/s - every corner the game has. Nothing else on the
+            // road is affected.
+            const onset = 1.45 - ((this.tyre && this.tyre.loose) || 0);
             powerOversteer = Math.max(0, Math.min(1,
-                ((demand - 1.45) / 2.2) * slipperiness * effSlide));
+                ((demand - onset) / 2.2) * slipperiness * effSlide));
         }
         this.powerOversteer = powerOversteer;
 

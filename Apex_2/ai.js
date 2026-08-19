@@ -835,7 +835,12 @@ class AI {
                 // is flat out. What it means is "how far past the point where
                 // the car starts to rotate", which is what a driver is choosing.
                 const P = (car.enginePower || 296) * (car.condition || 1);
-                const need = Math.min(1, 1.45 * Math.max(70, speed) / Math.max(1, P));
+                // The onset is the TYRE's, not a constant: a loose compound
+                // (car.js, `loose`) starts to rotate at a fraction of the
+                // demand a slick needs, and provoke means "how far past the
+                // onset", so it has to be measured from where the onset is.
+                const onset = 1.45 - ((car.tyre && car.tyre.loose) || 0);
+                const need = Math.min(1, onset * Math.max(70, speed) / Math.max(1, P));
                 const want = Math.min(1, need + prov * (1 - need));
                 // The EFFECTIVE throttle, and READ BEFORE `up` is forced on.
                 // Two bugs lived on these three lines. First, reading the
@@ -852,6 +857,28 @@ class AI {
                 car.inputs.up = true;
                 car.inputs.throttle = Math.max(had, want);
             }
+        }
+
+        // ================================================================
+        //  5c. A LOOSE COMPOUND AT SPEED
+        // ================================================================
+        //  On the drift tyre the same throttle that rotates a hairpin
+        //  oversteers a fast corner - its onset sits at 430 px/s, so with lock
+        //  on and the pedal down the tail is out at any speed the AI ever
+        //  corners at. Measured before this block: all ten cars on drift at
+        //  the Oval, best lap 36% slower than on the medium, from a controller
+        //  fighting the yaw it kept provoking. A person feeds the power in
+        //  there; so does this. Above the provoke band, steering, the throttle
+        //  is capped where demand stays a tenth under the onset - 25 to 55%
+        //  between 200 and 400 px/s. Slower out of a fast corner, which is the
+        //  price of the compound, and not sideways.
+        if (car.tyre && car.tyre.loose && car.inputs.up && this.steerDir !== 0 &&
+            speed >= AI_PROVOKE_SPEED) {
+            const onset = 1.45 - car.tyre.loose;
+            const P = (car.enginePower || 296) * (car.condition || 1);
+            const cap = Math.max(0.25, Math.min(1, onset * 0.9 * Math.max(70, speed) / Math.max(1, P)));
+            const had = car.inputs.throttle !== undefined ? car.inputs.throttle : 1;
+            car.inputs.throttle = Math.min(had, cap);
         }
 
         // Never let a car sit still (or start reversing) on the racing line:
@@ -1456,10 +1483,11 @@ AI.chooseTyre = function (driverName, laps, raining, trackKey) {
 
     // THE DRIFT COMPOUND is not on that scale at all. Soft, medium and hard are
     // one axis - how much performance now against how much later - and the
-    // drift tyre is off it: it trades lateral grip for turn-in and for a tail
-    // that steps out. Measured over full solo stints it is level with the
-    // medium on average and wins outright on the tight circuits, so it is a
-    // real choice rather than a novelty.
+    // drift tyre is off it: it trades lateral grip for a tail that steps out
+    // on the throttle at any speed (car.js, `loose`). In AI hands, feeding
+    // the power in above 190 px/s (5c below), it is level with the medium on
+    // the tight circuits and 10-12% off on the fast ones - a gamble that a
+    // person can turn into something and the grid mostly cannot.
     //
     // Who takes it is a question of temperament, not of strategy. A driver who
     // is happy with the car moving around underneath them - nervous hands, a

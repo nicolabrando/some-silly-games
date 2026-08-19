@@ -384,6 +384,28 @@ Chiuso lo spigolo ne e' saltato fuori un secondo, a Triangle. I suoi angoli inte
 
 Nel verificarlo e' saltato fuori un errore che c'era **anche in gara**. La schermata delle gomme prende il meteo da due posti: la fascia in alto legge `upcomingWeather()`, cioe' il meteo appena fissato per la sessione, ma l'ordine della lista e la riga della durata leggevano `isRaining` — la globale che viene scritta **quando la sessione parte**, cioe' dopo. Al primo weekend bagnato dopo un caricamento la fascia diceva DAMP e la lista si apriva con le slick, con l'intermedia quotata «~0.5 of 2 laps» — la sua vita al tasso di usura dell'asciutto. Due risposte diverse sulla stessa schermata, una giusta e una no. Ora legge tutto dalla stessa fonte: sotto la fascia DAMP la lista si apre con intermedia e full wet, «lasts the distance». Il pannello dei box a gara in corso continua a leggere `isRaining`, che li' e' la verita'.
 
+### 2.4quater-et-vicies La gomma Drift finalmente scivola (Apex 3)
+
+«In curva riesco a fargli perdere aderenza e a fare le curve strette sgommando esattamente come faccio con le hard. Al momento non hanno nessun vantaggio. Voglio delle gomme con cui sia molto più facile rompere l'aderenza, anche nelle curve più larghe.»
+
+Aveva ragione, e la misura lo dice meglio delle mani. In questo modello la coda esce solo attraverso `powerOversteer`, che esiste solo quando `demand` — motore diviso velocità — supera **1.45**: con 300 di motore sono **207 px/s**, e sotto gli 80 px/s è già al massimo per qualunque gomma. Quindi in un tornante tutte le mescole erano al tetto e si sentivano uguali, e in una curva larga nessuna si muoveva. `slide` e `slipperiness` della Drift moltiplicavano un numero che sopra i 200 px/s era zero. Test con lo stesso pilota scriptato — sterzo tutto e gas tutto per 1.2 s — a 240 px/s: **10° di deriva sulla Drift contro 12° sulla Hard**. Più lenta e più dritta.
+
+**Il cambiamento è un parametro, `loose`.** Sposta la soglia della `demand` a cui la coda comincia a uscire: la Drift ha 1.0, che porta la soglia da 1.45 a 0.45, cioè da 207 a **660 px/s** — ogni curva del gioco. Nient'altro in pista cambia: le slick e le gomme da pioggia hanno `loose` 0. Stesso test dopo:
+
+| v0 | Hard: deriva max | Drift prima | **Drift ora** | sovrasterzo medio ora |
+|---|---|---|---|---|
+| 120 | 16° | 19° | **57°** (gira su se stessa in un secondo) | 1.00 |
+| 180 | 13° | 12° | **44°** | 0.91 |
+| 240 | 12° | 10° | **30°** | 0.66 |
+| 300 | 11° | 8° | **22°** | 0.49 |
+| 360 | 9° | 7° | **16°** | 0.36 |
+
+Il carattere che ne esce: sulla Drift **si ruota col gas o si va larghi**. Col gas giù la rotazione in più supera lo sterzo (a 300 px/s: 0.56 rad/s di coda sopra 0.69 di sterzo), quindi in una curva larga si può portare più velocità con la coda fuori — ma a 240 la somma è 1.6 rad/s dove ne servono 1.0, e senza dosare si gira. Rilasciando il gas resta lo 0.78 di sterzata della mescola, cioè un'auto che spinge. Con la tastiera il dosaggio è a impulsi: è quello il gioco.
+
+**L'IA** su questa gomma sarebbe stata un disastro in velocità: dieci vetture sulla Drift all'Oval, giro migliore **+36%** rispetto alla Medium, da un controllore che combatteva la coda che continuava a provocare. Ora sopra i 190 px/s, sterzando, l'IA dosa il gas (`ai.js`, blocco 5c) come farebbe una persona — dal 25 al 55% fra 200 e 400 px/s — e il suo `provoke` misura la spinta dalla soglia della *gomma* e non da 1.45. Rimisurato all'asciutto, tutte e dieci sulla Drift contro tutte sulla Medium: Kart e Comb pari, F1 +0.3%, Circle +2%, Harbour +10%, Oval +12%; zero ritiri, zero auto di traverso. Prima era 3% meglio sui circuiti lenti; ora è un giocattolo per una persona e non una strategia per la griglia, e la logica di scelta (temperamento × quota di curve lente, mai sopra il 30%) la teneva già lontana dai circuiti veloci.
+
+Il libro dei record si ricostruisce da solo, una volta: le gomme fanno parte dell'impronta della fisica.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.

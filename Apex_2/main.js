@@ -1846,7 +1846,7 @@ const TYRE_NOTE = {
     soft:   'quickest early, gone by the flag',
     medium: 'holds its shape',
     hard:   'slowest, and still there at the end',
-    drift:  'a fifth slower in the quick stuff, quicker in the slow',
+    drift:  'the tail steps out on the throttle at any speed \u2014 lift and it pushes',
     inter:  'the quick wet tyre \u2014 no answer to a puddle',
     wet:    'slower, but it drives through standing water'
 };
