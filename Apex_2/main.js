@@ -1498,6 +1498,34 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
     return car.bestLapTime;   // null if the lap was never completed
 }
 
+// The line judge. track.js asks for this when it has to choose between
+// candidate racing lines (THE LINE, AND HOW IT IS CHOSEN, in track.js): the
+// top AI drives each candidate alone for a flying lap - medium, dry, the
+// reference chassis, a driver with no personality - and the quickest
+// candidate is the line. Returns the lap in ms, null if none was completed.
+// It only ever runs for a circuit whose line is not in lines.js (an edited
+// or new layout), once; the answer is then remembered in localStorage.
+// RACING_LINE_JUDGE_REPS flying laps, the best kept: one in the game (it is
+// a fallback), three when genlines.js builds the shipped table, because the
+// sim is noisy to about a per cent and the candidates can be closer than that.
+let RACING_LINE_JUDGE_REPS = 1;
+function judgeRacingLine(qTrack) {
+    const real = AI.chooseTyre;
+    AI.chooseTyre = () => 'medium';
+    try {
+        let best = null;
+        for (let r = 0; r < Math.max(1, RACING_LINE_JUDGE_REPS); r++) {
+            const lap = simulateQualifyingLap(qTrack, 'Line judge', 'impossible', 1.1, false, CHASSIS_DEFAULT);
+            if (lap && isFinite(lap) && (best === null || lap < best)) best = lap;
+        }
+        return best;
+    } catch (e) {
+        return null;
+    } finally {
+        AI.chooseTyre = real;
+    }
+}
+
 // Run through the pending AI drivers, one per frame, while the player drives.
 // The player's damage handicap is a difficulty setting like any other: it is on
 // everywhere except Alien, whose whole premise is that the player is given
@@ -2606,7 +2634,10 @@ const exBuild = { jobs: null, i: 0, done: 0, total: 0, running: false, t0: 0 };
 function exPhysHash() {
     const bits = [JSON.stringify(TYRES), String(WET_GRIP),
                   JSON.stringify(AI_PROFILES.alien || {}),
-                  JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS)];
+                  JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS),
+                  // the racing line is part of the physics of a lap: a new
+                  // optimiser means new reference times
+                  'line' + (typeof RACING_LINE_VERSION !== 'undefined' ? RACING_LINE_VERSION : 1)];
     return exHash(bits.join('|'));
 }
 
@@ -2621,6 +2652,7 @@ function exPhysHash() {
 function exGeomHash(key) {
     try {
         const t = makeTrack(key);
+        if (typeof t.geomHash === 'function') return t.geomHash();
         let geom = t.trackWidth * 7 + t.grassWidth * 3;
         for (const s of t.segments)
             geom += s.type === 'line' ? (s.x1 + s.y1 + s.x2 + s.y2)

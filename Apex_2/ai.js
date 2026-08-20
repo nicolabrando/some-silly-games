@@ -60,6 +60,30 @@
 //  cars in the field: skillFloor lifts the bottom of the skill range so every
 //  driver runs at the top of it, instead of a spread that hands the player a
 //  slow half of the grid. That, and the player's own damage handicap comes off.
+//
+//  THE TOP WAS RAISED ANYWAY - not here, in track.js. "At the limit of the car"
+//  was true of the LINE the AI was given, not of the car: Nicola's logs had him
+//  qualifying 5-14% quicker than the Impossible grid on every circuit made of
+//  straights and corners (Rectangle 14%, Zipper and Harbour 11%, Crown 10%,
+//  Serpent 9%), and only slower on the Oval and the Circle. Traced, the AI on
+//  Rectangle was braking to 167 px/s four times a lap, because the relaxed line
+//  it followed had a kink of radius ~100px at each end of every corner; the
+//  road allows an arc of ~190 taken at 220+, which is what he drives. The line
+//  is now optimised and judged by a simulated lap (track.js, THE LINE, AND HOW
+//  IT IS CHOSEN), and the same neutral measurement - solo lap, neutral driver,
+//  medium, dry, Aero - came back:
+//
+//      easy +41.5%   medium +22.2%   hard +8.0%   impossible 0    alien 0
+//
+//  with the top itself 4.5% quicker on average (8-12% on Anchor, Harbour,
+//  Rectangle, Serpent, Circo Massimo). Every level shares the line, so the
+//  rungs moved up together and the ladder kept its shape - the numbers here
+//  were not refitted. Against his own best laps the top is now level on
+//  Harbour, Serpent, Peanut and Boomerang, quicker on the Oval and the Circle,
+//  and 3-7% slower on Rectangle, Zipper, Crown, Crossover and Kettle - the
+//  remaining difference is how he drives a slow corner, not which line.
+//  Alien is unchanged by construction: the same line, the same pace, no weak
+//  cars, no damage handicap.
 // -----------------------------------------------------------------------------
 const AI_PROFILES = {
     easy: {
@@ -311,6 +335,19 @@ const aiTopOf = (car) => (car && car.enginePower && car.baseFriction)
     ? car.enginePower / car.baseFriction : AI_TOP_SPEED;
 const aiGripOf = (car) => (car && car.baseGrip) || AI_BASE_GRIP;
 const AI_CORNER_SAFETY = 0.90; // never ask for more than 90% of the theoretical limit
+// Running out of road (block 5): how much of the half-width a car may use
+// before its error is turned away - 14px leaves the body of a sideways car
+// inside the white line - and the shortest distance the turning-away is
+// planned over, so that being a few px wide at the next node does not read
+// as an emergency stop.
+const AI_EDGE_MARGIN = 14;
+// Off the grid, hold the grid column until the start caution ends (see
+// updateTraffic). Every car used to aim at the racing line the moment the
+// lights went out, ten cars into one file before turn 1; measured at
+// Impossible on the optimised lines, heavy contacts in the first six seconds
+// went from 13-21 per 24 races to 4 with this on.
+const AI_HOLD_COLUMN = true;
+const AI_CONVERGE_MIN = 50;
 const AI_START_CAUTION = 4.5;  // seconds of extra caution after the lights
 
 // --- racecraft ----------------------------------------------------------
@@ -415,6 +452,9 @@ class AI {
         // Extra room for the run down to turn 1, where the whole grid arrives
         // together: without it the back of the field wipes itself out.
         this.startCaution = AI_START_CAUTION;
+        // and keep the grid column down to turn 1 (updateTraffic)
+        this.holdColumn = AI_HOLD_COLUMN;
+        this.holdLat = undefined;
     }
 
     idle() {
@@ -759,11 +799,51 @@ class AI {
         // when there is nobody to worry about in front.
         if (this.p.cleanAir !== 1 && this.followSpeed === Infinity) vTop *= this.p.cleanAir;
 
+        // ---- running out of road -------------------------------------------
+        // The speed profile above is the LINE's: the radius at each node ahead
+        // says how fast that node can be taken BY A CAR ON THE LINE. A car that
+        // is wide of where it means to be - shuffled out by traffic, holding a
+        // defensive line, sliding on worn tyres - is not on the line, and on a
+        // real racing line that matters: the line itself runs out to the edge
+        // of the road at the exit of every corner, so a car 30px wide of it
+        // there is 30px onto the grass. With the old, inside-hugging line the
+        // outside of every corner was spare road and the error was free; with
+        // the optimised lines (track.js, THE LINE) it put cars in the wall -
+        // measured at Impossible, 1.4 retirements a race against 0.7, and
+        // the wall damage, previously nil, was a third of the total.
+        //
+        // So each node ahead is also asked: where will the car be if it keeps
+        // its present error, and does that fit on the road? Where it does not,
+        // the excess has to be turned away over the distance to that node -
+        // curvature 2e/d^2 on top of the line's own - and that tighter path
+        // has its own steering-limited speed, which caps the profile like any
+        // corner. Nothing changes for a car on its line (e = 0); a car that
+        // is wide slows by exactly what it needs to get back, and no more.
+        const targetHere = this.nodePos(line, i, totalOffset);
+        const errLat = (car.x - here.cx) * here.nx + (car.y - here.cy) * here.ny
+                     - ((targetHere.x - here.cx) * here.nx + (targetHere.y - here.cy) * here.ny);
+        const roomEdge = halfWidth - AI_EDGE_MARGIN;
+        const wSteer = aiSteerOf(car) * tyreF;
+        const wideCap = (idx, dist) => {
+            if (Math.abs(errLat) < 2) return Infinity;
+            const nd = nodes[idx];
+            let tgt = nd.alpha * this.p.lineBlend + totalOffset;
+            const lim = line.maxOffset;
+            if (tgt > lim) tgt = lim; else if (tgt < -lim) tgt = -lim;
+            const excess = Math.abs(tgt + errLat) - roomEdge;
+            if (excess <= 0) return Infinity;
+            const d = dist < AI_CONVERGE_MIN ? AI_CONVERGE_MIN : dist;
+            const kConv = 2 * excess / (d * d);
+            const kLine = 1 / radiusOf(nd);
+            return wSteer / (kLine + kConv + wSteer / 500) * AI_CORNER_SAFETY * this.p.cornerFactor;
+        };
+
         let vTarget = Math.min(vTop, cornerCap(i));
         for (let o = 1; o <= scanNodes; o++) {
             const idx = (i + o) % N;
             const dist = o * ds;
-            const allowed = Math.sqrt(cornerCap(idx) ** 2 + 2 * aBrake * dist);
+            const cap = Math.min(cornerCap(idx), wideCap(idx, dist));
+            const allowed = Math.sqrt(cap * cap + 2 * aBrake * dist);
             if (allowed < vTarget) vTarget = allowed;
         }
 
@@ -990,11 +1070,21 @@ class AI {
                     if (fwd < bestFwd) {
                         bestFwd = fwd;
 
+                        // A car that is all but stopped in the road - spun,
+                        // shunted, stalled - is an obstacle, not a car to
+                        // follow, and it is dealt with differently twice below:
+                        // the move round it starts from the whole window rather
+                        // than from passing range, and the closing speed is
+                        // what the brakes can actually shed, not the follow law.
+                        const theirFwd0 = other.velocity.x * tx + other.velocity.y * ty;
+                        const ourFwd0 = car.velocity.x * tx + car.velocity.y * ty;
+                        const obstacle = theirFwd0 < 80 || theirFwd0 < 0.6 * ourFwd0;
+
                         // Choose a side - but only if a move is actually on.
                         // Beyond AI_PASS_RANGE we hold the racing line and use
                         // the speed cap below, which is what keeps a queue a
                         // queue instead of a fan.
-                        if (fwd < AI_PASS_RANGE) {
+                        if (fwd < (obstacle ? 140 : AI_PASS_RANGE)) {
                         hasTarget = true;
                         // The side with the most room is the outside of the
                         // corner, and the outside is the long way round. Give
@@ -1035,6 +1125,20 @@ class AI {
                             const gap = fwd - safeGap;
                             let v = theirFwd + gap * this.p.gapGain;
                             if (v < 0) v = 0;
+                            // The follow law above is for a car that is MOVING:
+                            // gap x gapGain reads 244 px/s at 100px from a
+                            // stationary one, which the brakes cannot turn into
+                            // a stop in 100px. Against an obstacle the cap is
+                            // the speed the brakes can shed over the gap. This
+                            // is where the optimised lines were losing cars:
+                            // not in the wall, but arriving at 150-230 px/s on
+                            // a car spun across the road - pairs of retirements
+                            // at the same second in the log.
+                            if (obstacle) {
+                                const aStop = (150 + 0.55 * speed) * this.p.brakeConfidence;
+                                const vStop = Math.sqrt(Math.max(0, theirFwd * theirFwd + 2 * aStop * Math.max(0, gap)));
+                                if (vStop < v) v = vStop;
+                            }
 
                             // How much of the car ahead is genuinely in our
                             // path. The cap exists to stop us rear-ending them,
@@ -1241,6 +1345,21 @@ class AI {
         }
 
         if (!hasTarget) desired = 0;
+
+        // Off the grid every car used to aim at the racing line at once - ten
+        // cars into one file before turn 1. While the start caution lasts, hold
+        // the grid column instead: the offset is set once from where the car
+        // actually is and frozen; the follow law and the wheel-to-wheel push
+        // still act. Released with the caution, after which the offset decays
+        // back to the line at the usual rate.
+        if (this.holdColumn) {
+            if (this.startCaution > 0) {
+                if (this.holdLat === undefined) this.holdLat = latCar - lineLat;
+                if (!inContact) desired = Math.max(-lim - lineLat, Math.min(lim - lineLat, this.holdLat));
+            } else {
+                this.holdColumn = false;
+            }
+        }
 
         // A recovery crane parked on the edge of the circuit is solid, so it
         // is worth steering round rather than into. It overrides everything

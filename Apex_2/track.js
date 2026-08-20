@@ -79,6 +79,14 @@ function inLapWindow(s, win, lapLen) {
     return s >= win.from || s <= win.to;      // the window straddles the line
 }
 
+// The racing line (see THE LINE, AND HOW IT IS CHOSEN below). Bump the
+// version when the optimiser, its proxy or the physics it mirrors change, and
+// regenerate lines.js (genlines.js): every shipped and remembered line is keyed
+// by it. The margins are the distances from the road edge the optimised
+// candidates are allowed to use; the judge picks between them per circuit.
+const RACING_LINE_VERSION = 2;
+const RACING_LINE_MARGINS = [20, 17, 14];
+
 class SegmentedTrack {
     constructor() {
         // To be overridden by subclasses
@@ -1261,8 +1269,9 @@ class SegmentedTrack {
     }
 
     // Analytic lap time of a candidate line: sum of ds / attainable speed.
-    // Used to pick the best line rather than assuming a fixed relaxation is
-    // optimal - which layout wins changes from track to track.
+    // Kept for tools; the line itself is now chosen by _proxyTime (a speed
+    // profile with braking, acceleration and the slip drag) and, when the
+    // game is loaded, by an actual simulated lap (see _buildRacingLines).
     _lapTimeOf(line) {
         let t = 0;
         const N = line.count;
@@ -1275,9 +1284,6 @@ class SegmentedTrack {
         return t;
     }
 
-    // level: 'standard' (default) or 'fast'.
-    // 'fast' is the quickest of several relaxation depths, measured rather
-    // than assumed. Only the Impossible AI is allowed to use it.
     // Total centre-line length, cached. Used by car.js for the half-distance
     // check, which must be in real distance: the waypoint list is unevenly
     // spaced (15 points per line segment regardless of its length), so
@@ -1315,37 +1321,187 @@ class SegmentedTrack {
         return this._wpTotal;
     }
 
+    // =====================================================================
+    //  THE LINE, AND HOW IT IS CHOSEN
+    //
+    //  Until v2 the racing line was a constrained Laplacian relaxation of the
+    //  centre line - pull every node towards the midpoint of its neighbours,
+    //  clamp it inside the road, stop after N sweeps - and the 'fast' line
+    //  was the quickest of three depths by an analytic proxy. It looks like a
+    //  racing line and it is not one. Relaxation SHORTENS the path; it has no
+    //  idea that the car's cornering speed is set by the steering rate, so
+    //  it hugs the inside of a 90-degree corner and leaves a kink of radius
+    //  ~100px at each end of it. On Rectangle the AI was braking to 167 px/s
+    //  four times a lap where the road allows an arc of radius ~190 that it
+    //  takes at 220+; it was 10% slower round there than Nicola, who simply
+    //  uses the width of the road, and similarly on every circuit made of
+    //  straights and corners (Harbour, Anchor, Serpent, Comb, Crown...).
+    //
+    //  So the line is now OPTIMISED, in two steps:
+    //
+    //  1. _optimizeAlpha: a direct search on the lateral offsets. Raised-
+    //     cosine bumps of 2 to 24 nodes are pushed left and right, a move is
+    //     kept when the proxy lap time falls. The proxy (_proxyTime) is a
+    //     speed profile on the candidate path: corner speed from the steering
+    //     rate (v = wR/(1+wR/500), the physics' own closed form), from the
+    //     POWER limit (in a corner the velocity lags the nose by a slip angle
+    //     beta with sin(beta) = v/(3.5R); the lateral force v^2/R that holds
+    //     the corner then has a component v^3/(3.5R^2) against the direction
+    //     of travel - 100 px/s^2 at 200 px/s on R=150, the whole engine - so
+    //     a mid-radius corner is power-limited as much as steering-limited,
+    //     and a line that does not know it picks radii too tight), and from
+    //     the SWING in an S: the nose must turn through the change of slip
+    //     angle as well as the change of heading, which is what made the AI
+    //     run out of road at the first chicane on Thunder with the first
+    //     version of this. Then acceleration and braking passes, forward and
+    //     backward, and the sum of ds/v.
+    //  2. A JUDGE. The proxy ranks lines well but not perfectly, so when the
+    //     game is loaded (main.js installs judgeRacingLine) each candidate -
+    //     the three relaxations and the optimised lines at three margins from
+    //     the edge - is driven by the AI itself for a flying lap and the
+    //     quickest is kept. Where the optimiser does not help (Circle: one
+    //     constant-radius corner; Thunder) the relaxation wins and nothing
+    //     is lost. Measured over the eighteen circuits, the top AI's solo lap
+    //     fell 4.5% on average: 8-12% on Anchor, Harbour, Rectangle, Serpent,
+    //     Circo Massimo, nothing on Circle and Thunder, slower nowhere.
+    //
+    //  The optimisation costs 1-3 s per circuit in JavaScript, so it is not
+    //  done at run time for the circuits the game ships with: tools/genlines
+    //  (see /root/apex/genlines.js) runs exactly this code headless and writes
+    //  lines.js, a table keyed by geomHash() - the circuit's segments, width
+    //  and verge - of the offsets that won. A circuit whose geometry changes
+    //  no longer matches its entry and falls through to the run-time path
+    //  (optimise, judge, and remember the answer in localStorage under the
+    //  same hash), so an edited circuit still gets the right line, just a
+    //  couple of seconds later the first time. RACING_LINE_VERSION is part
+    //  of every key: bump it when the optimiser, the proxy or the physics it
+    //  mirrors change, and regenerate lines.js.
+    //
+    //  The same line serves every level. The weaker profiles blend it towards
+    //  the centre (ai.js lineBlend), which is how they always drove, and the
+    //  'fast' line is the same object: there is one line per circuit now, the
+    //  best one the judge could find.
+    // =====================================================================
+
+    // Geometry fingerprint: segments, road width, verge. The same formula
+    // main.js uses for the record book, so "has this circuit changed" means
+    // one thing everywhere.
+    geomHash() {
+        let geom = this.trackWidth * 7 + this.grassWidth * 3;
+        for (const s of this.segments)
+            geom += s.type === 'line' ? (s.x1 + s.y1 + s.x2 + s.y2)
+                                      : (s.cx + s.cy + s.r * 13);
+        const str = geom.toFixed(1) + '|' + this.segments.length;
+        let h = 5381;
+        for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
+        return h.toString(36);
+    }
+
+    // level: 'standard' (default) or 'fast' - one line now, see above.
     getRacingLine(level) {
-        if (!this._lineStd) {
-            this._lineStd = this.buildRacingLine(600);
-
-            let best = this._lineStd;
-            let bestT = this._lapTimeOf(best);
-            for (const sweeps of [1000, 1800]) {
-                const cand = this.buildRacingLine(sweeps);
-                const tc = this._lapTimeOf(cand);
-                if (tc < bestT) { best = cand; bestT = tc; }
-            }
-            this._lineFast = best;
-
-            // Arc length of the start line itself. Node 0 is wherever the
-            // first track segment happens to begin, which is no use as a
-            // datum: distances have to be measured from the line every car
-            // crosses, or two cars at the same point on track read differently.
-            for (const line of [this._lineStd, this._lineFast]) {
-                let si = 0, md = Infinity;
-                for (let i = 0; i < line.count; i++) {
-                    const d = Math.hypot(line.nodes[i].cx - this.startX,
-                                         line.nodes[i].cy - this.startY);
-                    if (d < md) { md = d; si = i; }
-                }
-                line.sStart = line.nodes[si].s;
-            }
-        }
+        if (!this._lineStd) this._buildRacingLines();
         return level === 'fast' ? this._lineFast : this._lineStd;
     }
 
-    buildRacingLine(sweeps) {
+    _buildRacingLines() {
+        const base = this._lineBase();
+        const W = this.trackWidth;
+        const hash = 'v' + RACING_LINE_VERSION + ':' + this.geomHash();
+        let chosen = null;
+
+        // 1. shipped table
+        if (typeof RACING_LINES !== 'undefined' && RACING_LINES && RACING_LINES[hash] &&
+            RACING_LINES[hash].a && RACING_LINES[hash].a.length === base.count) {
+            const e = RACING_LINES[hash];
+            chosen = this._finishLine(base, Float64Array.from(e.a), e.m);
+            chosen.source = 'shipped';
+        }
+        // 2. remembered from a previous run
+        if (!chosen) {
+            try {
+                const raw = localStorage.getItem('apexLine:' + hash);
+                if (raw) {
+                    const e = JSON.parse(raw);
+                    if (e && e.a && e.a.length === base.count) {
+                        chosen = this._finishLine(base, Float64Array.from(e.a), e.m);
+                        chosen.source = 'cached';
+                    }
+                }
+            } catch (e) { /* no storage: compute */ }
+        }
+        // 3. compute, judge, remember
+        if (!chosen) {
+            chosen = this._searchRacingLine(base);
+            try {
+                localStorage.setItem('apexLine:' + hash, JSON.stringify({
+                    m: chosen.maxOffset,
+                    a: Array.from(chosen.nodes, n => Math.round(n.alpha * 10) / 10)
+                }));
+            } catch (e) { /* storage full or absent: fine */ }
+        }
+        this._lineStd = chosen;
+        this._lineFast = chosen;
+        this._setLineStart(chosen);
+    }
+
+    // Arc length of the start line itself. Node 0 is wherever the first
+    // track segment happens to begin, which is no use as a datum: distances
+    // have to be measured from the line every car crosses, or two cars at
+    // the same point on track read differently.
+    _setLineStart(line) {
+        let si = 0, md = Infinity;
+        for (let i = 0; i < line.count; i++) {
+            const d = Math.hypot(line.nodes[i].cx - this.startX,
+                                 line.nodes[i].cy - this.startY);
+            if (d < md) { md = d; si = i; }
+        }
+        line.sStart = line.nodes[si].s;
+    }
+
+    // Candidates, proxy, judge. Returns the finished line.
+    _searchRacingLine(base) {
+        const W = this.trackWidth;
+        const cands = [];
+        // the three relaxation depths the old selection chose between
+        for (const sweeps of [600, 1000, 1800]) {
+            const maxOff = Math.max(3, W - 20);
+            const alpha = this._relaxAlpha(base, sweeps, maxOff);
+            cands.push({ name: 'relax' + sweeps, alpha: alpha, maxOff: maxOff,
+                         proxy: this._proxyTime(base, alpha) });
+        }
+        // optimised from the best relaxation, at three margins from the edge
+        let start = cands[0];
+        for (const c of cands) if (c.proxy < start.proxy) start = c;
+        for (const margin of RACING_LINE_MARGINS) {
+            const maxOff = Math.max(3, W - margin);
+            const r = this._optimizeAlpha(base, start.alpha, maxOff, {});
+            cands.push({ name: 'opt' + margin, alpha: r.alpha, maxOff: maxOff, proxy: r.T });
+        }
+        // the judge, if the game is loaded; the proxy otherwise
+        let best = null;
+        const judge = (typeof judgeRacingLine === 'function') ? judgeRacingLine : null;
+        for (const c of cands) {
+            c.line = this._finishLine(base, c.alpha, c.maxOff);
+            c.line.source = c.name;
+            c.score = c.proxy;
+            if (judge) {
+                this._lineStd = c.line; this._lineFast = c.line;
+                this._setLineStart(c.line);
+                let lap = null;
+                try { lap = judge(this); } catch (e) { lap = null; }
+                this._lineStd = null; this._lineFast = null;
+                if (lap && isFinite(lap) && lap > 0) c.score = lap;
+                else c.score = c.proxy * 1000 + 1e6;   // a lap that never happened ranks last
+            }
+            if (!best || c.score < best.score) best = c;
+        }
+        return best.line;
+    }
+
+    // The uniformly resampled centre line: nodes with cx, cy, s, and the
+    // tangent/normal frame. Everything else is an offset along the normal.
+    _lineBase() {
+        if (this._lineBaseCache) return this._lineBaseCache;
         // ---- 1. dense polyline of the centre line -----------------------
         const dense = [];
         for (const seg of this.segments) {
@@ -1353,7 +1509,6 @@ class SegmentedTrack {
             const n = Math.max(2, Math.ceil(len / 2));
             for (let i = 0; i < n; i++) dense.push(this._segPoint(seg, i / n));
         }
-
         const M = dense.length;
         const cum = new Float64Array(M + 1);
         for (let i = 0; i < M; i++) {
@@ -1366,7 +1521,6 @@ class SegmentedTrack {
         // ---- 2. uniform resampling --------------------------------------
         const N = Math.max(48, Math.round(total / 8));
         const ds = total / N;
-
         const nodes = [];
         let j = 0;
         for (let i = 0; i < N; i++) {
@@ -1376,13 +1530,8 @@ class SegmentedTrack {
             const t = segLen > 1e-9 ? (s - cum[j]) / segLen : 0;
             const a = dense[j];
             const b = dense[(j + 1) % M];
-            nodes.push({
-                cx: a.x + (b.x - a.x) * t,
-                cy: a.y + (b.y - a.y) * t,
-                s: s
-            });
+            nodes.push({ cx: a.x + (b.x - a.x) * t, cy: a.y + (b.y - a.y) * t, s: s });
         }
-
         // centre-line tangents / normals
         for (let i = 0; i < N; i++) {
             const p = nodes[(i + 1) % N];
@@ -1395,25 +1544,23 @@ class SegmentedTrack {
             nodes[i].nx = -ty / L;   // left/right normal (unit)
             nodes[i].ny = tx / L;
         }
+        this._lineBaseCache = { nodes: nodes, count: N, ds: ds, length: total };
+        return this._lineBaseCache;
+    }
 
-        // ---- 3. constrained relaxation -> racing line --------------------
-        // Constrained Laplacian relaxation: each node is pulled towards the
-        // midpoint of its neighbours and clamped inside the usable width, so
-        // the path shortens and straightens ("geometric" racing line: brake
-        // outside, clip the apex, exit wide).
-        //
-        // The iteration count is deliberately finite.  Run to convergence this
-        // becomes the shortest path, which hugs the inner kerb and therefore
-        // tightens the radius; stopping early leaves a length/curvature
-        // compromise.  600 sweeps is the safe all-round setting; getRacingLine
-        // also measures deeper relaxations and keeps the quickest as the
-        // 'fast' line for the Impossible AI.
-        const maxOff = Math.max(3, this.trackWidth - 20);
+    // ---- constrained relaxation -> "geometric" racing line ---------------
+    // Constrained Laplacian relaxation: each node is pulled towards the
+    // midpoint of its neighbours and clamped inside the usable width, so
+    // the path shortens and straightens. Run to convergence this becomes
+    // the shortest path, which hugs the inner kerb and therefore tightens
+    // the radius; stopping early leaves a length/curvature compromise. It
+    // is the starting point of the optimiser and a candidate in its own
+    // right.
+    _relaxAlpha(base, sweeps, maxOff) {
+        const nodes = base.nodes, N = base.count;
         const alpha = new Float64Array(N);
-
         const px = (i) => nodes[i].cx + alpha[i] * nodes[i].nx;
         const py = (i) => nodes[i].cy + alpha[i] * nodes[i].ny;
-
         const nSweeps = sweeps || 600;
         for (let it = 0; it < nSweeps; it++) {
             for (let i = 0; i < N; i++) {
@@ -1427,21 +1574,33 @@ class SegmentedTrack {
                 alpha[i] += (want - alpha[i]) * 0.35;
             }
         }
+        return alpha;
+    }
 
+    // The old entry point, kept for the tools: a relaxed line, finished.
+    buildRacingLine(sweeps) {
+        const base = this._lineBase();
+        const maxOff = Math.max(3, this.trackWidth - 20);
+        return this._finishLine(base, this._relaxAlpha(base, sweeps, maxOff), maxOff);
+    }
+
+    // From offsets to a line the AI can drive: positions, heading, the two
+    // radii and the steering-limited corner speed.
+    _finishLine(base, alpha, maxOff) {
+        const N = base.count, ds = base.ds;
+        const nodes = base.nodes.map(n => Object.assign({}, n));
         for (let i = 0; i < N; i++) {
             nodes[i].alpha = alpha[i];
             nodes[i].x = nodes[i].cx + alpha[i] * nodes[i].nx;
             nodes[i].y = nodes[i].cy + alpha[i] * nodes[i].ny;
         }
-
         // racing-line heading
         for (let i = 0; i < N; i++) {
             const p = nodes[(i + 1) % N];
             const m = nodes[(i - 1 + N) % N];
             nodes[i].heading = Math.atan2(p.y - m.y, p.x - m.x);
         }
-
-        // ---- 4. local radius of curvature (wide stencil, then min-filter)
+        // ---- local radius of curvature (wide stencil, then min-filter)
         const k = Math.max(2, Math.round(26 / ds));
         const raw = new Float64Array(N);
         for (let i = 0; i < N; i++) {
@@ -1471,8 +1630,7 @@ class SegmentedTrack {
             nodes[i].radius = r;
             nodes[i].radiusRaw = raw[i];
         }
-
-        // ---- 5. dry, steering-limited corner speed ----------------------
+        // ---- dry, steering-limited corner speed ----------------------
         // The car's yaw rate is capped at maxSteer * (1 - v/500); holding a
         // radius R requires a yaw rate of v/R, hence the closed form below.
         const maxSteer = Math.PI * 0.7;
@@ -1482,8 +1640,167 @@ class SegmentedTrack {
             if (!isFinite(v) || v < 0) v = 500;
             nodes[i].vCorner = Math.min(500, v);
         }
+        return { nodes: nodes, count: N, ds: ds, length: base.length, maxOffset: maxOff };
+    }
 
-        return { nodes: nodes, count: N, ds: ds, length: total, maxOffset: maxOff };
+    // ---- the proxy and the optimiser ----------------------------------------
+    // Both live in one closure so the optimiser can re-evaluate only the
+    // nodes a move touched. _proxyTime(base, alpha) is the full evaluation;
+    // _optimizeAlpha(base, alpha0, maxOff, opts) returns { alpha, T }.
+    _lineModel(base, maxOff, opts) {
+        opts = opts || {};
+        const N = base.count, nodes = base.nodes, ds = base.ds;
+        const cx = new Float64Array(N), cy = new Float64Array(N), nx = new Float64Array(N), ny = new Float64Array(N);
+        for (let i = 0; i < N; i++) { cx[i] = nodes[i].cx; cy[i] = nodes[i].cy; nx[i] = nodes[i].nx; ny[i] = nodes[i].ny; }
+        const k = Math.max(2, Math.round(26 / ds));
+        // The BASE car (car.js): the chassis move these a few per cent and the
+        // compound a few more, and the line that is best for one is best for
+        // all of them within the noise.
+        const OMEGA = Math.PI * 0.7, VTOP = 330;
+        const P = 300, F = 0.85, BRK = 150, ALIGN = 3.5;
+        const slipSin = (s, R) => Math.min(0.95, s / (ALIGN * R));
+        const accelAt = (s, R) => { const sb = slipSin(s, R); return P * Math.sqrt(1 - sb * sb) - F * s - s * s * s / (ALIGN * R * R); };
+        const brakeAt = (s, R) => { const sb = slipSin(s, R); return BRK * Math.sqrt(1 - sb * sb) + F * s + s * s * s / (ALIGN * R * R); };
+        // v_power(R), the speed at which the engine can just hold the slip
+        // drag of the corner, tabulated on log R
+        const RMIN = 12, RMAX = 1e6, NT = 160, LR0 = Math.log(RMIN), LRS = Math.log(RMAX) - LR0;
+        const vPowTab = new Float64Array(NT);
+        for (let t = 0; t < NT; t++) {
+            const R = Math.exp(LR0 + LRS * t / (NT - 1));
+            let lo = 0, hi = 600;
+            for (let it = 0; it < 40; it++) { const mid = 0.5 * (lo + hi); if (accelAt(mid, R) > 0) lo = mid; else hi = mid; }
+            vPowTab[t] = lo;
+        }
+        const vPower = (R) => {
+            const u = (Math.log(R < RMIN ? RMIN : (R > RMAX ? RMAX : R)) - LR0) / LRS * (NT - 1);
+            const t0 = Math.floor(u), t1 = t0 + 1 < NT ? t0 + 1 : NT - 1, f = u - t0;
+            return vPowTab[t0] * (1 - f) + vPowTab[t1] * f;
+        };
+        const SWING = 1, SWM = 6;   // slip-swing weight and half-span (nodes)
+        // state: positions, segment lengths, radius, signed curvature, steady
+        // slip, speed cap - and a trial copy of each
+        const px = new Float64Array(N), py = new Float64Array(N), L = new Float64Array(N), Rn = new Float64Array(N), Kn = new Float64Array(N), Bn = new Float64Array(N), vmax = new Float64Array(N);
+        const tpx = new Float64Array(N), tpy = new Float64Array(N), tL = new Float64Array(N), tR = new Float64Array(N), tK = new Float64Array(N), tB = new Float64Array(N), tvmax = new Float64Array(N);
+        const v = new Float64Array(N);
+        const segLen = (X, Y, i) => { const j = (i + 1) % N; const dx = X[j] - X[i], dy = Y[j] - Y[i]; return Math.sqrt(dx * dx + dy * dy); };
+        let sgn = 1;
+        const radiusAt = (X, Y, i) => {
+            const A = (i - k + N) % N, C = (i + k) % N;
+            const ax = X[A], ay = Y[A], bx = X[i], by = Y[i], qx = X[C], qy = Y[C];
+            const a2 = (bx - qx) * (bx - qx) + (by - qy) * (by - qy), b2 = (ax - qx) * (ax - qx) + (ay - qy) * (ay - qy), c2 = (ax - bx) * (ax - bx) + (ay - by) * (ay - by);
+            const cross = (bx - ax) * (qy - ay) - (qx - ax) * (by - ay);
+            const area = Math.abs(cross) * 0.5;
+            sgn = cross >= 0 ? 1 : -1;
+            let r = area < 1e-6 ? 1e6 : Math.sqrt(a2 * b2 * c2) / (4 * area);
+            if (!(r < 1e6)) r = 1e6;
+            return r < 12 ? 12 : r;
+        };
+        const steadyV = (r) => {
+            const vc = OMEGA * r / (1 + OMEGA * r / 500);
+            let vm = vc < VTOP ? vc : VTOP;
+            const vp = vPower(r); if (vp < vm) vm = vp;
+            return vm;
+        };
+        const slipOf = (vs, r, sg) => sg * Math.asin(Math.min(0.95, vs / (ALIGN * r)));
+        // the cap at node i: the nose has to turn for the curvature AND for
+        // the change of slip angle, read over +-SWM nodes so the node-scale
+        // noise of a three-point radius does not drive it
+        const vmaxAt = (RR, KK, BB, i) => {
+            const p = (i - SWM + N) % N, n = (i + SWM) % N;
+            const dB = SWING * (BB[n] - BB[p]) / (2 * SWM * ds);
+            const keff = Math.abs(KK[i] + dB);
+            let vm = keff > 1e-9 ? OMEGA / (keff + OMEGA / 500) : VTOP;
+            if (vm > VTOP) vm = VTOP;
+            const vp = vPower(RR[i]); if (vp < vm) vm = vp;
+            return vm;
+        };
+        // the lap time of a complete state: acceleration forward, braking
+        // backward (twice each, the lap is a loop), then the sum of ds/v
+        const lapTime = (LL, RR, VM) => {
+            for (let i = 0; i < N; i++) v[i] = VM[i];
+            for (let rep = 0; rep < 2; rep++)
+                for (let i = 0; i < N; i++) {
+                    const p = (i - 1 + N) % N;
+                    const q = v[p] * v[p] + 2 * accelAt(v[p], RR[p]) * LL[p];
+                    const lim = Math.sqrt(q > 100 ? q : 100);
+                    if (lim < v[i]) v[i] = lim;
+                }
+            for (let rep = 0; rep < 2; rep++)
+                for (let i = N - 1; i >= 0; i--) {
+                    const n = (i + 1) % N;
+                    const lim = Math.sqrt(v[n] * v[n] + 2 * brakeAt(v[n], RR[n]) * LL[i]);
+                    if (lim < v[i]) v[i] = lim;
+                }
+            let T = 0;
+            for (let i = 0; i < N; i++) { const j = (i + 1) % N; T += LL[i] / (0.5 * (v[i] + v[j])); }
+            return T;
+        };
+        const fullState = (a) => {
+            for (let i = 0; i < N; i++) { px[i] = cx[i] + a[i] * nx[i]; py[i] = cy[i] + a[i] * ny[i]; }
+            for (let i = 0; i < N; i++) L[i] = segLen(px, py, i);
+            for (let i = 0; i < N; i++) { Rn[i] = radiusAt(px, py, i); Kn[i] = sgn / Rn[i]; Bn[i] = slipOf(steadyV(Rn[i]), Rn[i], sgn); }
+            for (let i = 0; i < N; i++) vmax[i] = vmaxAt(Rn, Kn, Bn, i);
+            return lapTime(L, Rn, vmax);
+        };
+        const optimize = (alpha0) => {
+            const alpha = new Float64Array(N), talpha = new Float64Array(N);
+            for (let i = 0; i < N; i++) alpha[i] = Math.max(-maxOff, Math.min(maxOff, alpha0[i]));
+            let T = fullState(alpha);
+            tpx.set(px); tpy.set(py); tL.set(L); tR.set(Rn); tK.set(Kn); tB.set(Bn); tvmax.set(vmax); talpha.set(alpha);
+            const scales = opts.scales || [24, 16, 10, 6, 4, 2];
+            const steps = opts.steps || [12, 6, 3, 1.5];
+            const maxSweeps = opts.maxSweeps || 6;
+            const wid = (h) => h + k + SWM;      // how far a bump's effect reaches
+            for (const h of scales) {
+                for (const st of steps) {
+                    const stride = Math.max(1, Math.floor(h / 3));
+                    for (let sweep = 0; sweep < maxSweeps; sweep++) {
+                        let accepted = 0;
+                        for (let i0 = 0; i0 < N; i0 += stride) {
+                            for (let sg = 1; sg >= -1; sg -= 2) {
+                                let changed = false;
+                                for (let j = -h + 1; j <= h - 1; j++) {
+                                    const idx = (i0 + j + N) % N;
+                                    const wgt = 0.5 * (1 + Math.cos(Math.PI * j / h));
+                                    let na = alpha[idx] + sg * st * wgt;
+                                    if (na > maxOff) na = maxOff; else if (na < -maxOff) na = -maxOff;
+                                    talpha[idx] = na;
+                                    if (na !== alpha[idx]) changed = true;
+                                    tpx[idx] = cx[idx] + na * nx[idx]; tpy[idx] = cy[idx] + na * ny[idx];
+                                }
+                                if (!changed) continue;
+                                for (let j = -h; j <= h - 1; j++) { const idx = (i0 + j + N) % N; tL[idx] = segLen(tpx, tpy, idx); }
+                                for (let j = -h + 1 - k; j <= h - 1 + k; j++) { const idx = (i0 + j + N) % N; tR[idx] = radiusAt(tpx, tpy, idx); tK[idx] = sgn / tR[idx]; tB[idx] = slipOf(steadyV(tR[idx]), tR[idx], sgn); }
+                                const ww = wid(h);
+                                for (let j = -ww; j <= ww; j++) { const idx = (i0 + j + N) % N; tvmax[idx] = vmaxAt(tR, tK, tB, idx); }
+                                const Tt = lapTime(tL, tR, tvmax);
+                                if (Tt < T - 1e-6) {
+                                    T = Tt; accepted++;
+                                    for (let j = -h + 1; j <= h - 1; j++) { const idx = (i0 + j + N) % N; alpha[idx] = talpha[idx]; px[idx] = tpx[idx]; py[idx] = tpy[idx]; }
+                                    for (let j = -h; j <= h - 1; j++) { const idx = (i0 + j + N) % N; L[idx] = tL[idx]; }
+                                    for (let j = -ww; j <= ww; j++) { const idx = (i0 + j + N) % N; Rn[idx] = tR[idx]; Kn[idx] = tK[idx]; Bn[idx] = tB[idx]; vmax[idx] = tvmax[idx]; }
+                                } else {
+                                    for (let j = -h + 1; j <= h - 1; j++) { const idx = (i0 + j + N) % N; talpha[idx] = alpha[idx]; tpx[idx] = px[idx]; tpy[idx] = py[idx]; }
+                                    for (let j = -h; j <= h - 1; j++) { const idx = (i0 + j + N) % N; tL[idx] = L[idx]; }
+                                    for (let j = -ww; j <= ww; j++) { const idx = (i0 + j + N) % N; tR[idx] = Rn[idx]; tK[idx] = Kn[idx]; tB[idx] = Bn[idx]; tvmax[idx] = vmax[idx]; }
+                                }
+                            }
+                        }
+                        if (!accepted) break;
+                    }
+                }
+            }
+            return { alpha: alpha, T: fullState(alpha) };
+        };
+        return { proxy: fullState, optimize: optimize };
+    }
+
+    _proxyTime(base, alpha) {
+        return this._lineModel(base, 1e9, {}).proxy(alpha);
+    }
+
+    _optimizeAlpha(base, alpha0, maxOff, opts) {
+        return this._lineModel(base, maxOff, opts).optimize(alpha0);
     }
 
     checkLapCross(prevX, prevY, currX, currY) {
