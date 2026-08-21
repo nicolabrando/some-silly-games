@@ -350,6 +350,11 @@ let YAW_CAP = 2.0;
 // of the excess, scaled by SLIDE_WEAR - see the wear block in update().
 let SLIDE_FREE = 0.20;
 let SLIDE_WEAR = 30;
+// Quanto l'acqua ferma puo' abbassare il tetto d'imbardata: e' un PAVIMENTO
+// sul fattore della pozzanghera. 0 = l'acqua lo abbassa quanto vuole (com'era
+// prima del 08/26), 1 = non lo abbassa affatto. Vedi la nota al tetto in
+// update() per il perche'.
+let YAW_WATER_FLOOR = 0.85;
 // `wet` is passed because a band measured in px/s means something completely
 // different once it is raining. Grip falls to 0.13 of dry, so EVERY corner on
 // the circuit drops inside the band and a slow-corner bonus turns into a
@@ -707,6 +712,19 @@ class Car {
             if (this.wetGripBonus) currentGrip *= this.wetGripBonus;
         }
 
+        // The rotation ceiling further down is measured against the grip of
+        // the ROAD, and this is where that number is taken - BEFORE the
+        // standing water. See the long note at the ceiling itself: a puddle
+        // takes away the friction that turns the car and, in the same
+        // instant, the friction that would stop it turning. Charging the
+        // first and not crediting the second made the one place where a car
+        // should swap ends most easily the one place where it could not
+        // rotate at all.
+        let gripForYaw = currentGrip;
+        // Quanto l'acqua ferma puo' abbassare il tetto: 0 = quanto vuole (com'era
+        // prima), 1 = per niente. Vedi la nota al tetto.
+        const waterFloor = (typeof YAW_WATER_FLOOR === 'undefined') ? 1 : YAW_WATER_FLOOR;
+
         // --- Puddles ---------------------------------------------------
         // Standing water: grip collapses and the car is dragged back. Only
         // ever present in the wet.
@@ -732,7 +750,9 @@ class Car {
             const aqua = tyre.aqua || 0;
             this.aquaplane = Math.max(0, Math.min(1, (speedForKerb - 55) / 150)) *
                              (1 - aqua);
-            currentGrip *= (0.45 + 0.30 * aqua) - 0.25 * this.aquaplane;
+            const puddleGrip = (0.45 + 0.30 * aqua) - 0.25 * this.aquaplane;
+            currentGrip *= puddleGrip;
+            gripForYaw *= Math.max(puddleGrip, waterFloor);
             currentFriction *= 2.2 - 0.9 * (tyre.aqua || 0);
             if (speedForKerb > 90 && Math.random() < 0.5) {
                 const spray = (Math.random() - 0.5) * 16 * (speedForKerb / 300);
@@ -743,6 +763,7 @@ class Car {
 
         if (surface === 'grass') {
             currentGrip *= 0.3; // Slippery!
+            gripForYaw *= 0.3;  // grass is measured, and stays as it was
             currentFriction *= 2.5; // Slows you down!
         } else if (surface === 'kerb') {
             // A kerb is meant to be usable. You lose a bit of grip and scrub a
@@ -750,6 +771,7 @@ class Car {
             // running two wheels over one is a normal part of a fast lap, not
             // the disaster that dropping onto grass is.
             currentGrip *= 0.80;
+            gripForYaw *= 0.80;
             currentFriction *= 1.30;
             if (speedForKerb > 60) {
                 // rumble: a small, rapid lateral disturbance
@@ -962,7 +984,25 @@ class Car {
             // that straightens the car is clamped by the same small grip):
             // what it loses is the ability to POINT the car faster than the
             // road could ever have turned it.
-            const yawCeiling = YAW_CAP * currentGrip / Math.max(40, speed);
+            // ...and ONE THING THE FIRST VERSION GOT WRONG, found by driving
+            // it: the grip this is measured against is the road's, taken
+            // before the standing water. Friction is what creates a rotation
+            // AND what stops one; a ceiling proportional to grip counts only
+            // the first half, so it concluded that a car cannot rotate on
+            // ice. Measured in a puddle, the drift compound asked for 1.51 of
+            // free yaw and was given 0.15 - six degrees of slip in a second
+            // and a half - while the FULL WET, which pumps the water away and
+            // so keeps its grip, was drifting at 39. A rain tyre that slides
+            // better than a drift tyre is the signature of a broken model.
+            // Standing water may now pull the ceiling down only as far as
+            // YAW_WATER_FLOOR. Everything else about a puddle is untouched:
+            // the lateral force still collapses, aquaplaning still kills the
+            // steering (`aqua` multiplies the front end and always has), the
+            // drag is the same. See 2.4duodetricies-quater for the tuning -
+            // at 0.85 the AI's wet races are inside their own noise band and
+            // the player gets 33 degrees of slip in the water against 25 on
+            // the road beside it; at 1.00 the slicks start spinning too.
+            const yawCeiling = YAW_CAP * gripForYaw / Math.max(40, speed);
             const room = Math.max(0, yawCeiling - steerRateNow);
             const asked = tail;
             if (tail > room) tail = room;
