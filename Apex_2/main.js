@@ -176,10 +176,7 @@ const VSC_POWER = 0.50;   // engine power while the VSC is out
 const VSC_ENDING_MS = 3000;
 let vscEndsAt = null;      // wall-clock (raceNow) moment the VSC will end
 let recoveries = [];       // { car, phase, t, from, to, crane }
-// A crane is a machine parked on the circuit, not a decal: cars bounce off it,
 // and two of them never occupy the same patch of ground.
-const CRANE_RADIUS = 20;      // solid body a car has to go round
-const CRANE_CLEARANCE = 54;   // how far apart two cranes are kept
 let raceFinished = false;
 let isFalseStartResetting = false;
 // v7 Globals
@@ -1398,6 +1395,7 @@ function makeTrackRaw(trackType) {
         case 'kart':       return new KartTrack();
         case 'anchor':       return new AnchorTrack();
         case 'arrow':        return new ArrowTrack();
+        case 'pentagon':     return new PentagonTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2241,7 +2239,7 @@ function measureTrackStats(qTrack, raining) {
 }
 
 const TRACK_LABELS = {
-    anchor: 'Anchor', arrow: 'Arrow',
+    anchor: 'Anchor', arrow: 'Arrow', pentagon: 'Pentagon',
     oval: 'Oval', peanut: 'Peanut', f1: 'F1 Circuit', circomassimo: 'Circus Maximus',
     // 'quadrato' is the internal key and stays put: it is written into saved
     // championships and into every race log already on disk. Only the label
@@ -2260,7 +2258,7 @@ const TRACK_LABELS = {
 // slicing the LABEL does not survive the circuits we have: Circle and Circus
 // Maximus both give CIR, Crown and Crossover both give CRO.
 const TRACK_CODES = {
-    anchor: 'ANC', arrow: 'ARW',
+    anchor: 'ANC', arrow: 'ARW', pentagon: 'PEN',
     oval: 'OVA', peanut: 'PEA', f1: 'F1C', circomassimo: 'CMX',
     circle: 'CIR', serpent: 'SER', quadrato: 'REC', triangle: 'TRI',
     boomerang: 'BOO', zipper: 'ZIP', kettle: 'KET',
@@ -3982,7 +3980,6 @@ function updatePhysics(dt) {
     
     // --- Wrecks, Virtual Safety Car and recovery --------------------------
     updateRecovery(dt);
-    applyCraneCollisions();
     applyVscHold();
 
     // --- Blue flags -------------------------------------------------------
@@ -4329,253 +4326,87 @@ function applyVscHold() {
     }
 }
 
-// --- grandstand geometry -------------------------------------------------
-// Shared by the wreck's drop point AND the crane's route. The drop point has
-// always avoided the crowd; the crane did not, so it drove through the stands
-// on its way in and out.
-function pointOnStand(track, px, py, pad) {
-    const stands = (typeof track.getStands === 'function') ? track.getStands() : [];
-    const p = pad === undefined ? 18 : pad;
-    for (const st of stands) {
-        const dx = px - st.x, dy = py - st.y;
-        const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
-        const u = dx * ca - dy * sa;
-        const v = dx * sa + dy * ca;
-        if (Math.abs(u) < st.len / 2 + p && Math.abs(v) < st.depth / 2 + p) return true;
-    }
-    return false;
-}
-
-// How much of a straight route lies inside a grandstand, sampled.
-function segmentStandHits(track, x1, y1, x2, y2, pad) {
-    let hits = 0;
-    const STEPS = 16;
-    for (let i = 0; i <= STEPS; i++) {
-        const k = i / STEPS;
-        if (pointOnStand(track, x1 + (x2 - x1) * k, y1 + (y2 - y1) * k, pad)) hits++;
-    }
-    return hits;
-}
-
-// Last line of defence: shove a point to the nearest edge of any grandstand it
-// is inside. Route scoring gets the crane most of the way there, but on a
-// layout ringed with stands there is not always a clear line, and a search
-// cannot promise "never". This can, because it is applied every frame to the
-// position actually drawn.
-function nudgeOffStand(track, p, pad) {
-    const stands = (typeof track.getStands === 'function') ? track.getStands() : [];
-    const m = pad === undefined ? 14 : pad;
-    // Three passes cleared it on the old, smaller circuits. On the wider ones
-    // the stands are denser and a crane pushed out of one can land in its
-    // neighbour, so keep going until it is clear of all of them.
-    for (let iter = 0; iter < 12; iter++) {
-        let moved = false;
-        for (const st of stands) {
-            const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
-            const dx = p.x - st.x, dy = p.y - st.y;
-            const u = dx * ca - dy * sa;              // into the stand's own frame
-            const v = dx * sa + dy * ca;
-            const hu = st.len / 2 + m, hv = st.depth / 2 + m;
-            if (Math.abs(u) >= hu || Math.abs(v) >= hv) continue;
-
-            // push out of the nearer face
-            const outU = hu - Math.abs(u);
-            const outV = hv - Math.abs(v);
-            let nu = u, nv = v;
-            if (outU < outV) nu = (u >= 0 ? hu : -hu);
-            else nv = (v >= 0 ? hv : -hv);
-
-            // back to world coordinates
-            const cb = Math.cos(st.angle), sb = Math.sin(st.angle);
-            p.x = st.x + (nu * cb - nv * sb);
-            p.y = st.y + (nu * sb + nv * cb);
-            moved = true;
-        }
-        if (!moved) break;
-    }
-
-    // Last resort. Pushing out of one stand can drop the point into the next,
-    // and on a circuit ringed with them the two can trade it back and forth
-    // for ever. If it is still inside one, shove it clear of that stand's
-    // bounding circle in one move: a bigger jump than the face-push, but it
-    // always ends outside, which is the thing that matters.
-    for (const st of stands) {
-        const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
-        const dx = p.x - st.x, dy = p.y - st.y;
-        const u = dx * ca - dy * sa, v = dx * sa + dy * ca;
-        if (Math.abs(u) >= st.len / 2 + m || Math.abs(v) >= st.depth / 2 + m) continue;
-        const R = Math.hypot(st.len / 2, st.depth / 2) + m + 2;
-        const d = Math.hypot(dx, dy);
-        const nx = d > 0.001 ? dx / d : 1, ny = d > 0.001 ? dy / d : 0;
-        p.x = st.x + nx * R;
-        p.y = st.y + ny * R;
-    }
-    return p;
-}
+// =========================================================================
+//  LA GRU
+// =========================================================================
+//
+//  COS'ERA PRIMA, e perche' non c'e' piu'. Un carro attrezzi cingolato che
+//  entrava dal prato, agganciava il rottame e lo trascinava via. Era un
+//  oggetto SOLIDO: le auto ci rimbalzavano contro, l'IA aveva una regola per
+//  scansarlo, e ci voleva una pagina di ricerca per trovargli una strada che
+//  non attraversasse le tribune. Nicola aveva chiesto delle gru e intendeva
+//  quelle da cantiere: un braccio che entra SOPRA il circuito, cala un gancio,
+//  solleva l'auto e la porta fuori. Niente sulla strada. Quindi:
+//
+//    * la torre sta fuori dal bordo dell'immagine, dal lato piu' vicino al
+//      rottame. Non si vede mai: si vede solo il braccio;
+//    * il braccio ruota fino alla direzione del rottame mentre il carrello
+//      corre in fuori lungo di esso;
+//    * il gancio cala, l'auto viene sollevata (car.js la disegna piu' grande
+//      e le lascia l'ombra a terra: e' l'unica cosa che in vista dall'alto
+//      dice "questa e' in aria");
+//    * il carrello rientra e il braccio ruota indietro, e l'auto se ne va con
+//      lui, oltre il bordo del mondo.
+//
+//  Non c'e' piu' un punto dove posare il rottame, perche' il rottame non viene
+//  posato: viene portato via. E non c'e' piu' collisione, ne' regola d'IA, ne'
+//  ricerca di percorso, perche' tutta la macchina e' quindici metri in aria.
+const JIB_SWING = 1.9;      // s, il braccio entra
+const JIB_HOOK  = 1.2;      // s, gancio giu' e sollevamento
+const JIB_HAUL  = 2.8;      // s, lo porta fuori
+const JIB_PARK  = 26;       // px, distanza del carrello a riposo
+const JIB_OUT   = 74;       // px di quanto la torre sta fuori dall'arena
 
 function startRecovery(car) {
-    // Where to drag it to: out past the barrier, into somewhere that is
-    // genuinely off the circuit.
-    //
-    // Pushing blindly along the outward normal is not enough: where two parts
-    // of the layout run close together (Circus Maximus, the Comb) that vector
-    // can cross the run-off, clear the far barrier and drop the wreck back on
-    // the racing surface. So candidates are scored and the first one that is
-    // clear of *every* segment wins.
-    const proj = track.getClosestPoint(car.x, car.y);
-    let nx = car.x - proj.projX;
-    let ny = car.y - proj.projY;
-    let len = Math.hypot(nx, ny);
+    // Da che parte entra: il bordo piu' vicino. Da quella scelta sola discende
+    // tutto il resto - dove sta la torre, quanto e' lungo il braccio, di
+    // quanto deve ruotare.
+    const dLeft = car.x - ARENA_X0, dRight = ARENA_X1 - car.x;
+    const dTop = car.y - ARENA_Y0, dBottom = ARENA_Y1 - car.y;
+    const near = Math.min(dLeft, dRight, dTop, dBottom);
+    let pivot, alongX = 0, alongY = 1;
+    if (near === dRight)      { pivot = { x: ARENA_X1 + JIB_OUT, y: car.y }; }
+    // A sinistra la torre va fuori dal CANVAS, non fuori dall'arena: fra i due
+    // c'e' la colonna dell'HUD, e una gru piazzata li' resterebbe in vista a
+    // posare l'auto in mezzo al prato invece di portarsela fuori. Il braccio
+    // attraversa quella fascia e per un pezzo sta dietro il pannello, il che
+    // e' esattamente come deve sembrare: entra da fuori campo.
+    else if (near === dLeft)  { pivot = { x: -JIB_OUT, y: car.y }; }
+    else if (near === dTop)   { pivot = { x: car.x, y: ARENA_Y0 - JIB_OUT }; alongX = 1; alongY = 0; }
+    else                      { pivot = { x: car.x, y: ARENA_Y1 + JIB_OUT }; alongX = 1; alongY = 0; }
 
-    if (len < 1e-3) {
-        // The car died sitting exactly on the centre line - the single most
-        // likely place to be destroyed - and "away from the track" has no
-        // direction there. Fall back to the track's own normal at the nearest
-        // racing-line node. Without this the wreck was simply never moved.
-        let bn = null, bd = Infinity;
-        if (typeof track.getRacingLine === 'function') {
-            const line = track.getRacingLine('standard');
-            for (const nd of line.nodes) {
-                const d = (car.x - nd.cx) ** 2 + (car.y - nd.cy) ** 2;
-                if (d < bd) { bd = d; bn = nd; }
-            }
-        }
-        if (bn) { nx = bn.nx; ny = bn.ny; }
-        else { nx = 1; ny = 0; }
-        len = 1;
-    }
-    nx /= len; ny /= len;
-
-    const clearance = track.grassWidth + 30;
-    const onStand = (px, py, pad) => pointOnStand(track, px, py, pad);
-    // Score every candidate rather than taking the first that passes: on an
-    // enclosed layout (the Comb, Thunder) there may be no perfect spot, and
-    // "first acceptable or else give up" dumped the wreck back on the racing
-    // surface. Best-available always beats a bad fallback.
-    let tx = null, ty = null, bestScore = -Infinity;
-
-    for (let a = 0; a < 24; a++) {
-        const spin = (a % 2 === 0 ? 1 : -1) * Math.floor(a / 2) * (Math.PI / 12);
-        const ca = Math.cos(spin), sa = Math.sin(spin);
-        const vx = nx * ca - ny * sa;
-        const vy = nx * sa + ny * ca;
-
-        for (const dist of [track.grassWidth + 42, track.grassWidth + 60,
-                            track.grassWidth + 82, track.grassWidth + 110]) {
-            const px = proj.projX + vx * dist;
-            const py = proj.projY + vy * dist;
-            if (px < ARENA_X0 + 22 || px > ARENA_X1 - 22 ||
-                py < ARENA_Y0 + 22 || py > ARENA_Y1 - 22) continue;
-
-            const clear = track.getClosestPoint(px, py).dist;
-            // how far past the barrier we are, capped so absurdly remote spots
-            // are not preferred over a tidy one just behind the wall
-            let score = Math.min(clear - track.grassWidth, 70);
-            if (onStand(px, py)) score -= 260;            // never into the crowd
-            score -= Math.abs(spin) * 6;                  // prefer straight out
-            score -= dist * 0.05;                         // prefer the short tow
-
-            // The crane LEADS the wreck, so during the haul it sits a tow
-            // length further out than this spot and finishes there. Scoring
-            // only the wreck's resting place left the crane itself parked in
-            // the crowd on the tracks that are ringed with stands.
-            const ex = px + vx * 34, ey = py + vy * 34;
-            if (onStand(ex, ey, 14)) score -= 240;
-            score -= segmentStandHits(track, car.x, car.y, ex, ey, 12) * 18;
-
-            if (score > bestScore) { bestScore = score; tx = px; ty = py; }
-        }
+    // Due rottami dallo stesso lato metterebbero due torri sullo stesso pixel:
+    // la seconda scivola lungo il suo bordo.
+    for (const o of recoveries) {
+        if (o.phase === 'done' || !o.pivot) continue;
+        if (Math.hypot(o.pivot.x - pivot.x, o.pivot.y - pivot.y) > 110) continue;
+        pivot.x += alongX * 130;
+        pivot.y += alongY * 130;
     }
 
-    if (tx === null) {           // literally nowhere on canvas: clamp and accept
-        tx = Math.max(ARENA_X0 + 22, Math.min(ARENA_X1 - 22,
-                                              proj.projX + nx * (track.grassWidth + 42)));
-        ty = Math.max(ARENA_Y0 + 22, Math.min(ARENA_Y1 - 22,
-                                              proj.projY + ny * (track.grassWidth + 42)));
-    }
+    const aim = Math.atan2(car.y - pivot.y, car.x - pivot.x);
+    const dist = Math.hypot(car.x - pivot.x, car.y - pivot.y);
 
-    // Geometry of the recovery. The crane always keeps a tow length between
-    // itself and the wreck - it must never end up drawn on the same pixel,
-    // or all you see is a car sliding along on its own.
-    const ux = (tx - car.x), uy = (ty - car.y);
-    const ul = Math.hypot(ux, uy) || 1;
-    const dirx = ux / ul, diry = uy / ul;
+    // A riposo il braccio sta quasi disteso lungo il bordo, non puntato sulla
+    // strada: e' l'entrare in rotazione che lo fa leggere come una gru e non
+    // come una freccia che sta li'.
+    const inward = Math.atan2((ARENA_Y0 + ARENA_Y1) / 2 - pivot.y,
+                              (ARENA_X0 + ARENA_X1) / 2 - pivot.x);
+    let off = aim - inward;
+    while (off > Math.PI) off -= 2 * Math.PI;
+    while (off < -Math.PI) off += 2 * Math.PI;
+    const park = inward + (off >= 0 ? -1 : 1) * (Math.PI / 2.3);
 
-    const TOW = 34;                               // crane-to-hook distance
-    const pick = { x: car.x + dirx * TOW, y: car.y + diry * TOW };
-
-    // Where the crane waits, and therefore the route it drives in and out on.
-    // This used to be a fixed 90px further out along the same line, with no
-    // check at all - so on a track ringed with grandstands the crane parked in
-    // the crowd and drove straight through it. Search for a spot that is clear
-    // itself AND whose straight run to the car does not cross a stand.
-    // Where the crane finishes the haul, and therefore where it withdraws from.
-    const haulEnd = { x: tx + dirx * TOW, y: ty + diry * TOW };
-
-    // Candidate parking spots: fanned out behind the drop point, plus a set
-    // running ALONG the run-off strip either side of it. That strip is
-    // stand-free by construction - getStands() rejects any stand that overlaps
-    // the circuit - so on a layout boxed in by grandstands there is always a
-    // clear way in even when every outward direction is blocked.
-    const cand = [];
-    for (let a = 0; a < 24; a++) {
-        const spin = (a % 2 === 0 ? 1 : -1) * Math.floor(a / 2) * (Math.PI / 8);
-        const ca = Math.cos(spin), sa = Math.sin(spin);
-        const vx = dirx * ca - diry * sa;
-        const vy = dirx * sa + diry * ca;
-        for (const back of [55, 70, 90, 115, 145]) {
-            cand.push({ x: tx + vx * back, y: ty + vy * back, spin: Math.abs(spin), back: back });
-        }
-    }
-    const tgx = -diry, tgy = dirx;                       // along the track
-    for (const side of [1, -1]) {
-        for (const along of [60, 95, 135, 180]) {
-            for (const out of [track.grassWidth + 26, track.grassWidth + 48]) {
-                cand.push({
-                    x: proj.projX + nx * out + tgx * side * along,
-                    y: proj.projY + ny * out + tgy * side * along,
-                    spin: 0.9, back: along
-                });
-            }
-        }
-    }
-
-    let hx = null, hy = null, bestHome = -Infinity;
-    {
-        for (const c of cand) {
-            const px = c.x, py = c.y;
-            const spin = c.spin, back = c.back;
-            if (px < ARENA_X0 + 16 || px > ARENA_X1 - 16 ||
-                py < ARENA_Y0 + 16 || py > ARENA_Y1 - 16) continue;
-
-            let score = 0;
-            if (pointOnStand(track, px, py, 22)) score -= 400;       // parked in the crowd
-            // both legs it actually drives: in to the wreck, and back out again
-            score -= segmentStandHits(track, px, py, pick.x, pick.y, 12) * 40;
-            score -= segmentStandHits(track, haulEnd.x, haulEnd.y, px, py, 12) * 40;
-            score -= Math.abs(spin) * 6;                             // prefer straight out
-            score -= back * 0.06;                                    // prefer close by
-            // and it must not be sitting on the racing surface either
-            if (track.getClosestPoint(px, py).dist < track.grassWidth) score -= 200;
-
-            if (score > bestHome) { bestHome = score; hx = px; hy = py; }
-        }
-    }
-    if (hx === null) { hx = tx + dirx * 90; hy = ty + diry * 90; }
-
-    const rec = {
+    recoveries.push({
         car: car,
-        phase: 'approach',
+        phase: 'swing',
         t: 0,
-        from: { x: car.x, y: car.y },
-        to: { x: tx, y: ty },
-        tow: TOW,
-        // where the crane comes from, and where it stands to pick the car up:
-        home: { x: hx, y: hy },
-        pick: pick,
-        crane: { x: hx, y: hy }
-    };
-    recoveries.push(rec);
+        pivot: pivot,
+        jib: dist + 80,                 // il braccio e' piu' lungo del necessario
+        aim: aim, park: park, dist: dist,
+        ang: park, reach: JIB_PARK,
+        hook: { x: pivot.x, y: pivot.y }
+    });
 
     car.recovering = true;
     car.velocity.x = 0;
@@ -4604,100 +4435,39 @@ function updateRecovery(dt) {
         r.t += dt;
 
         const smooth = (k) => k * k * (3 - 2 * k);
+        const lerpAng = (a, b, e) => {
+            let d = b - a;
+            while (d > Math.PI) d -= 2 * Math.PI;
+            while (d < -Math.PI) d += 2 * Math.PI;
+            return a + d * e;
+        };
 
-        if (r.phase === 'approach') {
-            // crane drives in from off the circuit and pulls up alongside
-            const e = smooth(Math.min(1, r.t / 2.6));
-            r.crane.x = r.home.x + (r.pick.x - r.home.x) * e;
-            r.crane.y = r.home.y + (r.pick.y - r.home.y) * e;
-            if (r.t >= 2.6) { r.phase = 'lift'; r.t = 0; }
+        if (r.phase === 'swing') {
+            // il braccio ruota dentro e il carrello corre in fuori: il gancio
+            // arriva sul rottame esattamente alla fine dei due movimenti
+            const e = smooth(Math.min(1, r.t / JIB_SWING));
+            r.ang = lerpAng(r.park, r.aim, e);
+            r.reach = JIB_PARK + (r.dist - JIB_PARK) * e;
+            if (r.t >= JIB_SWING) { r.phase = 'hook'; r.t = 0; r.ang = r.aim; r.reach = r.dist; }
 
-        } else if (r.phase === 'lift') {
-            // hooks on and lifts; crane stationary, cable clearly visible
-            r.car.liftAmount = Math.min(1, r.t / 1.6);
-            if (r.t >= 1.6) { r.phase = 'haul'; r.t = 0; }
+        } else if (r.phase === 'hook') {
+            // gancio giu', l'auto si stacca da terra
+            r.car.liftAmount = Math.min(1, r.t / JIB_HOOK);
+            if (r.t >= JIB_HOOK) { r.phase = 'haul'; r.t = 0; }
 
         } else if (r.phase === 'haul') {
-            // crane leads, wreck trails one tow length behind it
-            const e = smooth(Math.min(1, r.t / 3.4));
-            const cx = r.pick.x + (r.to.x + (r.pick.x - r.from.x) - r.pick.x) * e;
-            const cy = r.pick.y + (r.to.y + (r.pick.y - r.from.y) - r.pick.y) * e;
-            r.crane.x = cx;
-            r.crane.y = cy;
-            r.car.x = r.from.x + (r.to.x - r.from.x) * e;
-            r.car.y = r.from.y + (r.to.y - r.from.y) * e;
-            if (r.t >= 3.4) { r.phase = 'drop'; r.t = 0; }
-
-        } else if (r.phase === 'drop') {
-            r.car.liftAmount = Math.max(0, 1 - r.t / 1.2);
-            if (r.t >= 1.2) { r.phase = 'clear'; r.t = 0; }
-
-        } else if (r.phase === 'clear') {
-            // crane withdraws; the VSC stays out until it is gone
-            const e = smooth(Math.min(1, r.t / 1.8));
-            const from = { x: r.crane.x, y: r.crane.y };
-            if (!r.clearFrom) r.clearFrom = from;
-            r.crane.x = r.clearFrom.x + (r.home.x - r.clearFrom.x) * e;
-            r.crane.y = r.clearFrom.y + (r.home.y - r.clearFrom.y) * e;
-            if (r.t >= 1.8) { r.phase = 'done'; r.t = 0; }
-
+            // il carrello rientra, il braccio torna indietro, e l'auto appesa
+            // al gancio esce dall'inquadratura con lui
+            const e = smooth(Math.min(1, r.t / JIB_HAUL));
+            r.ang = lerpAng(r.aim, r.park, e);
+            r.reach = r.dist + (JIB_PARK - r.dist) * e;
+            r.car.x = r.pivot.x + Math.cos(r.ang) * r.reach;
+            r.car.y = r.pivot.y + Math.sin(r.ang) * r.reach;
+            if (r.t >= JIB_HAUL) { r.phase = 'done'; r.t = 0; }
         }
 
-        // Whatever the route worked out, the crane is never drawn inside a
-        // grandstand - nor off the visible part of the canvas. The circuits
-        // now run right to the edge, so "just outside the barrier" can be off
-        // the screen entirely, and the top and bottom bands belong to the HUD.
-        if (r.phase !== 'done') {
-            nudgeOffStand(track, r.crane, 14);
-            r.crane.x = Math.max(ARENA_X0 + 18, Math.min(ARENA_X1 - 18, r.crane.x));
-            r.crane.y = Math.max(ARENA_Y0 + 18, Math.min(ARENA_Y1 - 18, r.crane.y));
-        }
-
-        // ...nor inside another crane. Two wrecks close together used to send
-        // two cranes to overlapping spots and they were drawn one on top of
-        // the other, which read as one very confused machine.
-        if (r.phase !== 'done') {
-            // Two passes: pushing a crane clear of its neighbour can put it on
-            // a grandstand, and pushing it back off the stand can put it near
-            // the neighbour again. Twice round settles it.
-            for (let pass = 0; pass < 2; pass++) {
-                for (let k = 0; k < recoveries.length; k++) {
-                    if (k === i) continue;
-                    const o = recoveries[k];
-                    if (!o || o.phase === 'done') continue;
-                    let dx = r.crane.x - o.crane.x, dy = r.crane.y - o.crane.y;
-                    let d = Math.hypot(dx, dy);
-                    if (d >= CRANE_CLEARANCE) continue;
-                    if (d < 0.001) { dx = 1; dy = 0; d = 1; }   // exactly co-located
-                    // Push them apart evenly, then keep both off the stands:
-                    // the separation must not be bought by parking in the crowd.
-                    const push = (CRANE_CLEARANCE - d) / 2;
-                    r.crane.x += (dx / d) * push;
-                    r.crane.y += (dy / d) * push;
-                    o.crane.x -= (dx / d) * push;
-                    o.crane.y -= (dy / d) * push;
-                    nudgeOffStand(track, r.crane, 14);
-                    nudgeOffStand(track, o.crane, 14);
-                }
-            }
-            // Separation gets the last word. Being pushed off a stand can put
-            // two cranes back on top of each other, and now that a crane is a
-            // solid obstacle two of them in the same place is the worse fault
-            // of the two - one is a drawing overlap, the other is a wall in a
-            // place the drivers cannot read.
-            for (let k = 0; k < recoveries.length; k++) {
-                if (k === i) continue;
-                const o = recoveries[k];
-                if (!o || o.phase === 'done') continue;
-                let dx = r.crane.x - o.crane.x, dy = r.crane.y - o.crane.y;
-                let d = Math.hypot(dx, dy);
-                if (d >= CRANE_CLEARANCE) continue;
-                if (d < 0.001) { dx = 1; dy = 0; d = 1; }
-                const push = (CRANE_CLEARANCE - d) / 2;
-                r.crane.x += (dx / d) * push; r.crane.y += (dy / d) * push;
-                o.crane.x -= (dx / d) * push; o.crane.y -= (dy / d) * push;
-            }
-        }
+        r.hook.x = r.pivot.x + Math.cos(r.ang) * r.reach;
+        r.hook.y = r.pivot.y + Math.sin(r.ang) * r.reach;
 
         if (r.phase === 'done') {
             r.car.recovering = false;
@@ -4773,157 +4543,93 @@ function renderVscCountdown(leftMs) {
     }
 }
 
-// --- cranes are solid ----------------------------------------------------
-// A recovery vehicle sitting on the edge of the circuit is a hazard, not
-// scenery. A car that runs into one is stopped by it and damaged, exactly as
-// by a barrier: leaning on it costs little, spearing it costs a lot.
-function applyCraneCollisions() {
-    if (!recoveries.length) return;
-    for (const c of cars) {
-        if (c.finished || c.isBroken) continue;
-        for (const r of recoveries) {
-            if (r.phase === 'done') continue;
-            const dx = c.x - r.crane.x, dy = c.y - r.crane.y;
-            const d = Math.hypot(dx, dy);
-            const minD = CRANE_RADIUS + 12;          // 12 = the car's own radius
-            if (d >= minD || d < 0.001) continue;
-
-            const nx = dx / d, ny = dy / d;
-            // push clear
-            c.x = r.crane.x + nx * minD;
-            c.y = r.crane.y + ny * minD;
-
-            // kill the component of velocity going INTO the crane, and take
-            // the damage from it. Same shape as the barrier rule, so brushing
-            // one is survivable and driving into it head-on is not.
-            // Cancel the component going INTO it and nothing more, so the
-            // car slides along the obstacle and can be steered round it -
-            // the way a wall works. It used to add 1.35 of that component
-            // back, which is a bounce: drivers were fired backwards off a
-            // stationary truck instead of squeezing past it. Nicola called
-            // them repulsors, which is exactly what 1.35 makes them.
-            const into = -(c.velocity.x * nx + c.velocity.y * ny);
-            if (into > 0) {
-                c.velocity.x += nx * into;
-                c.velocity.y += ny * into;
-                const hit = Math.max(0, into - 30) * 0.10;
-                if (hit > 0 && typeof c.takeDamage === 'function') {
-                    c.takeDamage(hit * hit * 0.5);
-                    if (!c._craneLogged || raceNow() - c._craneLogged > 2000) {
-                        c._craneLogged = raceNow();
-                        RaceLog.event('CONTACT', `${c.driverName || c.color} hit a recovery ` +
-                            `vehicle (closing ${into.toFixed(0)} px/s)`);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Where the AI should not go. ai.js reads this through the global.
-function craneObstacles() {
-    const out = [];
-    for (const r of recoveries) {
-        if (r.phase === 'done') continue;
-        out.push({ x: r.crane.x, y: r.crane.y, r: CRANE_RADIUS });
-    }
-    return out;
-}
-
 function drawCranes(ctx) {
     for (const r of recoveries) {
-        const c = r.crane;
+        if (r.phase === 'done') continue;
         const on = Math.floor(Date.now() / 200) % 2 === 0;
-
-        // --- cable to the wreck, drawn first so the crane sits on top ----
-        if (r.phase === 'lift' || r.phase === 'haul' || r.phase === 'drop') {
-            ctx.strokeStyle = '#111';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(c.x, c.y);
-            ctx.lineTo(r.car.x, r.car.y);
-            ctx.stroke();
-
-            // hook
-            ctx.fillStyle = '#eceff1';
-            ctx.beginPath();
-            ctx.arc(r.car.x, r.car.y, 3.5, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        const ca = Math.cos(r.ang), sa = Math.sin(r.ang);
+        const trX = r.pivot.x + ca * r.reach, trY = r.pivot.y + sa * r.reach;
 
         ctx.save();
-        ctx.translate(c.x, c.y);
+        ctx.translate(r.pivot.x, r.pivot.y);
+        ctx.rotate(r.ang);
 
-        // While towing, the crane leads and the wreck trails, so it faces its
-        // direction of travel with the boom out the back - not backwards at
-        // the car, which read as the recovery truck reversing up the circuit.
-        const towing = (r.phase === 'haul' || r.phase === 'drop');
-        const toCar = Math.atan2(r.car.y - c.y, r.car.x - c.x);
-        const ang = towing ? toCar + Math.PI : toCar;
-        ctx.rotate(isFinite(ang) ? ang : 0);
-        const boom = towing ? -1 : 1;
-
-        // amber warning glow
-        if (on) {
-            ctx.fillStyle = 'rgba(255,214,0,0.22)';
-            ctx.beginPath();
-            ctx.arc(0, 0, 34, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
-        // --- jib (the arm reaching towards the car) ---------------------
-        ctx.strokeStyle = '#ef6c00';
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.moveTo(boom * 4, 0);
-        ctx.lineTo(boom * 32, 0);
-        ctx.stroke();
-        ctx.strokeStyle = '#ffb74d';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(boom * 6, 0);
-        ctx.lineTo(boom * 30, 0);
-        ctx.stroke();
-        // pulley at the tip
+        // --- controbraccio e contrappeso, dall'altra parte della torre ----
+        ctx.strokeStyle = '#37474f';
+        ctx.lineWidth = 7;
+        ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(-66, 0); ctx.stroke();
         ctx.fillStyle = '#37474f';
+        ctx.fillRect(-80, -12, 18, 24);
+
+        // --- il braccio: due correnti e un traliccio a zig-zag fra loro ----
+        // Rastremato: 7px alla torre, 3 alla punta. E' quello che lo fa
+        // leggere come una struttura e non come una barra.
+        const J = r.jib;
+        const wAt = (s) => 7 - 4 * Math.min(1, s / J);
+        ctx.strokeStyle = '#e65100';
+        ctx.lineWidth = 1.7;
         ctx.beginPath();
-        ctx.arc(boom * 32, 0, 4, 0, Math.PI * 2);
-        ctx.fill();
+        for (let s = 0; s + 26 <= J; s += 26) {
+            ctx.moveTo(s, -wAt(s)); ctx.lineTo(s + 13, wAt(s + 13));
+            ctx.moveTo(s + 13, wAt(s + 13)); ctx.lineTo(s + 26, -wAt(s + 26));
+            ctx.moveTo(s, -wAt(s)); ctx.lineTo(s, wAt(s));
+        }
+        ctx.stroke();
+        ctx.strokeStyle = '#f9a825';
+        ctx.lineWidth = 3.2;
+        ctx.beginPath();
+        ctx.moveTo(0, -7); ctx.lineTo(J, -3);
+        ctx.moveTo(0, 7); ctx.lineTo(J, 3);
+        ctx.stroke();
+        // punta
+        ctx.fillStyle = '#37474f';
+        ctx.beginPath(); ctx.arc(J, 0, 4, 0, Math.PI * 2); ctx.fill();
 
-        // --- body -------------------------------------------------------
-        ctx.fillStyle = '#455a64';
-        ctx.fillRect(-19, -13, 38, 26);              // chassis shadow
-        ctx.fillStyle = '#f9a825';
-        ctx.fillRect(-17, -11, 34, 22);              // yellow body
-        ctx.fillStyle = '#e65100';
-        ctx.fillRect(-17, -11, 34, 4);               // stripe
-        ctx.fillRect(-17, 7, 34, 4);
+        // --- la torre, vista dall'alto: un traliccio quadrato -------------
+        ctx.fillStyle = '#455a64'; ctx.fillRect(-14, -14, 28, 28);
+        ctx.fillStyle = '#f9a825'; ctx.fillRect(-11, -11, 22, 22);
+        ctx.strokeStyle = '#e65100'; ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(-11, -11); ctx.lineTo(11, 11);
+        ctx.moveTo(11, -11); ctx.lineTo(-11, 11);
+        ctx.stroke();
 
-        // tracks / wheels
-        ctx.fillStyle = '#212121';
-        ctx.fillRect(-19, -15, 38, 4);
-        ctx.fillRect(-19, 11, 38, 4);
-
-        // cab
-        ctx.fillStyle = '#263238';
-        ctx.fillRect(-9, -7, 13, 14);
-        ctx.fillStyle = '#90a4ae';
-        ctx.fillRect(-7, -5, 9, 10);
-
-        // roof beacon
+        // --- il carrello, sul braccio -------------------------------------
+        ctx.save();
+        ctx.translate(r.reach, 0);
+        if (on) {
+            ctx.fillStyle = 'rgba(255,214,0,0.20)';
+            ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = '#263238'; ctx.fillRect(-9, -9, 18, 18);
+        ctx.fillStyle = '#ffb300'; ctx.fillRect(-7, -7, 14, 14);
         ctx.fillStyle = on ? '#fff176' : '#8d6e00';
-        ctx.fillRect(-3, -17, 6, 5);
-
+        ctx.fillRect(-2.5, -12, 5, 4);
+        ctx.restore();
         ctx.restore();
 
-        // --- label ------------------------------------------------------
+        // --- il cavo e il gancio ------------------------------------------
+        // In pianta cavo e gancio cadono sullo stesso punto del carrello, e
+        // un cavo lungo zero non si vede: il gancio si disegna come due anelli
+        // concentrici sotto il carrello, che e' il modo in cui una vista
+        // dall'alto puo' dire "qui pende qualcosa".
+        const lift = r.car ? (r.car.liftAmount || 0) : 0;
+        if (r.phase === 'hook' || r.phase === 'haul') {
+            ctx.strokeStyle = 'rgba(20,20,20,0.85)';
+            ctx.lineWidth = 1.6;
+            ctx.beginPath(); ctx.arc(trX, trY, 7 + 3 * lift, 0, Math.PI * 2); ctx.stroke();
+            ctx.lineWidth = 2.4;
+            ctx.beginPath(); ctx.arc(trX, trY, 3.4, 0, Math.PI * 2); ctx.stroke();
+        }
+
+        // --- etichetta -----------------------------------------------------
         ctx.font = 'bold 10px Arial';
         ctx.textAlign = 'center';
         ctx.fillStyle = on ? '#ffd600' : '#c8a600';
         ctx.strokeStyle = 'rgba(0,0,0,0.85)';
         ctx.lineWidth = 3;
-        ctx.strokeText('RECOVERY', c.x, c.y - 24);
-        ctx.fillText('RECOVERY', c.x, c.y - 24);
+        ctx.strokeText('RECOVERY', trX, trY - 22);
+        ctx.fillText('RECOVERY', trX, trY - 22);
         ctx.textAlign = 'left';
     }
 }
@@ -6211,7 +5917,7 @@ refreshChampResume();
 const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent',
                      'quadrato', 'triangle', 'pettine', 'thunder', 'crown',
                      'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'kart',
-                     'anchor', 'arrow'];
+                     'anchor', 'arrow', 'pentagon'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:

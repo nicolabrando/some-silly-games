@@ -1367,6 +1367,21 @@ class Car {
     }
     
     draw(ctx, skipTags) {
+        // Un rottame appeso al gancio e' in aria: la sua ombra resta a terra e
+        // scivola fuori da sotto. In una vista dall'alto e' l'unica cosa che
+        // dica "questa e' sopra la pista, non sulla pista".
+        if (this.liftAmount > 0.02) {
+            const kk = this.liftAmount;
+            ctx.save();
+            ctx.translate(this.x + 14 * kk, this.y + 18 * kk);
+            ctx.rotate(this.angle);
+            ctx.fillStyle = 'rgba(0,0,0,' + (0.34 - 0.10 * kk).toFixed(2) + ')';
+            ctx.beginPath();
+            ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 4);
+            ctx.fill();
+            ctx.restore();
+        }
+
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);

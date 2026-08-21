@@ -648,6 +648,47 @@ Il disegno gira a destra — 540 gradi di arco destro contro 180 di sinistro —
 
 **E la tabella delle traiettorie si è toccata di una riga sola.** `genlines.js` non è riproducibile (§2.4duodetricies-ter): rilanciato per intero cambierebbe la linea a circuiti che non c'entrano, e l'impronta del libro dei record non se ne accorgerebbe. C'è ora `addline.js`, che genera la traiettoria di **un** circuito e la accoda; controllato dopo, le 18 voci vecchie sono identiche byte per byte.
 
+### 2.4duodetricies-sexies Le gru, rifatte: un braccio, non un carro attrezzi (Apex 3)
+
+«Quando avevo chiesto delle gru per rimuovere le macchine danneggiate, mi aspettavo che entrassero dai lati dello schermo dei bracci delle gru tipo quelle usate nell'edilizia, per sollevare e rimuovere le auto. Non voglio qualcosa sulla pista che interferisca con il traffico.»
+
+Quello che c'era era un **carro attrezzi cingolato**: entrava dal prato, agganciava il rottame, lo trascinava dietro le barriere e se ne tornava indietro. Era un oggetto **solido** — le auto ci rimbalzavano contro e si danneggiavano — e per farlo funzionare ci volevano: una ricerca del punto dove posare il rottame, una seconda ricerca del posteggio da cui partire, il punteggio delle due tratte per non attraversare le tribune, una separazione fra due gru vicine, e in `ai.js` una regola perché un'auto doppiata scansasse la gru invece di infilarcisi. Tutto per un mezzo che, per definizione, sta in mezzo.
+
+**Adesso è una gru da cantiere.** La torre sta **fuori dal bordo dell'immagine**, dal lato più vicino al rottame — non si vede mai, si vede solo il braccio. Il braccio ruota dentro fino alla direzione del rottame mentre il carrello corre in fuori lungo di esso; i due movimenti finiscono insieme, quindi il gancio arriva sull'auto nell'istante in cui il braccio si ferma (1.9 s). Il gancio cala e l'auto si stacca da terra (1.2 s): `car.js` la disegna il 30% più grande e le lascia **l'ombra a terra**, che scivola fuori da sotto — in una vista dall'alto è l'unica cosa che dica «questa è sopra la pista, non sulla pista». Poi il carrello rientra e il braccio ruota indietro, e l'auto appesa esce dall'inquadratura con lui (2.8 s). La VSC resta fuori per tutti e 5.9 secondi, più i 3 di conto alla rovescia.
+
+**Non c'è più un punto dove posare il rottame, perché il rottame non viene posato: viene portato via.** E con lui se ne sono andati `applyCraneCollisions`, `craneObstacles`, `CRANE_RADIUS`, `CRANE_CLEARANCE`, `pointOnStand`, `segmentStandHits`, `nudgeOffStand`, le due ricerche di posizione e la regola di scansamento dell'IA: **294 righe in meno in `main.js` e 27 in `ai.js`**, e zero possibilità che una gru faccia una gara.
+
+Tre dettagli che sono costati un pensiero ciascuno:
+
+- **Il lato sinistro.** Fra l'arena e il bordo del canvas c'è la colonna dell'HUD, larga 210 px. Una torre piazzata «appena fuori dall'arena» a sinistra resterebbe **in vista**, a posare l'auto in mezzo al prato invece di portarsela fuori. A sinistra quindi la torre va fuori dal **canvas** (x = −74) e il braccio attraversa quella fascia: per un pezzo sta dietro il pannello, il che è esattamente come deve sembrare — entra da fuori campo. Verificato su tutti e quattro i bordi: la torre è sempre fuori dall'immagine.
+- **Due rottami dallo stesso lato** metterebbero due torri sullo stesso pixel: la seconda scivola di 130 px lungo il suo bordo. I due bracci si incrociano sopra la pista, che è quello che fanno anche quelli veri.
+- **Il cavo, in pianta, è lungo zero.** Visto dall'alto il gancio cade esattamente sul carrello e una linea fra i due non si vede. Il gancio si disegna quindi come due anelli concentrici sotto il carrello, che è il modo in cui una vista dall'alto può dire «qui pende qualcosa».
+
+Misurato: diciannove circuiti in gara, 23 ritiri, tutte le gare finite; due rottami contemporanei recuperati senza che i bracci si intralcino; e nessuna auto che tocca più niente, perché non c'è più niente da toccare.
+
+### 2.4duodetricies-septies Pentagon: una forma che non si negozia (Apex 3)
+
+«Una pista a forma di pentagono, deve essere un pentagono esatto.»
+
+Esatto vuol dire esatto: **cinque lati da 380.90 px, cinque curve da 72.000 gradi, cinque rette da 213.80 px, un raggio solo su tutte e cinque le curve** — uguali fino all'ultima cifra che i numeri in doppia precisione si portano dietro. Non c'è minimizzatore, a differenza di Arrow: un pentagono regolare non è una forma da negoziare, è una costruzione. Si prende il cerchio circoscritto più grande che entra nell'arena (raggio 324.01), ci si mettono cinque vertici a 72 gradi l'uno dall'altro, si raccorda ognuno con lo stesso raggio (115), e si è finito. Nessun compromesso perché non c'è niente su cui scendere a patti.
+
+**1791.5 px di giro, 40% in curva**, carreggiata 70/90. È il secondo circuito più corto del gioco dopo Circle, ed è quello che un pentagono costa: la forma è quasi circolare, quindi il suo ingombro è quasi quadrato (776 × 759 con la barriera) e i 370 px di larghezza che l'arena avanza non sono utilizzabili da niente che debba restare regolare. Su un giro così i cinque tratti sono identici e la differenza la fa solo come li si guida: giro migliore dell'IA 6.50-7.17 s.
+
+**Antiorario, e per due ragioni che contano tutte e due.**
+
+La prima è meccanica: `checkLapCross()` conta il giro attraversando `startX` in **+x**, quindi serve un lato percorso da sinistra a destra. Un pentagono a base piatta e punta in su, percorso in senso antiorario, mette quel lato sulla base. A punta in giù il lato orizzontale finisce in alto e il verso si ribalta in orario.
+
+La seconda è il calendario. Arrow era stato lasciato come disegnato proprio perché i suoi 540 gradi di arco destro portavano il calendario in pari a 5140/5140. **Un pentagono è 360 gradi di rotazione tutti dalla stessa parte: un pentagono bilanciato non esiste.** Deve pendere, e pende dalla parte meno pericolosa — la lamentela che ha fatto nascere lo specchiamento dei circuiti era un dito **destro** dolorante. Con Pentagon il calendario legge:
+
+| | a destra | a sinistra |
+|---|---|---|
+| con Arrow soltanto | 5140 | 5140 |
+| **con Pentagon** | **5140** | **5500** |
+
+Cioè esattamente lo sbilancio che il calendario aveva prima di Arrow, ma dall'altra parte. Il prossimo circuito, se si vuole tornare in pari, deve girare a destra.
+
+E anche qui la tabella delle traiettorie si è toccata di una riga sola, con `addline.js`: le 18 voci di partenza sono identiche byte per byte.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.
@@ -1483,3 +1524,6 @@ Gli attrezzi di misura sono nella cartella di lavoro e non nel gioco: `logscan.j
 - **[Apex 3] Un generatore non riproducibile non va rilanciato per intero.** `genlines.js` rilanciato sulle stesse geometrie ha cambiato la traiettoria a 7 circuiti su 18, perche' il giudice fa girare qualifiche simulate e quelle hanno del casuale. L'impronta del libro dei record non se ne sarebbe accorta. Quando si aggiunge un circuito si aggiunge **una voce** alla tabella; il resto resta bit a bit com'era.
 - **[Apex 3] Un limite proporzionale all'attrito conta solo meta' di quello che l'attrito fa.** Il tetto d'imbardata tappava la rotazione a `grip/v` perche' e' l'attrito a creare la rotazione - vero - e dimenticava che e' l'attrito anche a **fermarla**. Portato all'estremo il modello diceva che sul ghiaccio un'auto non puo' girarsi, e in pozzanghera la Drift restava dritta mentre la full wet derapava. Quando si scrive un limite fisico, chiedersi se la stessa grandezza compare anche dall'altra parte del bilancio.
 - **[Apex 3] Un disegno a mano va letto come sequenza di curve, non ricalcato punto per punto.** Il vincolo non e' dove sta il vertice ma quanto gira e con che raggio: ricalcando i vertici, i raccordi si schiacciano proprio dove servono grandi. Scritto come lista (giro, retta, raggio) e chiuso da un minimizzatore con arena e distanze come vincoli, Arrow e' venuto alla terza passata. E quando il disegno chiede una cosa che la carreggiata non permette - una punta dove le due strade si toccano - la si converte nella cosa piu' vicina che sta in piedi, e lo si dice.
+- **[Apex 3] Se una macchina di servizio deve stare in pista, forse non deve stare in pista.** Il carro attrezzi delle gru era solido, e per farlo funzionare ci volevano due ricerche di percorso, una separazione fra mezzi, il punteggio delle tribune e una regola d'IA per scansarlo: tutto per evitare i guai che creava lui. Spostata la macchina in ARIA - torre fuori campo, braccio che passa sopra - sono sparite 294 righe in `main.js` e 27 in `ai.js`, e con loro la classe di problemi. Quando il codice di contorno di una feature e' piu' grande della feature, di solito la feature sta nel posto sbagliato.
+- **[Apex 3] Una forma esatta non si risolve, si costruisce.** Arrow e' venuto da un minimizzatore perche' era un disegno a mano da far chiudere; Pentagon no. Cinque vertici a 72 gradi sul cerchio circoscritto piu' grande che entra, un raggio solo: lati e curve uguali all'ultima cifra. Mettere un solutore dove c'e' una costruzione in forma chiusa aggiunge solo un errore residuo da spiegare.
+- **[Apex 3] Certi vincoli non si possono soddisfare, e allora si sceglie da che parte sbagliare.** Un pentagono e' 360 gradi tutti dalla stessa parte: il calendario non puo' restare in pari. Invece di fingere, si sceglie il verso in base a cosa e' costato caro in passato - il dito destro - e si scrive il numero (5140 contro 5500) perche' il prossimo circuito sappia da che parte deve girare.

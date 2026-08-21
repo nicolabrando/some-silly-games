@@ -2977,6 +2977,68 @@ class ArrowTrack extends SegmentedTrack {
 }
 
 // ===========================================================================
+//  PENTAGON
+// ===========================================================================
+//
+//  A REGULAR PENTAGON, and exactly one. Five sides of 380.90px, five turns of
+//  72.000 degrees, five straights of 213.80px, one fillet radius on all five
+//  corners - equal to the last digit the doubles carry, because the shape is
+//  not negotiated, it is constructed: the largest circumscribed circle that
+//  fits the arena, five vertices 72 degrees apart on it, one radius. No
+//  solver, no compromises, nothing measured off a drawing.
+//
+//  1791px of centre line and 40% of it in corners. It is the second shortest
+//  circuit in the game after Circle, and that is what a pentagon costs: the
+//  shape is almost circular, so its bounding box is nearly square (776 x 759
+//  with the barrier) and the arena's spare width - 370px of it - cannot be
+//  used by anything that has to stay regular.
+//
+//  ANTICLOCKWISE: five left-handers. Two reasons, and both matter.
+//
+//  The mechanical one: checkLapCross() counts a lap by crossing startX in +x,
+//  so a side has to be driven left to right. A pentagon with a flat BASE and
+//  its point up, driven anticlockwise, puts that side along the bottom. Point
+//  down and the horizontal side moves to the top and the direction flips.
+//
+//  The other is the calendar. Nicola drives with the arrow keys and the
+//  left/right balance is a thing he feels; Arrow was left as drawn precisely
+//  because its 540 degrees of right sweep took the calendar level at
+//  5140/5140. A pentagon is 360 degrees of turn ALL ONE WAY - there is no
+//  such thing as a balanced one - so it has to lean, and it leans the safer
+//  way: the complaint that started the mirroring was a sore right finger.
+//  With Pentagon the calendar reads 5140 right against 5500 left.
+// ===========================================================================
+class PentagonTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 70;
+        this.grassWidth = 90;
+
+        this.segments = [
+            { type: 'arc', cx: -172.97, cy: -56.20, r: 115.00, start: -2.199115, end: 2.827433, ccw: true },
+            { type: 'line', x1: -282.34, y1: -20.66, x2: -216.27, y2: 182.67 },
+            { type: 'arc', cx: -106.90, cy: 147.13, r: 115.00, start: 2.827433, end: 1.570796, ccw: true },
+            { type: 'line', x1: -106.90, y1: 262.13, x2: 106.90, y2: 262.13 },
+            { type: 'arc', cx: 106.90, cy: 147.13, r: 115.00, start: 1.570796, end: 0.314159, ccw: true },
+            { type: 'line', x1: 216.27, y1: 182.67, x2: 282.34, y2: -20.66 },
+            { type: 'arc', cx: 172.97, cy: -56.20, r: 115.00, start: 0.314159, end: -0.942478, ccw: true },
+            { type: 'line', x1: 240.56, y1: -149.24, x2: 67.60, y2: -274.90 },
+            { type: 'arc', cx: 0.00, cy: -181.87, r: 115.00, start: -0.942478, end: -2.199115, ccw: true },
+            { type: 'line', x1: -67.60, y1: -274.90, x2: -240.56, y2: -149.24 }
+        ];
+
+        // Sulla base, 60px prima della staccata: la griglia - dieci auto ogni
+        // 30px, 305px all'indietro - copre la retta e arriva a meta' della
+        // curva precedente, che su un pentagono e' esattamente uguale a
+        // tutte le altre.
+        this.startX = 46.90;
+        this.startY = 262.13;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+// ===========================================================================
 //  COMB
 // ===========================================================================
 //

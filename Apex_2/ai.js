@@ -1361,34 +1361,7 @@ class AI {
             }
         }
 
-        // A recovery crane parked on the edge of the circuit is solid, so it
-        // is worth steering round rather than into. It overrides everything
-        // above: a car being lapped still has to miss the crane.
-        const cranes = (typeof craneObstacles === 'function') ? craneObstacles() : [];
-        if (cranes.length) {
-            const line = track.getRacingLine(this.lineLevel || 'standard');
-            const node = line.nodes[car._nodeIdx === undefined ? 0 : car._nodeIdx];
-            if (node) {
-                for (const cr of cranes) {
-                    // how far ahead is it, and on which side of the line?
-                    const dx = cr.x - car.x, dy = cr.y - car.y;
-                    const hx = Math.cos(car.angle), hy = Math.sin(car.angle);
-                    const ahead = dx * hx + dy * hy;
-                    if (ahead < -20 || ahead > 190) continue;
-                    // lateral position of the crane relative to the racing line
-                    const craneLat = (cr.x - node.cx) * node.nx + (cr.y - node.cy) * node.ny;
-                    const meLat = this.lateralOffset + (this.personalBias || 0);
-                    const clear = cr.r + 20;
-                    if (Math.abs(craneLat - meLat) > clear) continue;
-                    // go round whichever side there is more room on
-                    const goLeft = craneLat > 0;
-                    const want = goLeft ? craneLat - clear : craneLat + clear;
-                    desired = Math.max(-lim, Math.min(lim, want));
-                    hasTarget = true;
-                }
-            }
-        }
-
+        // Niente da scansare: la gru non tocca terra (vedi LA GRU in main.js).
         // The offset is measured from the RACING LINE, but the limit belongs to
         // the TRACK, so it has to be clamped in centre-line terms. It used to be
         // clamped as |desired| <= lim, which on a circuit whose line sits hard
