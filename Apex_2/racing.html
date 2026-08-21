@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 2</title>
-    <link rel="stylesheet" href="style.css?v=20260819c">
+    <link rel="stylesheet" href="style.css?v=20260820a">
 </head>
 <body>
     <div id="game-container">
@@ -656,27 +656,105 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=20260819c"></script>
-    <script src="track.js?v=20260819c"></script>
-    <script src="lines.js?v=20260819c"></script>
-    <script src="car.js?v=20260819c"></script>
-    <script src="ai.js?v=20260819c"></script>
-    <script src="audio.js?v=20260819c"></script>
+    <script src="racelog.js?v=20260820a"></script>
+    <script src="track.js?v=20260820a"></script>
+    <script src="lines.js?v=20260820a"></script>
+    <script src="car.js?v=20260820a"></script>
+    <script src="ai.js?v=20260820a"></script>
+    <script src="audio.js?v=20260820a"></script>
     <script>
-        window.onerror = function(msg, url, lineNo, columnNo, error) {
-            const errDiv = document.createElement('div');
-            errDiv.style.position = 'fixed';
-            errDiv.style.top = '50px';
-            errDiv.style.left = '50px';
-            errDiv.style.backgroundColor = 'red';
-            errDiv.style.color = 'white';
-            errDiv.style.padding = '20px';
-            errDiv.style.zIndex = '9999';
-            errDiv.innerText = `Error: ${msg}\nLine: ${lineNo}\nURL: ${url}`;
-            document.body.appendChild(errDiv);
-            return false;
-        };
+        // ---------------------------------------------------------------
+        //  THE ERROR PANEL
+        //
+        //  The game is opened from a file:// URL, where the browser treats
+        //  every file as its own origin - so a script loaded from another
+        //  file is "cross-origin" and window.onerror is handed a sanitised
+        //  "Script error.", line 0, and nothing else. Safari does exactly
+        //  this: a real crash arrives as three useless lines, which is what
+        //  a screenshot from Nicola showed after the pit build froze.
+        //
+        //  An error we CATCH OURSELVES is not sanitised. So the two places
+        //  the game's own code is entered from - an animation frame and a
+        //  DOM event handler - are wrapped, and what they catch is printed
+        //  in full: message, and the first lines of the stack. Nothing is
+        //  swallowed: after reporting, the error is re-thrown, and the frame
+        //  loop is restarted so one bad frame degrades the game instead of
+        //  killing it.
+        // ---------------------------------------------------------------
+        (function () {
+            let panel = null, seen = {}, count = 0, lastAt = 0;
+            function report(where, e) {
+                lastAt = new Date().getTime();
+                const msg = (e && e.message) || String(e);
+                const key = where + '|' + msg;
+                count++;
+                if (seen[key]) { if (panel) panel.querySelector('.apex-err-n').innerText = ' (x' + count + ')'; return; }
+                seen[key] = true;
+                if (!panel) {
+                    panel = document.createElement('div');
+                    panel.style.cssText = 'position:fixed;top:12px;left:12px;right:12px;max-height:45vh;overflow:auto;' +
+                        'background:#b71c1c;color:#fff;padding:14px 16px;z-index:9999;font:12px/1.45 monospace;' +
+                        'white-space:pre-wrap;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+                    const head = document.createElement('div');
+                    head.style.cssText = 'font-weight:bold;margin-bottom:6px;font-size:13px';
+                    head.innerHTML = 'Apex — errore<span class="apex-err-n"></span> ' +
+                        '<span style="float:right;cursor:pointer;opacity:.85">chiudi ✕</span>';
+                    head.querySelector('span:last-child').onclick = function () { panel.remove(); panel = null; };
+                    panel.appendChild(head);
+                    panel.appendChild(document.createElement('div')).className = 'apex-err-body';
+                    document.body.appendChild(panel);
+                }
+                const stack = ((e && e.stack) || '').split('\n').slice(0, 6)
+                    .map(function (l) { return '   ' + l.trim().replace(/^at /, 'in '); }).join('\n');
+                panel.querySelector('.apex-err-body').innerText +=
+                    (where ? '[' + where + '] ' : '') + msg + (stack ? '\n' + stack : '') + '\n\n';
+            }
+            window.apexReportError = report;
+            // 1. animation frames: the game loop and everything it draws
+            const rafOrig = window.requestAnimationFrame.bind(window);
+            window.requestAnimationFrame = function (cb) {
+                return rafOrig(function (t) {
+                    try { return cb(t); }
+                    catch (e) {
+                        report('frame', e);
+                        // keep the loop alive: a frame that threw is not a
+                        // reason for the game to stop for ever
+                        if (typeof gameLoop === 'function') rafOrig(gameLoop);
+                        throw e;
+                    }
+                });
+            };
+            // 2. every DOM listener: buttons, keys, the whole interface
+            const addOrig = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function (type, fn, opts) {
+                if (typeof fn === 'function' && !fn.__apexWrap) {
+                    const wrap = function (ev) {
+                        try { return fn.call(this, ev); }
+                        catch (e) { report(type, e); throw e; }
+                    };
+                    fn.__apexWrap = wrap;      // so removeEventListener still works
+                    wrap.__apexWrap = wrap;
+                    return addOrig.call(this, type, wrap, opts);
+                }
+                return addOrig.call(this, type, (fn && fn.__apexWrap) || fn, opts);
+            };
+            const remOrig = EventTarget.prototype.removeEventListener;
+            EventTarget.prototype.removeEventListener = function (type, fn, opts) {
+                return remOrig.call(this, type, (fn && fn.__apexWrap) || fn, opts);
+            };
+            // 3. and the sanitised report, for anything that escapes both
+            window.onerror = function (msg, url, lineNo) {
+                // the wrappers above re-throw what they report, and that lands
+                // here as well: do not print the same thing twice
+                if (new Date().getTime() - lastAt < 200) return false;
+                report('', msg + (lineNo ? ' (riga ' + lineNo + ' di ' + String(url).split('/').pop() + ')' : ''));
+                return false;
+            };
+            window.addEventListener('unhandledrejection', function (ev) {
+                report('promise', ev.reason || 'rifiutata senza motivo');
+            });
+        })();
     </script>
-    <script src="main.js?v=20260819c"></script>
+    <script src="main.js?v=20260820a"></script>
 </body>
 </html>

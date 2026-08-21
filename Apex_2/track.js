@@ -359,7 +359,7 @@ class SegmentedTrack {
         if (!this.hasBridge) return null;
         if (this._bridge !== undefined) return this._bridge;
 
-        const line = this.getRacingLine('standard');
+        const line = this._lineOrFallback();
         const N = line.count, nodes = line.nodes, ds = line.length / N;
         const apart = Math.ceil((this.trackWidth * 6) / ds);   // "far apart along the lap"
 
@@ -411,12 +411,12 @@ class SegmentedTrack {
     onBridge(car) {
         const b = this.getBridge();
         if (!b || car.lapS === undefined) return false;
-        return inLapWindow(car.lapS, b.over, this.getRacingLine('standard').length);
+        return inLapWindow(car.lapS, b.over, this._lineOrFallback().length);
     }
     underBridge(car) {
         const b = this.getBridge();
         if (!b || car.lapS === undefined) return false;
-        return inLapWindow(car.lapS, b.under, this.getRacingLine('standard').length);
+        return inLapWindow(car.lapS, b.under, this._lineOrFallback().length);
     }
 
     // Two cars at the same point are not necessarily in the same place: one
@@ -1137,7 +1137,7 @@ class SegmentedTrack {
     // =====================================================================
     closestOnOwnRoad(car) {
         if (!car || car._nodeIdx === undefined) return null;
-        const line = this.getRacingLine('standard');
+        const line = this._lineOrFallback();
         const nodes = line.nodes, N = line.count;
         if (!N) return null;
         const W = Math.ceil((this.wallRadius() * 2.5) / (line.ds || 1)) + 2;
@@ -1403,6 +1403,22 @@ class SegmentedTrack {
         return level === 'fast' ? this._lineFast : this._lineStd;
     }
 
+    // While the line is being CHOSEN, `_lineStd` holds the candidate being
+    // measured, so anything the measurement itself asks (the car's own lap
+    // position, the bridge, the puddles) is answered with that candidate
+    // rather than re-entering the search. This guard is what makes that safe:
+    // if `_lineStd` were ever null in there, getRacingLine would call
+    // _buildRacingLines again, from inside itself, for ever.
+    _lineOrFallback() {
+        if (!this._lineStd) {
+            const base = this._lineBase();
+            const maxOff = Math.max(3, this.trackWidth - 20);
+            this._lineStd = this._lineFast = this._finishLine(base, this._relaxAlpha(base, 600, maxOff), maxOff);
+            this._setLineStart(this._lineStd);
+        }
+        return this._lineStd;
+    }
+
     _buildRacingLines() {
         const base = this._lineBase();
         const W = this.trackWidth;
@@ -1442,6 +1458,9 @@ class SegmentedTrack {
         this._lineStd = chosen;
         this._lineFast = chosen;
         this._setLineStart(chosen);
+        // the crossing is measured off the line, and anything asked for it
+        // DURING the search was answered with a candidate: throw that away.
+        this._bridge = undefined;
     }
 
     // Arc length of the start line itself. Node 0 is wherever the first
@@ -1477,9 +1496,20 @@ class SegmentedTrack {
             const r = this._optimizeAlpha(base, start.alpha, maxOff, {});
             cands.push({ name: 'opt' + margin, alpha: r.alpha, maxOff: maxOff, proxy: r.T });
         }
-        // the judge, if the game is loaded; the proxy otherwise
+        // The judge - only where it is safe to run one. It drives a whole
+        // qualifying lap per candidate through the game's own simulation, and
+        // getRacingLine() is called from screens, from the start of a session
+        // and from the record book: re-entering the race simulation from
+        // inside any of those, for seconds at a time, is not something the
+        // game should do while somebody is looking at it. genlines.js turns it
+        // on (RACING_LINE_JUDGE_REPS = 3) because that is the whole point of
+        // the generator; in the game the value is 0 and the proxy decides,
+        // which only ever happens for a circuit that has been edited since
+        // lines.js was built.
         let best = null;
-        const judge = (typeof judgeRacingLine === 'function') ? judgeRacingLine : null;
+        const judge = (typeof judgeRacingLine === 'function' &&
+                       typeof RACING_LINE_JUDGE_REPS !== 'undefined' &&
+                       RACING_LINE_JUDGE_REPS > 0) ? judgeRacingLine : null;
         for (const c of cands) {
             c.line = this._finishLine(base, c.alpha, c.maxOff);
             c.line.source = c.name;
@@ -1840,7 +1870,7 @@ class SegmentedTrack {
     getStands() {
         if (this._stands) return this._stands;
 
-        const line = this.getRacingLine('standard');
+        const line = this._lineOrFallback();
         const stands = [];
 
         let seed = 987654321;
@@ -1984,7 +2014,7 @@ class SegmentedTrack {
     makePuddles(count) {
         this.puddles = [];
         if (typeof this.getRacingLine !== 'function') return this.puddles;
-        const line = this.getRacingLine('standard');
+        const line = this._lineOrFallback();
         const N = line.count;
         const n = count === undefined ? 5 : count;
         const used = [];

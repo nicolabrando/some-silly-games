@@ -1505,10 +1505,13 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
 // candidate is the line. Returns the lap in ms, null if none was completed.
 // It only ever runs for a circuit whose line is not in lines.js (an edited
 // or new layout), once; the answer is then remembered in localStorage.
-// RACING_LINE_JUDGE_REPS flying laps, the best kept: one in the game (it is
-// a fallback), three when genlines.js builds the shipped table, because the
-// sim is noisy to about a per cent and the candidates can be closer than that.
-let RACING_LINE_JUDGE_REPS = 1;
+// How many flying laps the judge drives per candidate, best kept. ZERO in the
+// game: judging means running the race simulation from inside getRacingLine(),
+// which the interface calls, and a circuit that is not in lines.js is an
+// edited circuit - it gets the proxy's answer straight away instead of a
+// multi-second freeze. genlines.js sets 3, because there the whole job is to
+// choose well and the sim is noisy to about a per cent.
+let RACING_LINE_JUDGE_REPS = 0;
 function judgeRacingLine(qTrack) {
     const real = AI.chooseTyre;
     AI.chooseTyre = () => 'medium';
@@ -5331,6 +5334,12 @@ function updateHUD() {
     // already crossed the line.
     const shouldEndRace = timeIsUp || allFinished;
 
+    // A session with nobody in `cars` - a spectator qualifying, where the AI
+    // laps are simulated rather than driven - satisfies "everyone finished"
+    // vacuously, and the block below then names sortedCars[0]. There is no
+    // sortedCars[0]: it threw, which on file:// reads as "Script error, line
+    // 0" and freezes the game with no way of telling what happened.
+    if (shouldEndRace && !raceFinished && !sortedCars.length) raceFinished = true;
     if (shouldEndRace && !raceFinished) {
         raceFinished = true;
         gameState = 'gameover';
