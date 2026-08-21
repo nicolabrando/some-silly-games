@@ -2890,6 +2890,123 @@ class AnchorTrack extends SegmentedTrack {
 }
 
 // ===========================================================================
+//  SPA
+// ===========================================================================
+//
+//  A TRACING OF SPA-FRANCORCHAMPS. All fifteen named corners, in order and
+//  each turning the way it turns in Belgium: La Source, Eau Rouge, Raidillon,
+//  the Kemmel straight, Les Combes, Malmedy, the drop to the Bruxelles
+//  hairpin, Speaker's Corner, the Double Gauche (Pouhon), Les Fagnes, Campus,
+//  Stavelot, the Courbe Paul Frere, Blanchimont and the Bus Stop. 3136px of
+//  centre line: the second longest circuit in the game after Kart, which is
+//  the right place for it.
+//
+//  TURNED THROUGH 191 DEGREES against the way the circuit is usually drawn.
+//  checkLapCross() counts a lap by crossing startX in +x, so the start/finish
+//  straight has to be driven left to right; on the map it runs down and to the
+//  left. A rotation is the one transformation that leaves the circuit itself
+//  alone - same order, same radii, same lengths, and the same HAND for every
+//  corner, so La Source is still a right-hand hairpin. A left-right mirror
+//  would also have satisfied the lap counter and would have turned Spa
+//  anticlockwise, which is a different circuit.
+//
+//  WHY THE SLOW CORNERS ARE BIGGER THAN SCALE. The road here is 100px wide on
+//  an arena 1150 across. Spa is 7km long, so a 1:1 tracing puts Les Combes,
+//  the Bus Stop and the Rivage hairpin inside a space narrower than the car's
+//  own road - and a corner narrower than its road is not a corner. The rule
+//  that decides it, and it is worth writing down because it applies to every
+//  circuit:
+//
+//     the grass INSIDE a corner is a disc of radius R - trackWidth. If the
+//     corner turns more than about 80 degrees that disc is the only thing
+//     between its two legs. A wall exists there only where the distance to
+//     the centre line exceeds wallRadius, so the corner needs R > 68 to have
+//     any barrier at all and R >= 86 for the barrier to be 36px wide. Below
+//     that the apex is simply tarmac and the corner can be driven straight
+//     through.
+//
+//  So every complex that reverses the direction of travel - La Source,
+//  Bruxelles, Pouhon, Campus/Stavelot - is drawn as a proper U with R ~ 90
+//  and its legs 190px apart. Four of those in one arena is most of the space,
+//  and it is why the Kemmel straight is 318px rather than the quarter of a
+//  lap it is in Belgium. Measured after: smallest grass strip between two
+//  passes 60px (Anchor, the closest thing to a precedent, is 64), smallest
+//  distance between two roads that are not joined 146px.
+//
+//  THE ONE CORNER THAT IS NOT HERE is the Bus Stop hook. The real chicane
+//  jinks the road sideways by about 22px at this scale and would need 136 to
+//  hold a barrier; the gap between Blanchimont and the pit straight is 200px
+//  and the Eau Rouge climb sits directly above it, so there is nowhere for
+//  the hook to go. What is here is a right feint and a long left onto the
+//  start/finish straight: the rhythm before the line survives, the stop-and-go
+//  does not.
+//
+//  NOT DRAWN, SOLVED. The layout is a list of corners - how far each turns,
+//  how long the straight after it runs - and a least-squares fit that closes
+//  the polygon (360 degrees, zero displacement) while holding three hard
+//  constraints: 146px between roads that are not joined, the arena, and the
+//  minimum radius above. See spa2.py in the harness folder.
+//
+//  NOT MIRRORED, unlike the five circuits flipped for the left/right balance
+//  of the calendar (see mirrorVertically). Spa turns right on balance because
+//  Spa turns right; that is not a number to be traded away.
+// ===========================================================================
+class SpaTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 50;
+        this.grassWidth = 70;
+
+        this.segments = [
+            { type: 'arc', cx: -45.26, cy: 118.10, r: 90.62, start: 4.306383, end: 5.850405, ccw: false },
+            { type: 'line', x1: 37.00, y1: 80.09, x2: 44.51, y2: 96.35 },
+            { type: 'arc', cx: -37.75, cy: 134.36, r: 90.62, start: 5.850405, end: 1.058159, ccw: false },
+            { type: 'line', x1: 6.70, y1: 213.33, x2: -76.59, y2: 260.21 },
+            { type: 'arc', cx: -35.53, cy: 333.17, r: 83.72, start: 4.199752, end: 3.694468, ccw: true },
+            { type: 'line', x1: -106.78, y1: 289.20, x2: -156.22, y2: 369.32 },
+            { type: 'arc', cx: -231.66, cy: 322.77, r: 88.65, start: 0.552875, end: 0.953800, ccw: false },
+            { type: 'line', x1: -180.37, y1: 395.08, x2: -439.84, y2: 579.14 },
+            { type: 'arc', cx: -491.13, cy: 506.84, r: 88.65, start: 0.953800, end: 1.818593, ccw: false },
+            { type: 'line', x1: -512.88, y1: 592.78, x2: -553.31, y2: 582.55 },
+            { type: 'arc', cx: -573.85, cy: 663.71, r: 83.72, start: 4.960186, end: 4.536015, ccw: true },
+            { type: 'line', x1: -588.54, y1: 581.29, x2: -622.33, y2: 587.31 },
+            { type: 'arc', cx: -637.38, cy: 502.85, r: 85.79, start: 1.394422, end: 2.944847, ccw: false },
+            { type: 'line', x1: -721.52, y1: 519.62, x2: -723.44, y2: 509.96 },
+            { type: 'arc', cx: -639.30, cy: 493.19, r: 85.79, start: 2.944847, end: 4.804979, ccw: false },
+            { type: 'line', x1: -631.37, y1: 407.77, x2: -539.01, y2: 416.34 },
+            { type: 'arc', cx: -530.99, cy: 330.03, r: 86.68, start: 1.663387, end: 1.176847, ccw: true },
+            { type: 'line', x1: -497.72, y1: 410.08, x2: -478.87, y2: 402.24 },
+            { type: 'arc', cx: -513.65, cy: 318.56, r: 90.62, start: 1.176847, end: 5.889220, ccw: true },
+            { type: 'line', x1: -429.97, y1: 283.77, x2: -434.15, y2: 273.71 },
+            { type: 'arc', cx: -517.83, cy: 308.49, r: 90.62, start: 5.889220, end: 4.408352, ccw: true },
+            { type: 'line', x1: -544.96, y1: 222.03, x2: -610.59, y2: 242.62 },
+            { type: 'arc', cx: -633.00, cy: 171.19, r: 74.86, start: 1.266760, end: 2.184342, ccw: false },
+            { type: 'line', x1: -676.10, y1: 232.40, x2: -701.19, y2: 214.73 },
+            { type: 'arc', cx: -745.43, cy: 277.55, r: 76.83, start: 5.325935, end: 4.559569, ccw: true },
+            { type: 'line', x1: -757.12, y1: 201.61, x2: -790.52, y2: 206.76 },
+            { type: 'arc', cx: -803.79, cy: 120.58, r: 87.19, start: 1.417977, end: 3.103660, ccw: false },
+            { type: 'line', x1: -890.92, y1: 123.89, x2: -891.29, y2: 114.05 },
+            { type: 'arc', cx: -804.17, cy: 110.74, r: 87.19, start: 3.103660, end: 4.547876, ccw: false },
+            { type: 'line', x1: -818.45, y1: 24.73, x2: -699.36, y2: 4.96 },
+            { type: 'arc', cx: -675.16, cy: 150.72, r: 147.75, start: 4.547876, end: 4.952334, ccw: false },
+            { type: 'line', x1: -640.05, y1: 7.20, x2: -512.82, y2: 38.33 },
+            { type: 'arc', cx: -485.91, cy: -71.70, r: 113.27, start: 1.810741, end: 1.464434, ccw: true },
+            { type: 'line', x1: -473.88, y1: 40.93, x2: -416.04, y2: 34.75 },
+            { type: 'arc', cx: -408.09, cy: 109.19, r: 74.86, start: 4.606027, end: 5.503812, ccw: false },
+            { type: 'line', x1: -354.84, y1: 56.58, x2: -333.16, y2: 78.52 },
+            { type: 'arc', cx: -266.59, cy: 12.75, r: 93.58, start: 2.362219, end: 1.164791, ccw: true },
+            { type: 'line', x1: -229.64, y1: 98.72, x2: -81.05, y2: 34.84 }
+        ];
+
+        // Sul rettifilo del traguardo, 50px prima della staccata della Source.
+        this.startX = -126.96;
+        this.startY = 54.58;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+// ===========================================================================
 //  COMB
 // ===========================================================================
 //
