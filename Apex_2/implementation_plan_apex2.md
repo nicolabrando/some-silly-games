@@ -623,6 +623,31 @@ La riga «com'era» è misurata **due volte** apposta: la banda di rumore su dod
 
 L'asciutto e la strada bagnata non si muovono di un centesimo: stesse cifre di prima, gomma per gomma (Drift all'asciutto 50-53° di deriva, tagliata dello 0%; sul bagnato tagliata del 43-51%), e l'ordine delle gomme da pioggia regge (full wet davanti su tutti e otto i circuiti sul soaked, intermedia sul damp).
 
+### 2.4duodetricies-quinquies Arrow, dal disegno a matita (Apex 3)
+
+Un foglio con sopra un tracciato disegnato a mano: una punta lunga e sottile in alto a sinistra, il bordo d'attacco che scende verso destra fino a una cuspide, un ritorno in diagonale lungo tutto il fondo, un lobo tondo in basso a sinistra e un uncino che risale in mezzo a chiudere la punta. Si chiama **Arrow** ed è il diciannovesimo circuito: **2800 px** di mezzeria (terzo per lunghezza dopo Kart e Comb), 40% del giro in curva, raggi da 77 a 99, carreggiata 52/72.
+
+**Scritto come lista di curve, non come insieme di vertici.** Di quanto gira ciascuna, quanto dura la retta dopo, che raggio vuole; poi un minimizzatore ai minimi quadrati chiude il poligono — 360 gradi di giro totale, spostamento zero — tenendo tre vincoli duri: 150 px fra due strade non unite, l'arena, e il raggio minimo. Piazzare i vertici a mano e sperare nei raccordi schiaccia i raggi esattamente dove servono grandi: le prime due stesure sono morte così. Lo strumento è `arrow.py`.
+
+**L'unica libertà presa col disegno, e non era evitabile.** Sul foglio la punta è un *punto*: le due strade si toccano. La carreggiata qui è larga 104 px, e due strade che si toccano lasciano una lingua d'asfalto continua lunga 200 px senza niente in mezzo — non è una curva, è una scorciatoia che ne salta una. Provato e misurato: con raggio 58 alla punta, la striscia di prato fra i due passaggi valeva **12 px** e il giro si accorciava del 12% passando dritti. La regola è la stessa che aveva ucciso il Bus Stop di Spa:
+
+> il prato **dentro** una curva è un disco di raggio `R − trackWidth`, e oltre gli ~80 gradi di rotazione è l'unica cosa fra le due gambe della curva. Una punta da 142 gradi vuole `R ≥ wall/cos(19.5°) = 74` perché ci sia una barriera, e 93 perché sia larga 36 px.
+
+Quindi la punta è una forcella. Quello che del cuneo si poteva salvare sono le due rette che ci arrivano, e ci sono: **165 px di strada che converge** prima della girata, ed è quello che la fa leggere come una punta invece che come un cappio.
+
+**Non specchiato, ed è proprio così che torna la simmetria.** Cinque circuiti sono stati ribaltati (vedi `mirrorVertically`) perché il calendario pendeva da una parte e Nicola guida con le frecce. Rimisurato adesso — gradi di arco spazzati in un giro, sommati su tutto il calendario:
+
+| | a destra | a sinistra |
+|---|---|---|
+| senza questo circuito | 4600 | 4960 |
+| **con questo, come disegnato** | **5140** | **5140** |
+
+Il disegno gira a destra — 540 gradi di arco destro contro 180 di sinistro — ed è esattamente i 360 che al calendario mancavano. Specchiarlo avrebbe portato lo sbilancio a 720 dall'altra parte. Quindi: orario, come sul foglio.
+
+**Misurato.** Striscia di prato più stretta fra due passaggi 64 px; distanza minima fra due strade non unite oltre 150; ingombro 1044 × 749 su 1150 × 765. Cinque gare dell'IA a `impossible`, in tutte e due le build: **dieci arrivati su dieci ogni volta, zero ritiri, zero testacoda**, 0.6-1.2% del giro sull'erba, giro migliore 12.73-12.87 s. La griglia — dieci auto ogni 30 px, 305 px all'indietro — sta sul dritto dell'ala per due terzi e finisce sull'arco della piega, tutta sull'asfalto. Con le soste un set di dure dura 3.75 giri e uno di morbide 2.14: cinque giri sono una sosta o due a seconda della mescola.
+
+**E la tabella delle traiettorie si è toccata di una riga sola.** `genlines.js` non è riproducibile (§2.4duodetricies-ter): rilanciato per intero cambierebbe la linea a circuiti che non c'entrano, e l'impronta del libro dei record non se ne accorgerebbe. C'è ora `addline.js`, che genera la traiettoria di **un** circuito e la accoda; controllato dopo, le 18 voci vecchie sono identiche byte per byte.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.
@@ -1457,3 +1482,4 @@ Gli attrezzi di misura sono nella cartella di lavoro e non nel gioco: `logscan.j
 - **[Apex 3] Un tracciato si risolve, non si disegna.** Piazzare i vertici a mano e lasciare che il raccordo si arrangi produce raggi schiacciati proprio dove servono grandi. Scriverlo come lista di curve (giro, retta, raggio) e chiudere il poligono con un minimizzatore, con arena e distanze come vincoli, ha fatto in un pomeriggio quello che a mano non convergeva. Un termine a soglia come la repulsione fra i lati va acceso **dopo** la chiusura, per gradi: acceso subito tira piu' forte di lei e il poligono si annoda.
 - **[Apex 3] Un generatore non riproducibile non va rilanciato per intero.** `genlines.js` rilanciato sulle stesse geometrie ha cambiato la traiettoria a 7 circuiti su 18, perche' il giudice fa girare qualifiche simulate e quelle hanno del casuale. L'impronta del libro dei record non se ne sarebbe accorta. Quando si aggiunge un circuito si aggiunge **una voce** alla tabella; il resto resta bit a bit com'era.
 - **[Apex 3] Un limite proporzionale all'attrito conta solo meta' di quello che l'attrito fa.** Il tetto d'imbardata tappava la rotazione a `grip/v` perche' e' l'attrito a creare la rotazione - vero - e dimenticava che e' l'attrito anche a **fermarla**. Portato all'estremo il modello diceva che sul ghiaccio un'auto non puo' girarsi, e in pozzanghera la Drift restava dritta mentre la full wet derapava. Quando si scrive un limite fisico, chiedersi se la stessa grandezza compare anche dall'altra parte del bilancio.
+- **[Apex 3] Un disegno a mano va letto come sequenza di curve, non ricalcato punto per punto.** Il vincolo non e' dove sta il vertice ma quanto gira e con che raggio: ricalcando i vertici, i raccordi si schiacciano proprio dove servono grandi. Scritto come lista (giro, retta, raggio) e chiuso da un minimizzatore con arena e distanze come vincoli, Arrow e' venuto alla terza passata. E quando il disegno chiede una cosa che la carreggiata non permette - una punta dove le due strade si toccano - la si converte nella cosa piu' vicina che sta in piedi, e lo si dice.

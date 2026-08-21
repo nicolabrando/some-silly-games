@@ -2891,6 +2891,92 @@ class AnchorTrack extends SegmentedTrack {
 
 
 // ===========================================================================
+//  ARROW
+// ===========================================================================
+//
+//  FROM NICOLA'S PENCIL DRAWING, corner for corner: a long thin point at the
+//  top left, the leading edge sweeping right and down to a hooked tip on the
+//  right, a long diagonal back to a round lobe in the bottom left, and a claw
+//  curling up through the middle to close the point. 2800px of centre line -
+//  third longest in the game - and 40% of it in corners.
+//
+//  DRAWN AS A LIST OF CORNERS, NOT AS A SET OF VERTICES. How far each turns,
+//  how long the straight after it runs, what radius it wants; a least-squares
+//  fit then closes the polygon - 360 degrees of total turn, zero displacement
+//  - while holding three hard constraints: 150px between two roads that are
+//  not joined, the arena, and the minimum radius below. Placing vertices by
+//  hand and hoping the fillets behave crushes the radii exactly where they
+//  need to be large. The tool is falcon.py in the harness folder.
+//
+//  THE ONE LIBERTY TAKEN, and it is forced. On paper the point at the top
+//  left is a POINT: the two roads meet. The road here is 104px wide, and two
+//  roads that meet leave a strip of tarmac 200px long with no barrier in it -
+//  which is not a corner, it is a shortcut that skips one. The rule:
+//
+//     the grass INSIDE a corner is a disc of radius R - trackWidth, and past
+//     about 80 degrees of turn that disc is the only thing between the
+//     corner's two legs. A 142-degree point needs R >= wall/cos(19.5) = 74
+//     for any barrier at all, and 93 for the barrier to be 36px wide.
+//
+//  So the point is a hairpin. What could be saved of the wedge is the pair of
+//  long straights that run into it, and they are here: 165px of converging
+//  road before the turn, which is what makes it read as a point rather than
+//  as a loop.
+//
+//  NOT MIRRORED, and that is the whole point of leaving it as drawn. Five
+//  circuits were flipped top-to-bottom (see mirrorVertically) because the
+//  calendar leaned one way and Nicola drives with the arrow keys. Measured
+//  again now, degrees of arc swept per lap summed over the calendar:
+//
+//      without this circuit   4600 right   4960 left    (360 left-heavy)
+//      with it, as drawn      5140 right   5140 left    (level)
+//
+//  The drawing turns right - 540 degrees of right arc against 180 of left -
+//  and that is exactly the 360 the calendar was short of. Mirroring it would
+//  have taken the imbalance to 720 the other way. So: clockwise, as drawn.
+// ===========================================================================
+class ArrowTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.trackWidth = 52;
+        this.grassWidth = 72;
+
+        this.segments = [
+            { type: 'arc', cx: 249.26, cy: 83.42, r: 83.42, start: 2.216726, end: -1.570796, ccw: false },
+            { type: 'line', x1: 249.26, y1: -0.00, x2: 417.62, y2: -0.00 },
+            { type: 'arc', cx: 417.62, cy: 98.88, r: 98.88, start: -1.570796, end: -1.077073, ccw: false },
+            { type: 'line', x1: 464.48, y1: 11.81, x2: 766.43, y2: 174.31 },
+            { type: 'arc', cx: 719.57, cy: 261.38, r: 98.88, start: -1.077073, end: 0.940322, ccw: false },
+            { type: 'line', x1: 777.86, y1: 341.25, x2: 578.77, y2: 486.56 },
+            { type: 'arc', cx: 520.47, cy: 406.69, r: 98.88, start: 0.940322, end: 1.405692, ccw: false },
+            { type: 'line', x1: 536.72, y1: 504.22, x2: 60.29, y2: 583.61 },
+            { type: 'arc', cx: 44.03, cy: 486.07, r: 98.88, start: 1.405692, end: 2.879926, ccw: false },
+            { type: 'line', x1: -51.48, y1: 511.65, x2: -58.43, y2: 485.72 },
+            { type: 'arc', cx: 37.09, cy: 460.14, r: 98.88, start: 2.879926, end: -1.808598, ccw: false },
+            { type: 'line', x1: 13.80, y1: 364.04, x2: 64.24, y2: 351.81 },
+            { type: 'arc', cx: 86.08, cy: 441.90, r: 92.70, start: -1.808598, end: -1.440533, ccw: false },
+            { type: 'line', x1: 98.12, y1: 349.99, x2: 229.73, y2: 367.23 },
+            { type: 'arc', cx: 241.77, cy: 275.32, r: 92.70, start: 1.701060, end: 1.364392, ccw: true },
+            { type: 'line', x1: 260.77, y1: 366.05, x2: 354.40, y2: 346.45 },
+            { type: 'arc', cx: 338.68, cy: 271.36, r: 76.72, start: 1.364392, end: -0.077968, ccw: true },
+            { type: 'line', x1: 415.16, y1: 265.38, x2: 414.36, y2: 255.11 },
+            { type: 'arc', cx: 337.88, cy: 261.09, r: 76.72, start: -0.077968, end: -1.447295, ccw: true },
+            { type: 'line', x1: 347.33, y1: 184.96, x2: 247.63, y2: 172.58 },
+            { type: 'arc', cx: 258.01, cy: 88.92, r: 84.30, start: 1.694297, end: 2.216726, ccw: false },
+            { type: 'line', x1: 207.27, y1: 156.24, x2: 199.05, y2: 150.04 }
+        ];
+
+        // Sul dritto lungo dell'ala (343px), 90px prima della staccata
+        // dell'Artiglio: la griglia - dieci auto ogni 30px, 305px all'indietro
+        // - sta sul dritto per i due terzi e finisce sull'arco della piega.
+        this.startX = 687.17;
+        this.startY = 131.66;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+// ===========================================================================
 //  COMB
 // ===========================================================================
 //

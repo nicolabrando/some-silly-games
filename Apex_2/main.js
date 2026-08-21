@@ -1397,6 +1397,7 @@ function makeTrackRaw(trackType) {
         case 'crossover':    return new CrossoverTrack();
         case 'kart':       return new KartTrack();
         case 'anchor':       return new AnchorTrack();
+        case 'arrow':        return new ArrowTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2240,7 +2241,7 @@ function measureTrackStats(qTrack, raining) {
 }
 
 const TRACK_LABELS = {
-    anchor: 'Anchor',
+    anchor: 'Anchor', arrow: 'Arrow',
     oval: 'Oval', peanut: 'Peanut', f1: 'F1 Circuit', circomassimo: 'Circus Maximus',
     // 'quadrato' is the internal key and stays put: it is written into saved
     // championships and into every race log already on disk. Only the label
@@ -2259,7 +2260,7 @@ const TRACK_LABELS = {
 // slicing the LABEL does not survive the circuits we have: Circle and Circus
 // Maximus both give CIR, Crown and Crossover both give CRO.
 const TRACK_CODES = {
-    anchor: 'ANC',
+    anchor: 'ANC', arrow: 'ARW',
     oval: 'OVA', peanut: 'PEA', f1: 'F1C', circomassimo: 'CMX',
     circle: 'CIR', serpent: 'SER', quadrato: 'REC', triangle: 'TRI',
     boomerang: 'BOO', zipper: 'ZIP', kettle: 'KET',
@@ -6210,7 +6211,7 @@ refreshChampResume();
 const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent',
                      'quadrato', 'triangle', 'pettine', 'thunder', 'crown',
                      'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'kart',
-                     'anchor'];
+                     'anchor', 'arrow'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:
