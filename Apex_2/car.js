@@ -200,8 +200,19 @@ const TYRES = {
     //  specialist's shape at a specialist's size. The scrub was moved to the
     //  EXTRA oversteer (over a slick's at the same demand) from 0 px/s, so a
     //  slick pays nothing in a hairpin either.
+    //  FALLOFF, 08/26. The compound had falloff 0.0150 - the lowest in the
+    //  game, hard included - on top of life 2.00, so it was both the loosest
+    //  tyre and the most durable one: five laps cost it 0.8% of its grip
+    //  against a medium's 6.1%. A tyre with no tread that never goes off is
+    //  not a specialist, it is a free lunch, and it also meant the new
+    //  scrub-wear law below could never be FELT on the one compound built to
+    //  slide. 0.0600 sits between a hard (0.0240) and a medium (0.0696):
+    //  measured over five laps, driven tidily it now loses 3.5% - still less
+    //  than a medium - and driven sideways it loses more. The life stays at
+    //  2.00 on purpose: the distance a set covers is a property of the
+    //  casing, how fast it goes off is a property of how it is used.
     drift:  { key: 'drift',  label: 'Drift',  short: 'D', colour: '#ab47bc',
-              grip: 0.780, falloff: 0.0150, life: 2.00, bite: 1.000, slide: 1.55,
+              grip: 0.780, falloff: 0.0600, life: 2.00, bite: 1.000, slide: 1.55,
               hook: 0.30, hookBand: 320, loose: 1.0 },
     // ---- RAIN -----------------------------------------------------------
     //  Two treaded compounds. What separates them is not simply "more wet
@@ -326,6 +337,19 @@ let SCRUB_FROM = 0;
 let SCRUB_RATE = 1.0;
 // Fraction of the 160 px/s yaw gain still available at 400 px/s and above.
 let YAW_HIGH_FLOOR = 0.40;
+// How far above the steady-state cornering rotation (a/v, with a the grip the
+// road is actually giving) the free yaw may take the car. See the long note in
+// update(): 1 would forbid a drift outright, since a drift IS a rotation above
+// the steady value; 2 is inert on dry tarmac for every compound in the game and
+// binds on a loose one in the rain, which is the only place the model was
+// letting the nose turn faster than any road could turn it.
+let YAW_CAP = 2.0;
+// Sideways motion, as a fraction of the car's speed, that costs no extra wear:
+// every driver corners with some slip and the tyre table was fitted with that
+// in it. 0.20 is 11.5 degrees. Above it the extra wear grows with the SQUARE
+// of the excess, scaled by SLIDE_WEAR - see the wear block in update().
+let SLIDE_FREE = 0.20;
+let SLIDE_WEAR = 30;
 // `wet` is passed because a band measured in px/s means something completely
 // different once it is raining. Grip falls to 0.13 of dry, so EVERY corner on
 // the circuit drops inside the band and a slow-corner bonus turns into a
@@ -618,6 +642,27 @@ class Car {
             const moved = Math.hypot(this.velocity.x, this.velocity.y) * dt;
             const lapFrac = moved / this._lapPixels;                 // laps covered this frame
             const abuse = 1 + 0.55 * (this.gripUse || 0);
+            // ---- AND A TYRE DRAGGED SIDEWAYS IS BEING ERASED ---------------
+            // `abuse` above is the fraction of the grip being used, and it
+            // saturates: once the car is at the limit, sliding it further
+            // costs nothing. So a lap spent sideways wore a set exactly as
+            // much as a clean one - which is how the drift compound ended up
+            // being both the loosest tyre in the game and the most durable.
+            //
+            // What actually eats a tread is the rubber being scrubbed off:
+            // the sideways part of the motion, |sin(slip angle)|, which is the
+            // same quantity the lap telemetry already calls "sideways % of the
+            // distance". Below SLIDE_FREE the tread is deforming rather than
+            // abrading - ordinary cornering is 11-15% sideways for everybody,
+            // and charging that would quietly rewrite the whole soft/medium/
+            // hard balance - so only the EXCESS counts, and it counts squared,
+            // because wear climbs far faster than the angle does.
+            const latV = -this.velocity.x * Math.sin(this.angle) +
+                          this.velocity.y * Math.cos(this.angle);
+            const sinSlip = speedForKerb > 30
+                ? Math.min(1, Math.abs(latV) / speedForKerb) : 0;
+            const over = Math.max(0, sinSlip - SLIDE_FREE);
+            const scrub = 1 + SLIDE_WEAR * over * over;
             // The chassis is part of how hard the car is on its rubber: a
             // high-downforce car loads the tyre far more than one running
             // little wing.
@@ -627,7 +672,7 @@ class Car {
             // the set is gone a third of the way in, and there are no stops.
             const dry = !(typeof isRaining !== 'undefined' && isRaining);
             const surfaceWear = dry ? (tyre.dryWear || 1) : 1;
-            this.tyreWear += lapFrac * abuse * chassisWear * surfaceWear /
+            this.tyreWear += lapFrac * abuse * scrub * chassisWear * surfaceWear /
                              Math.max(0.05, tyre.life * laps);
         }
         const w = Math.max(0, Math.min(1.25, this.tyreWear));
@@ -773,6 +818,7 @@ class Car {
         const speed = Math.sqrt(this.velocity.x ** 2 + this.velocity.y ** 2);
         
         const steerInput = (this.inputs.right ? 1 : 0) - (this.inputs.left ? 1 : 0);
+        let steerRateNow = 0;      // rad/s the front tyres are turning us at
 
         // Only steer if moving
         if (speed > 10) {
@@ -803,6 +849,8 @@ class Car {
             const steerEffectiveness = speedTerm * understeer *
                                        (this.tyreSteer || this.tyrePerf || 1) * hook * aqua;
             const steerAmount = this.maxSteer * dt * steerEffectiveness;
+            // ...and the same thing as a RATE, kept for the yaw ceiling below.
+            steerRateNow = this.maxSteer * steerEffectiveness;
 
             // Allow reversing steer direction if going backwards
             const dir = (this.velocity.x * Math.cos(this.angle) + this.velocity.y * Math.sin(this.angle) >= 0) ? 1 : -1;
@@ -856,6 +904,7 @@ class Car {
             this._osSlick = Math.max(0, Math.min(1, ((demand - 1.45) / 2.2) * slipperiness));
         } else {
             this._osSlick = 0;
+            this._yawAsked = 0; this._yawFree = 0;
         }
         this.powerOversteer = powerOversteer;
 
@@ -877,7 +926,52 @@ class Car {
             // slick can take it (see SCRUB_RATE: the pair were set together).
             const highSpeed = Math.max(0, Math.min(1, (speed - 160) / 240));
             const yawGain = (1.15 + 1.75 * lowSpeed) * (1 - (1 - YAW_HIGH_FLOOR) * highSpeed);
-            this.angle += steerInput * powerOversteer * yawGain * dt;
+            let tail = powerOversteer * yawGain;
+
+            // ---- THE ROTATION HAS TO COME FROM THE ROAD TOO ----------------
+            // The line above adds rotation to the nose directly: it asks the
+            // tyres for nothing, so it is the same on dry tarmac, on a soaked
+            // circuit and on the grass. The lateral FORCE is already clamped
+            // at `currentGrip` a few lines down, so the corner pays for the
+            // friction it uses and the pivot does not - and that is the whole
+            // of what was wrong with the drift compound in the rain.
+            //
+            // A car cornering at the limit has a = v^2/R at most `currentGrip`
+            // (which in this model is an acceleration), and turns at w = v/R.
+            // So the rotation the road can pay for is w = a/v = currentGrip/v -
+            // the SAME number that already clamps the lateral force, applied to
+            // the nose instead of to the trajectory. Turning in, and a drift
+            // above all, are transients that legitimately exceed the steady
+            // value, so the ceiling is YAW_CAP x that, and only the free part
+            // is cut: the steering itself is never touched.
+            //
+            // Measured with throttle and lock in (yawsource.js), rotation asked
+            // as a multiple of that ceiling:
+            //
+            //                       dry        soaked
+            //   slicks             0.2x        1.3-2.1x
+            //   intermediate       0.2x        0.6-1.0x
+            //   DRIFT              0.4x        2.7-2.8x
+            //
+            // At YAW_CAP = 2 nothing in the dry comes close - the compound
+            // Nicola drives is untouched, bit for bit - a slick in a wet
+            // hairpin gives up about a tenth, the rain tyres nothing at all,
+            // and the drift in the rain loses 40-44% of its free rotation.
+            // It still steps out at any throttle (slipperiness is at its cap
+            // once it rains) and is still just as hard to gather up (the force
+            // that straightens the car is clamped by the same small grip):
+            // what it loses is the ability to POINT the car faster than the
+            // road could ever have turned it.
+            const yawCeiling = YAW_CAP * currentGrip / Math.max(40, speed);
+            const room = Math.max(0, yawCeiling - steerRateNow);
+            const asked = tail;
+            if (tail > room) tail = room;
+            // read by the probes (yawsource.js): what was asked, what the road
+            // allowed, and what the nose actually got.
+            this._yawAsked = asked; this._yawCeil = yawCeiling;
+            this._yawSteer = steerRateNow; this._yawFree = tail;
+
+            this.angle += steerInput * tail * dt;
 
             // AND A SLIDE AT SPEED COSTS SPEED. The rotation above used to be
             // free: it bypasses the steering-rate limit, and nothing in the

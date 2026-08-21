@@ -492,6 +492,94 @@ Nello stesso giro è stato chiuso un errore vero della stessa famiglia: a fine s
 - `getRacingLine()` **non può più rientrare in se stessa**: tutte le letture interne passano da `_lineOrFallback()`, che se la linea non c'è ancora ne mette una rilassata invece di richiamare la ricerca da dentro la ricerca;
 - il **ponte** di Crossover viene ricalcolato dopo la scelta: `getBridge()` legge la traiettoria, e durante la ricerca gli sarebbe stata data una candidata.
 
+### 2.4septies-et-vicies Quanta macchina è rimasta (Apex 3)
+
+«Nella schermata di pausa, dove indica la condizione della macchina, aggiungi anche un indicatore che dica la performance attuale della macchina come percentuale dell'originale.»
+
+C'è, sotto la barra della condizione: **Performance, "X% of new"**. Non è la stessa cosa della vita residua, ed è il punto: `car.js` tiene la macchina al 100% finché non ha perso il **40%** della vita, e da lì scende linearmente fino al **70%** nel momento in cui si distrugge. Quindi «Condition 62%, Performance 100%» è un'informazione vera — non hai ancora perso niente — e «Condition 8%, Performance 74%» dice con che cosa stai finendo la gara.
+
+Il numero è `condition`, cioè esattamente il fattore per cui la fisica moltiplica **potenza del motore e aderenza** (e la velocità massima, che è potenza diviso resistenza): un solo numero che risponde davvero alla domanda «quanto è stata danneggiata». Colori suoi, perché la scala è diversa da quella dell'usura: verde solo a 100%, ambra fino al 90%, rosso sotto. Vale in gara e in qualifica, e per tutte e due le vetture in due giocatori.
+
+Una nota sul pannello, perché è costata un giro: le colonne erano `flex: 1 1 0; min-width: 0`, cioè si spartivano la larghezza del pannello in parti uguali qualunque cosa ci fosse dentro, e una riga è `white-space: nowrap`. Tutto ciò che era più lungo della propria fetta **usciva dal bordo destro** invece di allargare il riquadro — non solo la riga nuova: anche «Car ahead», «Car behind» e «From the grid» sbordavano di 3-10px da sempre. Ora le colonne si dimensionano sul proprio contenuto e **vanno a capo** se non ci stanno tutte (in due giocatori sono quattro), e il valore è la sola percentuale. Misurato riga per riga con `pzfit.js`/`pzfit2.js`, in gara e in qualifica: nessuna sborda.
+
+### 2.4duodetricies La rotazione deve venire dalla strada (Apex 3)
+
+«Forse le Drift sono troppo forti sotto la pioggia» — e poi, sulla proposta di legare la rotazione all'aderenza: «non mi sembra molto legato alla fisica: se mai la Drift dovrebbe scivolare di più sul bagnato ed essere più difficile da controllare».
+
+Aveva ragione su tutto tranne che su una cosa, ed è quella che ha risolto il problema.
+
+**La prua ruota in due modi, e uno dei due non paga niente.** Lo sterzo passa dalle gomme anteriori (`maxSteer · speedTerm · understeer · tyreSteer · hook · aqua`); la coda invece viene sommata *direttamente* all'angolo: `angle += steerInput · powerOversteer · yawGain · dt`. Quel termine non chiede niente all'aderenza, quindi vale uguale sull'asciutto, sotto l'acqua e sull'erba. La **forza** laterale invece è già tappata da `currentGrip`: la traiettoria paga l'attrito che usa, il perno no.
+
+**Il tetto, e perché non è un malus inventato.** Un'auto al limite ha `a = v²/R ≤ currentGrip` e ruota a `ω = v/R`, quindi la rotazione che la strada può pagare è `ω = a/v = currentGrip / v` — **lo stesso numero che tappa già la forza laterale**, applicato al muso invece che alla traiettoria. Entrare in curva, e a maggior ragione derapare, sono transitori che quel valore lo superano per definizione: il tetto è quindi `YAW_CAP · a/v`, e viene tagliata **solo la parte gratis**, mai lo sterzo.
+
+Misurato con gas e volante dentro (`yawsource.js`), rotazione chiesta in multipli del tetto:
+
+| | asciutto | soaked |
+|---|---|---|
+| slick | 0.2× | 1.3-2.1× |
+| intermedia / full wet | 0.2-0.3× | 0.5-1.0× |
+| **Drift** | **0.4×** | **2.7-2.9×** |
+
+Con `YAW_CAP = 2` all'asciutto **non morde per nessuna gomma**: il test a sterzo e gas piantati per 1.2 s dà numeri identici al bit a quelli di prima (Drift a 120 px/s: 55° di deriva e 89 px/s finali, come sempre). In pioggia la Drift perde il **43-51%** della rotazione gratis, una slick in un tornante bagnato il 4%, intermedia e full wet **zero** — e infatti l'ordine delle gomme da pioggia (inter sul damp, full wet sul soaked) è rimasto quello. La scala di difficoltà all'asciutto non si muove di un centesimo.
+
+**Dove aveva ragione lui, e dove le due cose non coincidono.** Sul bagnato la coda deve uscire *prima* e essere *più difficile da riprendere*: il modello fa già entrambe (`slipperiness` è al suo massimo appena piove — sulla Drift il sovrasterzo è pinnato a 1.00 — e la forza che raddrizza l'auto è tappata dalla stessa aderenza minuscola). Quello che non faceva è la terza cosa: anche il *momento* che ruota l'auto viene dalle gomme, quindi su fondo scivoloso l'angolo diventa grande ma la rotazione diventa **lenta**. È il ghiaccio: tutto il tempo del mondo e nessuna autorità. La Drift in pioggia continua infatti a girare su se stessa — in 3 s a gas e sterzo piantati fa 248-269° contro i 125-168° di una slick — ma ci mette di più.
+
+**Cosa resta da tarare, onestamente.** `YAW_CAP` è la manopola e il suo valore viene dalla misura di inerzia sull'asciutto, non da un test in pista in mano a Nicola: il pilota scriptato che deraperebbe per un giro intero (`slider.js`) non regge ancora la Drift senza uscire di strada, e il test su una curva sola (`wetcorner.js`, 90° più 220px di uscita) dice che a raggio costante il tetto non gli costa tempo — perché lì la rotazione selvaggia non era comunque l'ottimo. Quindi: la correzione è giusta come fisica e verificata dove si può verificare, ma **quanto costi a lui su un giro bagnato lo dirà il suo prossimo log**. Se il divario fra la sua Drift in pioggia e la sua gomma da pioggia non si apre (l'obiettivo è 8-15%), `YAW_CAP` scende.
+
+Il libro dei record si ricostruisce una volta: `YAW_CAP` fa parte dell'impronta della fisica.
+
+### 2.4duodetricies-bis La gomma si consuma di traverso, non di velocità (Apex 3)
+
+«Una cosa che personalmente mi costa molto perché la Drift mi piace, ma la vita della gomma non è troppo lunga?» — e subito dopo la scelta del meccanismo: «vorrei legare il consumo all'angolo di deriva».
+
+La diagnosi era giusta e il modello non poteva darle ragione.
+
+**Perché il consumo non sapeva distinguere un giro pulito da un giro di traverso.** L'usura cresceva con la strada percorsa e con `abuse = 1 + 0.55 · gripUse`, e `gripUse` è velocità laterale **contro il limite**: satura. Appena l'auto è al limite — cioè in ogni curva, per chiunque — spingerla oltre non costa più niente. Il risultato misurato: cinque giri all'asciutto consumavano lo stesso identico set che si guidasse di aderenza o si tenesse la coda fuori a ogni curva. Ed è così che la Drift era finita per essere insieme **la gomma più sciolta del gioco e la più durevole**: `falloff 0.0150` — il valore più basso in tabella, dura compresa — sopra `life 2.00`. Cinque giri le costavano lo **0.8%** dell'aderenza, contro il 6.1% di una media.
+
+**La legge.** Quello che consuma davvero un battistrada è la gomma che viene strappata via: la parte **laterale** del moto, `|sin(angolo di deriva)|` — la stessa identica quantità che il log di fine giro chiama già *sideways %*. Sotto una soglia il battistrada si deforma e basta; sopra, abrade. Quindi
+
+```
+scrub = 1 + SLIDE_WEAR · max(0, |sinβ| − SLIDE_FREE)²        SLIDE_FREE = 0.20, SLIDE_WEAR = 30
+```
+
+e `scrub` moltiplica l'usura, fotogramma per fotogramma, pesata sulla strada percorsa.
+
+**Da dove vengono i due numeri.** `SLIDE_FREE = 0.20` (11.5°) è una **banda franca**, e non è generosità: la tabella delle mescole — settimane di taratura su morbida, media, dura e sulle due da pioggia — è stata fittata con dentro il traverso che tutti fanno in curva. Misurato: guidando di aderenza il giro è al 12-16% di traverso su ogni circuito e ogni mescola, e l'angolo tenuto **dentro la curva** è il 18%. Mettere la soglia sotto quel valore avrebbe riscritto in silenzio l'intero bilanciamento delle slick per correggere una gomma sola. Il quadrato invece dice che l'usura cresce molto più in fretta dell'angolo, che è come si comporta un battistrada vero; `SLIDE_WEAR = 30` è la pendenza che rende la cosa **visibile alla telemetria di Nicola** senza toccare nessun altro:
+
+| angolo di deriva | 11.5° | 15° | 20° | 25° | 30° | 40° |
+|---|---|---|---|---|---|---|
+| costo dell'usura | 1.00× | 1.10× | 1.61× | 2.49× | 3.70× | 6.88× |
+
+**La prova che non tocca nessun altro.** Cinque giri con l'IA che guida, tre circuiti, prima e dopo: morbida 1.344 di usura e −30% di prestazione, media 0.925 e −6.1%, dura 0.459 e −0.7%, intermedia −19.3%, full wet −7.7%. **Identici alla cifra** a quelli di prima, perché l'IA guida di aderenza e non arriva mai alla banda. E non ci arriva nemmeno se la si provoca: con `AI.driftSend` fino a 4.0 e `provoke = 1.0` resta al 12.6% di traverso e consuma lo stesso. La scala di difficoltà, la scelta della mescola dell'IA e le sedici gare di regressione non si muovono.
+
+**La prova che morde chi deraperebbe.** Non essendoci un pilota scriptato che regga un giro intero di traverso (§2.4duodetricies), la misura si fa dove si può fare bene: derapata **stazionaria**, sterzo dentro e gas, si aspetta che deriva e `gripUse` si assestino e si legge l'usura per metro percorso (`wearangle.js`).
+
+| mescola | tenuta al ... | ... consuma |
+|---|---|---|
+| Drift | 40% di traverso → 61% | **2.90×** |
+| media | 23.6% → 38.2% | 1.79× |
+| morbida | 25.8% → 42.3% | 2.16× |
+
+Non è una penalità cucita addosso alla Drift: è una legge sul moto, e paga chiunque scivoli, sulla mescola che sia. Solo che la Drift è l'unica che ci arriva senza girarsi.
+
+**Il giro intero, con i suoi numeri.** Un giro non è tutto uguale: una frazione sta in curva (raggio < 420 px sulla traiettoria vera — Quadrato 61%, Crown 77%, Circle 100%) e il resto è dritto, dove di traverso non si va. Se il log dice che il giro è mediamente S% di traverso, l'angolo tenuto in curva è `(S − 5% del dritto) / frazione in curva`, ed è quello che paga. Sui numeri dei log di Nicola:
+
+| il log dice | in curva | costo sul giro (Quadrato) |
+|---|---|---|
+| 13% (giro pulito) | 18°, 10° | 1.00× |
+| 21% (suo giro tipico sulla Drift) | 31%, 18° | **1.23×** |
+| 40% (le sue Circle) | 62%, 38° | **4.25×** |
+
+**Il falloff, e perché senza non serviva a niente.** Con `falloff 0.0150` anche raddoppiare il consumo della Drift valeva **mezzo punto** di prestazione: il meccanismo esisteva e non si sentiva, proprio sulla mescola per cui era stato scritto. La domanda di partenza («la vita non è troppo lunga?») e il meccanismo scelto sono la stessa domanda, e la risposta è una: `falloff 0.0150 → 0.0600`, fra una dura (0.0240) e una media (0.0696). **`life` resta 2.00**, di proposito: quanta strada copre un set è una proprietà della carcassa, quanto in fretta se ne va è una proprietà di come lo si usa — che è esattamente la cosa che si voleva legare all'angolo.
+
+Cinque giri, dopo: guidata pulita la Drift perde il **3.5%** — ancora **meno** di una media (6.1%), quindi resta la gomma da stint lungo per chi la porta a spasso; sul suo giro tipico il **4.7%**; e portata come a Circle **l'11%**, cioè peggio di una media. Sotto l'acqua: 4.6% pulita, contro 7.7% della full wet e 19.3% dell'intermedia. La scelta della Drift diventa quello che dovrebbe essere — una gomma che si guida in un modo preciso, e che quel modo lo fa pagare.
+
+**Nella build con i pit stop** il set non è scalato alla gara ma è una quantità fissa di **strada** (`PIT_LIVES`, Drift 8800 px). Lì la legge si legge ancora meglio: guidare di traverso non allunga il tempo, **accorcia il pezzo di pista** che quel set copre, e la sosta arriva prima. Nessuna riga di strategia è cambiata: il pianificatore dell'IA cammina la stessa curva di consumo, e sei GP simulati girano come prima.
+
+**Cosa resta da tarare, sempre onestamente.** La colonna «costo sul giro» qui sopra è una **composizione**, non una misura: i due estremi sono misurati in gioco (l'IA pulita, e la derapata stazionaria), ma il pezzo in mezzo — come si distribuisce l'angolo dentro una curva vera guidata da lui — è ricostruito dal *sideways %* del log e dalla geometria della traiettoria. La stima è per difetto: la media di un quadrato è sempre maggiore del quadrato della media, quindi un angolo che oscilla costa più di uno tenuto fermo allo stesso valore medio. **Il numero vero arriverà dal suo prossimo log**: se una gara sulla Drift finisce con l'usura quasi identica a una sulla media, `SLIDE_WEAR` sale.
+
+Il libro dei record si ricostruisce una volta: la tabella delle mescole fa parte dell'impronta della fisica.
+
 ### 2.4septies Un urto non chiude la sessione
 
 Dal log di una qualifica a Crossover: vettura distrutta 1.6s dopo l'inizio del secondo giro lanciato, sessione finita. Un solo contatto.
@@ -1315,3 +1403,10 @@ Gli attrezzi di misura sono nella cartella di lavoro e non nel gioco: `logscan.j
 - **[Apex 3] Uno stato di sessione che sopravvive alla sessione è un difetto in attesa.** `pitPanelSeat` veniva azzerato in `startGame` e in nessun altro posto — non nel Quit, non in `startQualifying`. La regola: chi apre qualcosa che ferma il gioco lo chiude anche sulle vie d'uscita, e chi entra in una sessione nuova non eredita niente.
 - **[Apex 3] Su `file://` `window.onerror` non dice niente, e va sostituito con un `try/catch` nostro.** Ogni file è un'origine diversa, quindi ogni errore arriva come `"Script error."` riga 0: mezz'ora di caccia a un difetto che il browser conosceva benissimo. Avvolgere i fotogrammi e i gestori di eventi costa venti righe e restituisce messaggio e stack veri.
 - **[Apex 3] Una funzione pesante e rientrante non va appesa a un getter che chiama l'interfaccia.** Il giudice della traiettoria faceva girare la simulazione di gara da dentro `getRacingLine()`, che è chiamata da schermate e avvii di sessione. In gioco è spento; lo accende solo il generatore.
+- **[Apex 3] Una rotazione che non passa da una forza non paga l'attrito, e prima o poi qualcuno se ne accorge.** `angle += ...` è comodo e resta fuori dal bilancio: sull'asfalto asciutto non si vede (la strada quella rotazione la potrebbe pagare, 0.4× del tetto), in pioggia diventa l'unico modo di girare e la gomma sbagliata batte quella giusta. Ogni scorciatoia cinematica va confrontata, almeno una volta, con quello che le forze permetterebbero.
+- **[Apex 3] "Non è fisico" e "non è quello che mi aspetto" sono due obiezioni diverse.** Nicola aveva ragione sul fatto che in pioggia la coda esce prima ed è più difficile da tenere — due cose che il modello già faceva — e mancava la terza: la *velocità* con cui l'auto ruota scala anch'essa con l'attrito. Separare le tre domande (quando esce, quanto esce, quanto in fretta gira) ha trasformato una discussione di opinioni in tre misure.
+- **[Apex 3] Se una correzione deve essere inerte da qualche parte, dimostralo con numeri identici.** Il test a sterzo e gas piantati ha restituito le stesse cifre di prima all'asciutto, gomma per gomma: è la prova che la taratura della Drift sul secco - settimane di lavoro - non è stata toccata.
+- **[Apex 3] Un moltiplicatore che satura non puo' misurare l'eccesso.** L'usura cresceva con `gripUse`, che e' velocita' laterale *contro il limite*: appena l'auto e' al limite — cioe' in ogni curva, per chiunque — spingerla oltre non costava piu' niente, e un giro di traverso consumava quanto uno pulito. Se si vuole far pagare l'eccesso, la grandezza deve essere una che **oltre il limite continua a crescere**: qui `|sin(deriva)|`, che e' anche l'unica gia' scritta nel log di fine giro.
+- **[Apex 3] Un meccanismo nuovo va introdotto con una banda franca sul valore gia' fittato, non a partire da zero.** La tabella delle mescole era tarata con dentro il traverso che tutti fanno in curva (12-16% di giro, 18% dentro la curva). Far pagare da zero avrebbe riscritto in silenzio morbida/media/dura per correggere una gomma sola; la soglia a 0.20 lascia la taratura esistente intatta **alla cifra** e cambia solo la coda della distribuzione. La prova che serviva era un A/B con numeri identici, non un ragionamento.
+- **[Apex 3] Se il meccanismo nuovo non si sente sulla cosa per cui l'hai scritto, la manopola sbagliata e' un'altra.** La legge sul consumo funzionava e sulla Drift valeva mezzo punto di prestazione, perche' `falloff 0.0150` traduceva qualunque usura in niente. Prima di alzare la pendenza di una legge nuova finche' non si vede, controllare **cosa converte** il suo risultato in qualcosa di percepibile.
+- **[Apex 3] Due build, due `patch`: se una riga di contesto differisce, la seconda passa a vuoto.** La costante e il calcolo di `scrub` erano entrati solo in Apex_3; nella build pit stop la riga dell'accumulo era gia' diversa (usa `lifeLaps`), quindi la modifica ha toccato **solo l'uso** della variabile e non la sua dichiarazione: `scrub is not defined` a ogni fotogramma. Dopo ogni modifica in doppia build, `grep` della costante **e** del punto d'uso in tutti e due i file, prima di qualsiasi misura.

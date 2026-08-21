@@ -875,6 +875,16 @@ function pzBar(frac, colour) {
 function pzCol(head, body) {
     return `<div class="pz-col"><div class="pz-h">${head}</div>${body}</div>`;
 }
+// The damage costs POWER AND GRIP, not health points, and the two numbers are
+// not the same: car.js holds the car at full performance until 40% of its
+// health is gone, then fades it linearly to 70% at the point of destruction.
+// So "Condition 75%, Performance 100%" is a real and useful thing to read -
+// nothing has been lost yet - and "Condition 20%, Performance 80%" says how
+// much car is left to race with.
+function pzPerfClass(p) {
+    return p >= 0.999 ? 'pz-good' : (p >= 0.90 ? 'pz-warn' : 'pz-bad');
+}
+
 // Green while there is plenty, amber past halfway, red near the end.
 function pzWearClass(left) {
     return left > 0.5 ? 'pz-good' : (left > 0.22 ? 'pz-warn' : 'pz-bad');
@@ -898,6 +908,14 @@ function pauseCarCol(car) {
     body += pzBar(tyreLeft, pzWearColour(tyreLeft));
     body += pzRow('Condition', (hp * 100).toFixed(0) + '%', pzWearClass(hp));
     body += pzBar(hp, pzWearColour(hp));
+    // ...and what that is costing on track. `condition` is the number car.js
+    // multiplies the engine and the grip by, and top speed is power over drag,
+    // so this single figure is the car's performance as a fraction of the one
+    // that left the pits.
+    const perf = (car.condition === undefined || !isFinite(car.condition)) ? 1 : car.condition;
+    // Just the number: .pz-row does not wrap, so a longer value hangs out of
+    // the right-hand side of the panel instead of shortening.
+    body += pzRow('Performance', (perf * 100).toFixed(0) + '%', pzPerfClass(perf));
     body += pzRow('Speed', speed.toFixed(0));
     return pzCol('Your car', body);
 }
@@ -2640,7 +2658,10 @@ function exPhysHash() {
                   JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS),
                   // the racing line is part of the physics of a lap: a new
                   // optimiser means new reference times
-                  'line' + (typeof RACING_LINE_VERSION !== 'undefined' ? RACING_LINE_VERSION : 1)];
+                  'line' + (typeof RACING_LINE_VERSION !== 'undefined' ? RACING_LINE_VERSION : 1),
+                  // the yaw ceiling is physics: a lap driven under it is not
+                  // the same lap (see the note in car.js update())
+                  'yaw' + (typeof YAW_CAP !== 'undefined' ? YAW_CAP : 0)];
     return exHash(bits.join('|'));
 }
 

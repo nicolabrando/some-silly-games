@@ -1118,7 +1118,7 @@ button.tyre-opt:hover {
     padding: 20px 26px 22px;
     text-align: center;
     min-width: 420px;
-    max-width: 560px;
+    max-width: 620px;
 }
 
 #pause-head { margin-bottom: 14px; }
@@ -1130,15 +1130,22 @@ button.tyre-opt:hover {
 }
 #pause-sub { font-size: 12px; opacity: 0.65; margin-top: 4px; }
 
+/* The columns size themselves to their content and WRAP if there is not
+   room for all of them - two players make four of these. They used to be
+   `flex: 1 1 0; min-width: 0`, which shares the panel's width equally
+   whatever is in them: a row is `white-space: nowrap`, so anything longer
+   than its share hung out of the right-hand edge of the panel instead of
+   making the panel wider. Reported: "fai stare la scritta nel riquadro". */
 #pause-stats {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 10px;
     text-align: left;
     margin-bottom: 16px;
 }
 .pz-col {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 1 auto;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 8px;
