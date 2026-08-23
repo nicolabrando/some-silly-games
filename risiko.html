@@ -4,25 +4,58 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Risiko</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
+  :root{
+    --ink:#e8eefb;
+    --ink-dim:#93a6c6;
+    --gold:#e9c46a;
+    --gold-soft:#f6dfa6;
+    --panel:rgba(12,21,37,0.74);
+    --panel-line:rgba(233,196,106,0.16);
+    --blue:#4c8dff;
+    --danger:#ff5a5a;
+    --ok:#37d98a;
+    --ui:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    --display:'Cinzel','Bodoni 72',Didot,'Playfair Display',Georgia,serif;
+  }
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
     min-height:100%; width:100%;
-    background: radial-gradient(circle at 50% 10%, #101a2e 0%, #060a14 55%, #03050a 100%);
+    background:
+      radial-gradient(1200px 700px at 50% -10%, rgba(76,141,255,0.13) 0%, rgba(0,0,0,0) 62%),
+      radial-gradient(900px 600px at 88% 110%, rgba(233,196,106,0.08) 0%, rgba(0,0,0,0) 60%),
+      linear-gradient(175deg,#0a1526 0%, #060d1a 48%, #03070f 100%);
+    background-color:#04070e;
+    background-attachment: fixed;
     display:flex; align-items:flex-start; justify-content:center;
-    font-family: 'Segoe UI', Arial, sans-serif;
-    color:#dfe6f5;
+    font-family: var(--ui);
+    color:var(--ink);
     overflow-y:auto; overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
   }
-  #app { display:flex; gap:16px; align-items:flex-start; position:relative; padding:16px; }
-  #boardWrap {
-    background: linear-gradient(160deg, #0f2038 0%, #0a1628 60%, #070f1c 100%);
-    border-radius: 12px;
-    box-shadow: 0 0 0 2px rgba(90,140,255,0.28), 0 0 40px rgba(40,90,220,0.25);
-    padding: 10px;
-  }
-  svg { display:block; }
+  #app { display:flex; gap:18px; align-items:flex-start; position:relative; padding:18px; }
 
+  #boardWrap {
+    position:relative;
+    background: linear-gradient(160deg,#0d2440 0%, #091a2f 55%, #050f1e 100%);
+    border-radius: 18px;
+    padding: 12px;
+    box-shadow:
+      0 0 0 1px rgba(233,196,106,0.22),
+      0 0 0 6px rgba(6,12,22,0.85),
+      0 0 0 7px rgba(233,196,106,0.10),
+      0 26px 60px rgba(0,0,0,0.6);
+  }
+  #boardWrap::after{
+    content:''; position:absolute; inset:12px; border-radius:10px; pointer-events:none;
+    box-shadow: inset 0 0 46px rgba(0,0,0,0.34);
+  }
+  svg#board { display:block; border-radius:10px; }
+
+  /* ---------- map ---------- */
   .contBox { rx:18; pointer-events:none; }
   .contLabel { font-size:15px; font-weight:800; letter-spacing:2px; pointer-events:none; text-transform:uppercase; }
   .edge { stroke:#9db2d8; stroke-width:5.5; opacity:0.7; stroke-linecap:round; pointer-events:none; }
@@ -36,142 +69,221 @@
   .attackArrowGlow { animation: pulseArrow 0.55s ease-in-out infinite alternate; pointer-events:none; }
   @keyframes pulseArrow { from { opacity:0.25; } to { opacity:0.6; } }
 
-  #sidebar { width:310px; display:flex; flex-direction:column; gap:10px; flex-shrink:0; }
+  /* ---------- sidebar ---------- */
+  #sidebar { width:326px; display:flex; flex-direction:column; gap:11px; flex-shrink:0; }
   .panel {
-    background: rgba(15,22,40,0.9);
-    border: 1px solid rgba(90,140,255,0.25);
-    border-radius: 10px;
-    padding: 11px 13px;
+    position:relative;
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 14px;
+    padding: 12px 14px;
+    backdrop-filter: blur(9px);
+    -webkit-backdrop-filter: blur(9px);
+    box-shadow: 0 10px 26px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
   }
-  .panel h2 { font-size:12px; letter-spacing:2px; color:#7fa8ff; margin-bottom:7px; font-weight:600; }
-  .panelNote { font-size:10px; color:#7f8ba6; line-height:1.4; margin-top:7px; }
-  .playerRow { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:13px; }
-  .swatch { width:13px; height:13px; border-radius:3px; flex-shrink:0; box-shadow:0 0 6px currentColor; }
-  .playerRow .name { flex:1; }
-  .playerRow .stats { color:#9fb3d9; font-size:10.5px; }
-  .playerRow .reinf {
-    flex:0 0 auto; color:#ffd85e; font-weight:800; font-size:11.5px;
-    background:rgba(255,216,94,0.12); border:1px solid rgba(255,216,94,0.35);
-    border-radius:9px; padding:1px 6px; cursor:help;
+  .panel h2 {
+    font-family:var(--display); font-size:11px; letter-spacing:2.6px; color:var(--gold);
+    margin-bottom:9px; font-weight:700; text-transform:uppercase;
+    display:flex; align-items:center; gap:9px;
   }
-  .playerRow.dead .reinf { color:#9fb3d9; background:none; border-color:transparent; }
-  .playerRow.dead { opacity:0.35; text-decoration:line-through; }
-  #turnInfo { font-size:14px; font-weight:600; margin-bottom:3px; }
-  #phaseInfo { font-size:11px; color:#9fb3d9; line-height:1.45; }
-  #actions { display:flex; flex-direction:column; gap:7px; }
-  button.gameBtn {
-    padding:9px; font-size:13px; font-weight:600; color:#fff; border:none; border-radius:8px;
-    background: linear-gradient(90deg,#2f6fff,#5ec8ff); cursor:pointer; letter-spacing:0.5px;
-    transition: transform .1s ease, opacity .1s ease;
-  }
-  button.gameBtn.secondary { background: linear-gradient(90deg,#3a4a6b,#556690); }
-  button.gameBtn.judge { background: linear-gradient(90deg,#ffb347,#ffd85e); color:#3a2a05; }
-  button.gameBtn.cards { background: linear-gradient(90deg,#3ddc84,#8ef0b6); color:#06331c; }
-  button.gameBtn:hover:not(:disabled) { transform: scale(1.03); }
-  button.gameBtn:disabled { opacity:0.35; cursor:not-allowed; }
+  .panel h2::after { content:''; flex:1; height:1px; background:linear-gradient(90deg,rgba(233,196,106,0.4),rgba(233,196,106,0)); }
+  .panelNote { font-size:10px; color:#7f8ea9; line-height:1.5; margin-top:8px; }
 
-  #objBox { font-size:12px; line-height:1.5; color:#ffd85e; font-weight:600; }
-  #objBox .hint { display:block; color:#9fb3d9; font-weight:400; font-size:10.5px; margin-top:4px; }
-  #cardsBox { display:flex; gap:5px; flex-wrap:wrap; min-height:34px; align-items:center; }
-  .card {
-    width:30px; height:40px; border-radius:5px; display:flex; align-items:center; justify-content:center;
-    font-size:16px; background:#f5f0e6; color:#1a1a1a; border:2px solid #333; font-weight:700;
+  .playerRow {
+    display:grid; grid-template-columns:16px 1fr auto; column-gap:9px; row-gap:3px;
+    grid-template-areas:"sw name reinf" "sw stats stats" "share share share";
+    padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.04);
   }
-  .card.jolly { background: linear-gradient(140deg,#ffd85e,#ff9f43); }
-  .cardsInfo { font-size:10.5px; color:#9fb3d9; margin-top:6px; line-height:1.4; }
-  #contBonusBox { font-size:11px; color:#c3cfe8; line-height:1.6; }
-  #contBonusBox .own { color:#3ddc84; font-weight:700; }
+  .playerRow:last-child { border-bottom:none; }
+  .playerRow .swatch { grid-area:sw; width:14px; height:16px; border-radius:3px 3px 6px 6px; align-self:center; box-shadow:0 0 9px currentColor, inset 0 -3px 5px rgba(0,0,0,0.35); }
+  .playerRow .name { grid-area:name; font-size:13px; font-weight:600; align-self:center; }
+  .playerRow .stats { grid-area:stats; color:#8fa2c2; font-size:10.5px; letter-spacing:0.2px; }
+  .playerRow .reinf {
+    grid-area:reinf; color:#08131f; font-weight:800; font-size:11px;
+    background:linear-gradient(180deg,var(--gold-soft),var(--gold));
+    border-radius:20px; padding:2px 8px; cursor:help; align-self:center;
+    box-shadow:0 2px 7px rgba(233,196,106,0.25);
+  }
+  .playerRow .share { grid-area:share; height:3px; border-radius:3px; background:rgba(255,255,255,0.07); overflow:hidden; margin-top:2px; }
+  .playerRow .share i { display:block; height:100%; border-radius:3px; transition: width .35s ease; }
+  .playerRow.dead .reinf { color:#8fa2c2; background:none; box-shadow:none; border:1px solid rgba(255,255,255,0.12); }
+  .playerRow.dead { opacity:0.34; }
+  .playerRow.dead .name { text-decoration:line-through; }
+  .playerRow.current { background:linear-gradient(90deg,rgba(233,196,106,0.10),rgba(233,196,106,0)); border-radius:8px; padding-left:6px; padding-right:6px; margin:0 -6px; }
+
+  #turnInfo { font-family:var(--display); font-size:16px; font-weight:700; letter-spacing:0.6px; margin-bottom:4px; }
+  #phaseInfo { font-size:11.5px; color:#9fb3d9; line-height:1.5; }
+  #actions { display:flex; flex-direction:column; gap:8px; }
+
+  button.gameBtn {
+    position:relative; padding:10px; font-size:12.5px; font-weight:700; color:#fff; border:none; border-radius:11px;
+    background: linear-gradient(180deg,#3f83ff,#2059d6); cursor:pointer; letter-spacing:0.6px;
+    box-shadow: 0 4px 14px rgba(32,89,214,0.35), inset 0 1px 0 rgba(255,255,255,0.28);
+    transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+    font-family:var(--ui);
+  }
+  button.gameBtn.secondary { background: linear-gradient(180deg,#4a5b7d,#2e3a52); box-shadow:0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.16); }
+  button.gameBtn.judge { background: linear-gradient(180deg,#f6dfa6,#dfa93c); color:#3a2a05; box-shadow:0 4px 14px rgba(223,169,60,0.3), inset 0 1px 0 rgba(255,255,255,0.5); }
+  button.gameBtn.cards { background: linear-gradient(180deg,#4ee39a,#17a86a); color:#042a19; box-shadow:0 4px 14px rgba(23,168,106,0.3), inset 0 1px 0 rgba(255,255,255,0.4); }
+  button.gameBtn:hover:not(:disabled) { transform: translateY(-1px); box-shadow:0 7px 18px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3); }
+  button.gameBtn:active:not(:disabled) { transform: translateY(1px); }
+  button.gameBtn:disabled { opacity:0.3; cursor:not-allowed; box-shadow:none; }
+
+  #objBox { font-size:12.5px; line-height:1.5; color:var(--gold-soft); font-weight:600; }
+  #objBox .hint { display:block; color:#8fa2c2; font-weight:400; font-size:10.5px; margin-top:5px; }
+
+  #cardsBox { display:flex; gap:6px; flex-wrap:wrap; min-height:60px; align-items:center; }
+  .card {
+    width:40px; height:57px; border-radius:6px; position:relative; overflow:hidden;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    background: linear-gradient(160deg,#fdfaf1 0%,#efe7d4 55%,#dfd3ba 100%);
+    color:#1e2532; border:1px solid #b6a98d; font-weight:700;
+    box-shadow:0 3px 8px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.6);
+    transition: transform .15s ease;
+  }
+  .card:hover { transform: translateY(-3px) rotate(-1.5deg); }
+  .card::after{ content:''; position:absolute; top:-60%; left:-30%; width:60%; height:220%; transform:rotate(22deg);
+    background:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,0.55) 50%,rgba(255,255,255,0) 100%); opacity:.5; }
+  .card .cSym { font-size:20px; line-height:1; }
+  .card .cName { font-size:6.5px; font-weight:700; letter-spacing:0.2px; text-transform:uppercase; color:#5b6172; text-align:center; padding:0 2px; line-height:1.1; }
+  .card.jolly { background: linear-gradient(160deg,#fff2cd 0%,#f3cf73 50%,#d9a534 100%); }
+  .card.jolly .cSym { color:#6b4a05; }
+  .card.jolly .cName { color:#6b4a05; }
+  .cardsInfo { font-size:10.5px; color:#8fa2c2; margin-top:8px; line-height:1.5; }
+  .cardsInfo b { color:var(--gold-soft); }
+
+  #contBonusBox { font-size:11px; color:#c3cfe8; line-height:1.7; }
+  #contBonusBox .own { font-weight:700; }
+  #contBonusBox .cRow { display:flex; align-items:center; gap:7px; }
+  #contBonusBox .cDot { width:9px; height:9px; border-radius:2px; flex-shrink:0; box-shadow:0 0 7px currentColor; }
+  #contBonusBox .cName { flex:1; }
+  #contBonusBox .cVal { color:var(--gold); font-weight:700; }
 
   #log {
-    height:110px; overflow-y:auto; font-size:11px; color:#b9c6e6; line-height:1.5;
-    display:flex; flex-direction:column-reverse;
+    height:120px; overflow-y:auto; font-size:11px; color:#b3c2e0; line-height:1.55;
+    display:flex; flex-direction:column-reverse; padding-right:4px;
   }
-  #log div { padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
-  .chartTitle { font-size:10px; color:#7fa8ff; letter-spacing:1px; margin:6px 0 2px; }
+  #log div { padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+  #log::-webkit-scrollbar, .recapScroll::-webkit-scrollbar { width:6px; height:6px; }
+  #log::-webkit-scrollbar-thumb, .recapScroll::-webkit-scrollbar-thumb { background:rgba(233,196,106,0.25); border-radius:6px; }
+  .chartTitle { font-size:9.5px; color:var(--gold); letter-spacing:1.6px; margin:8px 0 3px; font-weight:600; }
   .chartTitle:first-child { margin-top:0; }
-  svg.chart { width:100%; height:60px; display:block; background: rgba(255,255,255,0.02); border-radius:6px; }
+  svg.chart { width:100%; height:64px; display:block; background: rgba(255,255,255,0.025); border-radius:8px; border:1px solid rgba(255,255,255,0.04); }
 
-  #choicePanel { display:none; border-color: rgba(255,216,94,0.5); }
-  #choiceLabel { font-size:11.5px; color:#c3cfe8; margin-bottom:9px; line-height:1.4; }
-  #choiceRange { width:100%; accent-color:#ffd85e; cursor:pointer; }
-  .choiceValueRow { display:flex; align-items:center; gap:8px; margin-top:2px; }
-  #choiceValue { min-width:26px; text-align:center; font-weight:800; font-size:15px; color:#ffd85e; }
+  #choicePanel { display:none; border-color: rgba(233,196,106,0.45); box-shadow:0 0 24px rgba(233,196,106,0.14), 0 10px 26px rgba(0,0,0,0.4); }
+  #choiceLabel { font-size:11.5px; color:#c3cfe8; margin-bottom:10px; line-height:1.5; }
+  #choiceRange { width:100%; accent-color:var(--gold); cursor:pointer; }
+  .choiceValueRow { display:flex; align-items:center; gap:9px; margin-top:3px; }
+  #choiceValue { min-width:30px; text-align:center; font-weight:800; font-size:17px; color:var(--gold); font-family:var(--display); }
 
   #diceDisplayPanel { display:none; }
-  .diceAttackerLine { font-size:11px; color:#c3cfe8; margin-bottom:5px; }
-  .diceRow { display:flex; align-items:center; gap:5px; margin-bottom:4px; flex-wrap:wrap; }
-  .diceRowLabel { font-size:10px; color:#9fb3d9; width:54px; flex-shrink:0; }
-  .diceLossLine { font-size:10.5px; color:#9fb3d9; margin-top:2px; }
+  .diceAttackerLine { font-size:11.5px; color:#c3cfe8; margin-bottom:7px; }
+  .diceRow { display:flex; align-items:center; gap:5px; margin-bottom:5px; flex-wrap:wrap; }
+  .diceRowLabel { font-size:10px; color:#8fa2c2; width:56px; flex-shrink:0; letter-spacing:0.5px; }
+  .diceLossLine { font-size:10.5px; color:#8fa2c2; margin-top:3px; }
 
+  .volRow { display:flex; align-items:center; gap:9px; }
+  .volRow input[type=range]{ flex:1; accent-color:var(--gold); cursor:pointer; }
+  .volRow span { font-size:10.5px; color:#8fa2c2; width:34px; text-align:right; }
+
+  /* ---------- overlay ---------- */
   #overlay {
     position:fixed; top:0; left:0; width:100%; height:100%;
     display:flex; align-items:center; justify-content:flex-start; flex-direction:column;
-    background: rgba(3,5,10,0.93); backdrop-filter: blur(2px); z-index:10;
-    padding: 20px 12px; overflow-y:auto;
+    background:
+      radial-gradient(900px 520px at 50% 0%, rgba(76,141,255,0.16) 0%, rgba(0,0,0,0) 65%),
+      rgba(3,6,12,0.95);
+    backdrop-filter: blur(4px); z-index:10;
+    padding: 26px 14px; overflow-y:auto;
   }
   #overlay.hidden { display:none; }
   #overlayInner { display:flex; flex-direction:column; align-items:center; max-width:900px; margin:auto; width:100%; }
   #overlay h1 {
-    font-size:32px; margin-bottom:8px; letter-spacing:5px; text-align:center;
-    background: linear-gradient(90deg,#5ec8ff,#7fa8ff,#ffd85e);
+    font-family:var(--display);
+    font-size:clamp(34px,6vw,58px); margin-bottom:4px; letter-spacing:12px; text-align:center; font-weight:700;
+    background: linear-gradient(180deg,#fff6df 0%,#f0cf85 42%,#c99a34 68%,#f6e3b2 100%);
     -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 0 34px rgba(233,196,106,0.22);
+    padding-left:12px;
   }
-  #overlay p { font-size:12.5px; color:#c3cfe8; max-width:560px; text-align:center; line-height:1.55; margin:3px 0; }
-  #overlay .legend { display:flex; gap:14px; margin:8px 0; flex-wrap:wrap; justify-content:center; }
-  #overlay .legend div { display:flex; align-items:center; gap:6px; font-size:11px; }
+  #overlay .sub { font-family:var(--display); font-size:10.5px; letter-spacing:5px; color:#7f8ea9; text-transform:uppercase; margin-bottom:14px; }
+  .rule { width:210px; height:1px; margin:2px 0 16px; background:linear-gradient(90deg,rgba(233,196,106,0),rgba(233,196,106,0.6),rgba(233,196,106,0)); position:relative; }
+  .rule::after{ content:'◆'; position:absolute; left:50%; top:-9px; transform:translateX(-50%); color:var(--gold); font-size:10px; }
+  #overlay p { font-size:12.5px; color:#a9b9d6; max-width:600px; text-align:center; line-height:1.65; margin:3px 0; }
+  #overlay p b { color:#d7e2f6; }
+  #overlay .legend { display:flex; gap:14px; margin:14px 0 2px; flex-wrap:wrap; justify-content:center; }
+  #overlay .legend div { display:flex; align-items:center; gap:6px; font-size:11px; color:#a9b9d6; }
+  #overlay .legend .swatch { width:12px; height:14px; border-radius:2px 2px 5px 5px; box-shadow:0 0 8px currentColor; }
   #overlay button.mainBtn {
-    margin-top:16px; padding:12px 38px; font-size:15px; font-weight:700; color:#fff; border:none;
-    border-radius:30px; cursor:pointer; background: linear-gradient(90deg,#2f6fff,#5ec8ff);
-    box-shadow:0 0 20px rgba(90,140,255,0.5); letter-spacing:1px;
+    margin-top:20px; padding:14px 46px; font-size:14px; font-weight:800; color:#1a1204; border:none;
+    border-radius:34px; cursor:pointer; letter-spacing:2.4px; font-family:var(--ui);
+    background: linear-gradient(180deg,#fff2cf,#e9c46a 45%,#c99a34);
+    box-shadow:0 0 30px rgba(233,196,106,0.35), inset 0 1px 0 rgba(255,255,255,0.7);
+    transition: transform .12s ease, box-shadow .12s ease;
   }
-  #overlay button.mainBtn:hover { transform:scale(1.05); }
-  .kbd { display:inline-block; padding:2px 8px; border:1px solid #5ec8ff; border-radius:5px; font-size:11px; color:#bfe0ff; }
-  .settingGroup { width:100%; margin-top:13px; text-align:center; }
-  .settingLabel { font-size:10.5px; color:#7fa8ff; letter-spacing:1.5px; margin-bottom:7px; text-align:center; font-weight:600; }
+  #overlay button.mainBtn:hover { transform:translateY(-2px); box-shadow:0 0 44px rgba(233,196,106,0.5), inset 0 1px 0 rgba(255,255,255,0.7); }
+  .kbd { display:inline-block; padding:2px 9px; border:1px solid rgba(233,196,106,0.45); border-radius:6px; font-size:11px; color:var(--gold-soft); background:rgba(233,196,106,0.07); }
+  .settingsGrid { display:flex; flex-wrap:wrap; gap:10px 22px; justify-content:center; width:100%; margin-top:6px; }
+  .settingGroup { margin-top:13px; text-align:center; }
+  .settingGroup.wide { width:100%; }
+  .settingLabel { font-family:var(--display); font-size:10px; color:var(--gold); letter-spacing:2.4px; margin-bottom:8px; text-align:center; font-weight:700; text-transform:uppercase; }
   .choiceRow { display:flex; gap:7px; flex-wrap:wrap; justify-content:center; }
   .choiceBtn {
-    padding:8px 15px; font-size:12.5px; font-weight:600; color:#bfe0ff; cursor:pointer;
-    background: rgba(90,140,255,0.08); border:2px solid rgba(90,140,255,0.35); border-radius:18px;
-    transition: all .12s ease;
+    padding:8px 15px; font-size:12px; font-weight:600; color:#bacbe8; cursor:pointer; font-family:var(--ui);
+    background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.13); border-radius:20px;
+    transition: all .14s ease;
   }
-  .choiceBtn:hover { border-color:#5ec8ff; }
-  .choiceBtn.active { background: linear-gradient(90deg,#2f6fff,#5ec8ff); color:#fff; border-color:transparent; }
+  .choiceBtn:hover { border-color:rgba(233,196,106,0.55); color:#fff; }
+  .choiceBtn.active { background: linear-gradient(180deg,#f6dfa6,#dfa93c); color:#2a1e04; border-color:transparent; box-shadow:0 3px 14px rgba(223,169,60,0.32); }
   .colorSwatchBtn {
-    width:32px; height:32px; border-radius:50%; cursor:pointer; border:3px solid transparent;
-    transition: all .12s ease; box-shadow:0 0 8px rgba(0,0,0,0.4);
+    width:30px; height:30px; border-radius:50%; cursor:pointer; border:2px solid transparent;
+    transition: all .14s ease; box-shadow:0 0 10px rgba(0,0,0,0.5);
   }
-  .colorSwatchBtn.active { border-color:#fff; transform:scale(1.15); }
+  .colorSwatchBtn.active { border-color:#fff; transform:scale(1.18); }
   select.dropdownSelect {
-    padding:8px 14px; font-size:13px; font-weight:600; color:#dfe6f5; background:#101a2e;
-    border:2px solid rgba(90,140,255,0.35); border-radius:18px; cursor:pointer; text-align:center;
+    padding:8px 16px; font-size:12.5px; font-weight:600; color:var(--ink); background:#0d1728; font-family:var(--ui);
+    border:1px solid rgba(255,255,255,0.13); border-radius:20px; cursor:pointer; text-align:center;
   }
+  .setHint { font-size:10px; color:#6f7e98; margin-top:6px; line-height:1.45; max-width:320px; }
 
   /* ---- end-of-game recap ---- */
-  .recapWrap { width:100%; max-width:900px; margin:14px 0 4px; }
-  .recapMeta { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:6px 0 12px; flex:0 0 auto; }
+  .recapWrap { width:100%; max-width:900px; margin:16px 0 4px; }
+  .recapMeta { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:6px 0 12px; }
   .recapMeta div {
-    background: rgba(90,140,255,0.10); border:1px solid rgba(90,140,255,0.28);
-    border-radius:10px; padding:6px 12px; font-size:13px; font-weight:600; color:#dfe6f5;
+    background: rgba(255,255,255,0.045); border:1px solid rgba(233,196,106,0.18);
+    border-radius:11px; padding:7px 13px; font-size:13px; font-weight:700; color:var(--ink);
   }
-  .rmLabel { display:block; font-size:9px; letter-spacing:1.5px; color:#7fa8ff; font-weight:600; margin-bottom:2px; }
-  .recapScroll { overflow-x:auto; overflow-y:auto; max-height:44vh; border-radius:10px; }
-  .recapTable { width:100%; border-collapse:collapse; font-size:12px; background: rgba(15,22,40,0.85); }
+  .rmLabel { display:block; font-size:8.5px; letter-spacing:1.8px; color:var(--gold); font-weight:700; margin-bottom:3px; }
+  .recapScroll { overflow-x:auto; overflow-y:auto; max-height:44vh; border-radius:12px; border:1px solid rgba(255,255,255,0.06); }
+  .recapTable { width:100%; border-collapse:collapse; font-size:12px; background: rgba(10,17,30,0.9); }
   .recapTable th {
-    font-size:9.5px; letter-spacing:1px; color:#7fa8ff; font-weight:600; text-transform:uppercase;
-    padding:8px 7px; border-bottom:1px solid rgba(90,140,255,0.3); white-space:nowrap;
-    position:sticky; top:0; z-index:2; background:#131c33;
+    font-size:9px; letter-spacing:1.2px; color:var(--gold); font-weight:700; text-transform:uppercase;
+    padding:9px 7px; border-bottom:1px solid rgba(233,196,106,0.22); white-space:nowrap;
+    position:sticky; top:0; z-index:2; background:#0e1729;
   }
-  .recapTable td { padding:8px 7px; border-bottom:1px solid rgba(255,255,255,0.05); text-align:center; color:#dfe6f5; }
+  .recapTable td { padding:9px 7px; border-bottom:1px solid rgba(255,255,255,0.05); text-align:center; color:var(--ink); }
   .recapTable td:first-child { text-align:left; white-space:nowrap; font-weight:600; }
-  .recapTable tbody tr:first-child td { background: rgba(255,216,94,0.07); }
+  .recapTable tbody tr:first-child td { background: rgba(233,196,106,0.08); }
   .recapTable .dim { color:#8fa0c0; font-size:10px; }
   .recapTable .outRow { opacity:0.45; }
-  .lkGood { color:#3ddc84; font-weight:700; }
-  .lkBad { color:#ff6b6b; font-weight:700; }
+  .lkGood { color:var(--ok); font-weight:700; }
+  .lkBad { color:var(--danger); font-weight:700; }
   .lkMid { color:#c3cfe8; }
-  .recapNote { font-size:11px !important; color:#9fb3d9 !important; margin-top:9px !important; line-height:1.5; }
-  .objList { font-size:11px; color:#9fb3d9; margin-top:8px; line-height:1.6; text-align:left; max-width:640px; }
-  .objList b { color:#dfe6f5; }
+  .recapNote { font-size:11px !important; color:#8fa2c2 !important; margin-top:10px !important; line-height:1.55; }
+  .objList { font-size:11px; color:#8fa2c2; margin-top:10px; line-height:1.7; text-align:left; max-width:640px; }
+  .objList b { color:var(--ink); }
+
+  @media (min-width: 1041px){
+    #app { height:100vh; }
+    #sidebar { max-height: calc(100vh - 36px); overflow-y:auto; padding-right:5px; scrollbar-width:thin; }
+    #sidebar::-webkit-scrollbar { width:7px; }
+    #sidebar::-webkit-scrollbar-thumb { background:rgba(233,196,106,0.22); border-radius:7px; }
+    #sidebar::-webkit-scrollbar-track { background:transparent; }
+  }
+  @media (max-width: 1040px){
+    #app { flex-direction:column; align-items:center; }
+    #sidebar { width:100%; max-width:640px; }
+  }
 </style>
 </head>
 <body>
@@ -221,8 +333,14 @@
         <button class="gameBtn secondary" id="endAttackBtn" disabled>PASSA A SPOSTAMENTO →</button>
         <button class="gameBtn" id="endTurnBtn" disabled>FINE TURNO</button>
         <button class="gameBtn judge" id="judgeBtn" disabled>⚖️ JUDGE NOW — fine ai punti</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>AUDIO</h2>
+      <div id="actions">
         <button class="gameBtn secondary" id="musicBtn">♪ Musica: ON</button>
         <button class="gameBtn secondary" id="trackBtn">🎵 Brano: Marcia</button>
+        <div class="volRow"><input type="range" id="volRange" min="0" max="100" value="50"><span id="volVal">50%</span></div>
       </div>
     </div>
     <div class="panel">
@@ -239,47 +357,7 @@
   </div>
 </div>
 
-<div id="overlay">
-  <div id="overlayInner">
-  <h1>RISIKO</h1>
-  <p>La mappa classica: 42 territori in 6 continenti. Regole del gioco originale — a inizio partita i territori
-  vengono distribuiti a caso e <b>schieri tu</b> le tue armate una a una. Poi, a ogni turno: rinforzi
-  (un'armata ogni 3 territori, minimo 3, più i bonus dei continenti interamente controllati e i tris di carte),
-  attacchi con i dadi (fino a 3 in attacco, 2 in difesa, i pari li vince il difensore) e infine
-  <b>un solo spostamento</b> tra due tuoi territori confinanti. Ogni territorio deve sempre mantenere
-  almeno un'armata. Conquistando almeno un territorio in un turno peschi una carta — ma le carte
-  si possono anche disattivare qui sotto.</p>
-
-  <div class="settingGroup">
-    <div class="settingLabel">CONDIZIONE DI VITTORIA</div>
-    <div class="choiceRow" id="modeRow"></div>
-  </div>
-  <div class="settingGroup">
-    <div class="settingLabel">CARTE E TRIS</div>
-    <div class="choiceRow" id="cardsRow"></div>
-  </div>
-  <div class="settingGroup">
-    <div class="settingLabel">NUMERO DI AVVERSARI</div>
-    <select class="dropdownSelect" id="opponentSelect"></select>
-  </div>
-  <div class="settingGroup">
-    <div class="settingLabel">IL TUO COLORE</div>
-    <div class="choiceRow" id="colorRow"></div>
-  </div>
-  <div class="settingGroup">
-    <div class="settingLabel">DIFFICOLTÀ IA</div>
-    <div class="choiceRow" id="diffRow"></div>
-  </div>
-  <div class="settingGroup">
-    <div class="settingLabel">MUSICA</div>
-    <div class="choiceRow" id="musicRow"></div>
-  </div>
-
-  <div class="legend" id="legendBox"></div>
-  <p><span class="kbd">Click</span> seleziona, attacca, sposta &nbsp; <span class="kbd">Click</span> di nuovo per deselezionare</p>
-  <button class="mainBtn" id="startBtn">INIZIA PARTITA</button>
-  </div>
-</div>
+<div id="overlay"><div id="overlayInner"></div></div>
 
 <script>
 (function(){
@@ -355,9 +433,14 @@
   const NODE_R = 27;
   // Initial armies of the original rules, extended to the extra player counts we allow.
   const START_ARMIES = { 2:40, 3:35, 4:30, 5:25, 6:20, 7:18, 8:16 };
-  // Escalating value of a traded set, exactly as in the original game.
+  // Valore dei tris. Tabella fissa del Risiko! classico: nessuna escalation, niente bonus fuori scala.
+  const SET_TABLE      = { A:4, F:6, C:8, mix:10, jolly:12 };
+  const SET_TABLE_LOW  = { A:3, F:4, C:5, mix:6,  jolly:8  };
+  // Vecchia scala crescente del Risk americano, tenuta solo come opzione.
   const SET_VALUES = [4,6,8,10,12,15];
-  const SYMBOLS = { F:'🁢', C:'🐴', A:'🎯' };
+  const SET_KIND_NAME = { A:'tre artiglierie', F:'tre fanterie', C:'tre cavallerie',
+                          mix:'uno per tipo', jolly:'con jolly' };
+  const SYMBOLS = { F:'♟', C:'♞', A:'♜' };
   const SYM_NAME = { F:'Fanteria', C:'Cavalleria', A:'Artiglieria', J:'Jolly' };
 
   let SETTINGS = {
@@ -366,7 +449,9 @@
     aiDifficulty: 'medium',
     mode: 'objective',      // 'objective' (Risiko) | 'conquest' (Risk)
     useCards: true,         // the deck of territory cards and its sets
-    musicTrack: 1
+    setBonus: 'fixed',      // 'fixed' (Risiko!) | 'low' (ridotto) | 'escalate' (Risk classico)
+    musicTrack: 1,
+    musicVol: 0.5
   };
 
   // ================= STATE =================
@@ -448,39 +533,52 @@
     hands[pid].push(c);
     return c;
   }
-  // Finds a valid set: three of a kind, one of each, or anything completed by a joker.
-  function findSet(hand){
-    const idx = [0,1,2].map(()=>null);
-    const bySym = { F:[], C:[], A:[], J:[] };
-    hand.forEach((c,i)=>bySym[c.sym].push(i));
-    const J = bySym.J;
-    for(const s of ['F','C','A']){
-      if(bySym[s].length >= 3) return [bySym[s][0], bySym[s][1], bySym[s][2]];
+  // Che tipo di tris formano tre carte (null se non ne formano nessuno).
+  function setKind(cards){
+    const syms = cards.map(c=>c.sym);
+    const jokers = syms.filter(x=>x==='J').length;
+    const rest = syms.filter(x=>x!=='J');
+    if(jokers === 0){
+      if(rest[0]===rest[1] && rest[1]===rest[2]) return rest[0];
+      if(new Set(rest).size === 3) return 'mix';
+      return null;
     }
-    if(bySym.F.length && bySym.C.length && bySym.A.length) return [bySym.F[0], bySym.C[0], bySym.A[0]];
-    // jokers complete anything
-    if(J.length >= 1){
-      for(const s of ['F','C','A']) if(bySym[s].length >= 2) return [bySym[s][0], bySym[s][1], J[0]];
-      const pair = ['F','C','A'].filter(s=>bySym[s].length >= 1);
-      if(pair.length >= 2) return [bySym[pair[0]][0], bySym[pair[1]][0], J[0]];
-    }
-    if(J.length >= 2){
-      const any = ['F','C','A'].find(s=>bySym[s].length >= 1);
-      if(any !== undefined) return [bySym[any][0], J[0], J[1]];
-    }
-    if(J.length >= 3) return [J[0],J[1],J[2]];
-    return null;
+    if(jokers >= 2) return 'jolly';
+    return rest[0] === rest[1] ? 'jolly' : 'mix';
   }
-  function setValue(){
-    return setsTraded < SET_VALUES.length ? SET_VALUES[setsTraded]
-                                          : SET_VALUES[SET_VALUES.length-1] + 5*(setsTraded - SET_VALUES.length + 1);
+  function setValueOf(kind){
+    if(SETTINGS.setBonus === 'escalate'){
+      return setsTraded < SET_VALUES.length ? SET_VALUES[setsTraded]
+                                            : SET_VALUES[SET_VALUES.length-1] + 5*(setsTraded - SET_VALUES.length + 1);
+    }
+    const tab = SETTINGS.setBonus === 'low' ? SET_TABLE_LOW : SET_TABLE;
+    return tab[kind] !== undefined ? tab[kind] : tab.mix;
+  }
+  // Cerca il tris che vale di più tra quelli formabili con la mano.
+  function findSet(hand){
+    let best = null;
+    for(let i=0;i<hand.length-2;i++)
+      for(let j=i+1;j<hand.length-1;j++)
+        for(let k=j+1;k<hand.length;k++){
+          const kind = setKind([hand[i],hand[j],hand[k]]);
+          if(!kind) continue;
+          const value = setValueOf(kind);
+          if(!best || value > best.value) best = { idx:[i,j,k], kind, value };
+        }
+    return best;
+  }
+  // Il valore del prossimo tris quando non se ne ha ancora uno in mano.
+  function setValueHint(){
+    if(SETTINGS.setBonus === 'escalate') return setValueOf('mix') + ' armate';
+    const tab = SETTINGS.setBonus === 'low' ? SET_TABLE_LOW : SET_TABLE;
+    return `${tab.A}–${tab.jolly} armate secondo il tris`;
   }
   function tradeSet(pid){
     const set = findSet(hands[pid]);
     if(!set) return 0;
-    const value = setValue();
+    const value = set.value;
     setsTraded++;
-    set.sort((a,b)=>b-a).forEach(i=>hands[pid].splice(i,1));
+    set.idx.slice().sort((a,b)=>b-a).forEach(i=>hands[pid].splice(i,1));
     if(STATS[pid]) STATS[pid].sets++;
     return value;
   }
@@ -756,7 +854,8 @@
     pendingChoice = null; hideChoicePanel();
     gameElapsedMs = Date.now() - gameStartTime;
     updateUI(); render(); pushHistorySnapshot(); drawCharts();
-    showOverlay(won ? 'VITTORIA!' : 'SCONFITTA', text, buildRecapHTML());
+    showOverlay(won ? 'VITTORIA' : 'SCONFITTA', text, buildRecapHTML(), 'GIOCA ANCORA',
+                won ? 'Il mondo è tuo' : 'La partita è finita');
   }
 
   // ================= TURN FLOW =================
@@ -875,9 +974,14 @@
       const v = tradeSet(pid); bonus += v;
       log(`🃏 ${playerName(pid)} scambia un tris obbligatorio per ${v} armate.`);
     }
-    if(SETTINGS.useCards && difficulty !== 'easy' && hands[pid].length >= 3 && findSet(hands[pid])){
-      const v = tradeSet(pid); bonus += v;
-      log(`🃏 ${playerName(pid)} scambia un tris per ${v} armate.`);
+    if(SETTINGS.useCards && difficulty !== 'easy' && hands[pid].length >= 3){
+      // con la tabella fissa non conviene svendere subito un tris di poco valore
+      const s3 = findSet(hands[pid]);
+      const worth = s3 && (SETTINGS.setBonus === 'escalate' || s3.value >= 8 || hands[pid].length >= 4);
+      if(worth){
+        const v = tradeSet(pid); bonus += v;
+        log(`🃏 ${playerName(pid)} scambia un tris per ${v} armate.`);
+      }
     }
     let pts = calcReinforcement(pid) + bonus;
     if(STATS[pid]) STATS[pid].placed += pts;
@@ -1217,8 +1321,15 @@
     6:[[7,7],[19,7],[7,13],[19,13],[7,19],[19,19]]
   };
   function diceFaceHTML(v){
-    const pips = (PIP_POS[v]||PIP_POS[1]).map(([x,y])=>`<circle cx="${x}" cy="${y}" r="2.6" fill="#1a1a1a"></circle>`).join('');
-    return `<svg width="26" height="26" viewBox="0 0 26 26" style="margin:1px;"><rect x="1" y="1" width="24" height="24" rx="5" fill="#f5f0e6" stroke="#333" stroke-width="1.5"></rect>${pips}</svg>`;
+    const pips = (PIP_POS[v]||PIP_POS[1]).map(([x,y])=>
+      `<circle cx="${x}" cy="${y}" r="2.7" fill="#1b2233"></circle>`).join('');
+    return `<svg width="28" height="28" viewBox="0 0 26 26" style="margin:1px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.55));">
+      <defs><linearGradient id="dg${v}" x1="0" y1="0" x2="0.4" y2="1">
+        <stop offset="0%" stop-color="#fffdf6"/><stop offset="62%" stop-color="#efe8d6"/><stop offset="100%" stop-color="#d6cbb2"/>
+      </linearGradient></defs>
+      <rect x="1" y="1" width="24" height="24" rx="6" fill="url(#dg${v})" stroke="#9c9280" stroke-width="1"></rect>
+      <rect x="2.2" y="2.2" width="21.6" height="21.6" rx="5" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="1"></rect>
+      ${pips}</svg>`;
   }
   function renderDiceDisplay(i){
     document.getElementById('diceDisplayPanel').style.display = 'block';
@@ -1288,7 +1399,8 @@
     for(const p of PLAYERS){
       const s = scoreOf(p.id);
       const row = document.createElement('div');
-      row.className = 'playerRow' + (alive.has(p.id)?'':' dead');
+      const isCur = order && order[turnPointer]===p.id && !gameOver;
+      row.className = 'playerRow' + (alive.has(p.id)?'':' dead') + (isCur?' current':'');
       // armies this player will receive when their next turn starts
       const fromTerr = Math.max(3, Math.floor(s.terr/3));
       const fromCont = continentBonus(p.id);
@@ -1296,10 +1408,12 @@
       const tip = `${next} armate al prossimo turno: ${fromTerr} dai territori`
         + (fromCont ? ` + ${fromCont} dai continenti` : '')
         + (SETTINGS.useCards ? ', più le armate di eventuali tris' : '');
+      const share = Math.round(s.terr / Object.keys(MAP).length * 100);
       row.innerHTML = `<span class="swatch" style="background:${p.color};color:${p.color};"></span>
         <span class="name">${p.name}</span>
-        <span class="stats">${s.terr} terr · ${s.armies} arm${SETTINGS.useCards?` · ${hands[p.id]?hands[p.id].length:0} 🃏`:''}</span>
-        <span class="reinf" title="${alive.has(p.id)?tip:'Giocatore eliminato'}">${alive.has(p.id)?'+'+next:'—'}</span>`;
+        <span class="reinf" title="${alive.has(p.id)?tip:'Giocatore eliminato'}">${alive.has(p.id)?'+'+next:'—'}</span>
+        <span class="stats">${s.terr} terr · ${s.armies} arm${SETTINGS.useCards?` · ${hands[p.id]?hands[p.id].length:0} carte`:''}</span>
+        <span class="share"><i style="width:${share}%;background:${p.color};box-shadow:0 0 8px ${p.color};"></i></span>`;
       playersEl.appendChild(row);
     }
     const cur = order[turnPointer];
@@ -1312,7 +1426,9 @@
       const mine = contTerrIds(c).filter(id=>terr[id].owner===HUMAN).length;
       const tot = contTerrIds(c).length;
       const who = owner ? `<span class="own" style="color:${owner.color}">${owner.name}</span>` : `${mine}/${tot} tuoi`;
-      return `<div><span style="color:${CONTINENTS[c].color}">■</span> ${CONTINENTS[c].name} <b>+${CONTINENTS[c].bonus}</b> — ${who}</div>`;
+      return `<div class="cRow"><span class="cDot" style="background:${CONTINENTS[c].color};color:${CONTINENTS[c].color}"></span>
+        <span class="cName">${CONTINENTS[c].name} <span style="color:#7f8ea9">· ${who}</span></span>
+        <span class="cVal">+${CONTINENTS[c].bonus}</span></div>`;
     }).join('');
 
     // objective
@@ -1328,12 +1444,18 @@
     const box = document.getElementById('cardsBox');
     const myHand = hands[HUMAN] || [];
     box.innerHTML = myHand.length
-      ? myHand.map(c=>`<div class="card${c.sym==='J'?' jolly':''}" title="${SYM_NAME[c.sym]}">${c.sym==='J'?'★':SYMBOLS[c.sym]}</div>`).join('')
+      ? myHand.map(c=>`<div class="card${c.sym==='J'?' jolly':''}" title="${SYM_NAME[c.sym]}${c.terr?' — '+MAP[c.terr].name:''}">
+          <span class="cSym">${c.sym==='J'?'★':SYMBOLS[c.sym]}</span>
+          <span class="cName">${c.terr?MAP[c.terr].name:'JOLLY'}</span>
+        </div>`).join('')
       : '<span style="font-size:11px;color:#8fa0c0;">Nessuna carta</span>';
-    const canTrade = phase==='reinforce' && !!findSet(myHand) && !inputLocked && !pendingChoice;
+    const bestSet = findSet(myHand);
+    const canTrade = phase==='reinforce' && !!bestSet && !inputLocked && !pendingChoice;
     tradeBtn.disabled = !canTrade;
-    document.getElementById('cardsInfo').textContent =
-      `Prossimo tris: ${setValue()} armate. Con 5 carte lo scambio è obbligatorio. Peschi una carta se conquisti almeno un territorio nel turno.`;
+    tradeBtn.textContent = bestSet ? `SCAMBIA TRIS · +${bestSet.value}` : 'SCAMBIA TRIS';
+    document.getElementById('cardsInfo').innerHTML = bestSet
+      ? `Miglior tris in mano: <b>${bestSet.value} armate</b> (${SET_KIND_NAME[bestSet.kind]}). Con 5 carte lo scambio è obbligatorio.`
+      : `Valore di un tris: ${setValueHint()}. Con 5 carte lo scambio è obbligatorio; peschi una carta se conquisti almeno un territorio nel turno.`;
 
     const humanActive = !gameOver && cur===HUMAN && !inputLocked && !pendingChoice && phase!=='setup';
     judgeBtn.disabled = !humanActive;
@@ -1416,80 +1538,309 @@
   }
 
   // ================= MUSIC =================
+  // Motore generativo: pad, basso, melodia e percussioni su una progressione diatonica,
+  // con riverbero e piccole variazioni di frase per reggere partite lunghe.
+  const SCALES = {
+    minor:      [0,2,3,5,7,8,10],
+    dorian:     [0,2,3,5,7,9,10],
+    major:      [0,2,4,5,7,9,11],
+    mixolydian: [0,2,4,5,7,9,10],
+    lydian:     [0,2,4,6,7,9,11]
+  };
   const TRACKS = [
-    { name:'Marcia', tempo:82, bassType:'triangle', leadType:'sine', bassVol:0.14, leadVol:0.08, swing:0,
-      prog:[{bass:'A1',arp:['A3','C4','E4','C4']},{bass:'F1',arp:['F3','A3','C4','A3']},
-            {bass:'C2',arp:['C4','E4','G4','E4']},{bass:'G1',arp:['G3','B3','D4','B3']}] },
-    { name:'Tensione', tempo:60, bassType:'sawtooth', leadType:'triangle', bassVol:0.10, leadVol:0.06, swing:0,
-      prog:[{bass:'D1',arp:['D3','F3','A3','F3']},{bass:'D1',arp:['D3','G3','A3','G3']},
-            {bass:'A#1',arp:['A#2','D3','F3','D3']},{bass:'A1',arp:['A2','C3','E3','C3']}] },
-    { name:'Avventura', tempo:104, bassType:'square', leadType:'sine', bassVol:0.09, leadVol:0.075, swing:0.18,
-      prog:[{bass:'C2',arp:['C4','E4','G4','B4']},{bass:'A1',arp:['A3','C4','E4','G4']},
-            {bass:'F1',arp:['F3','A3','C4','E4']},{bass:'G1',arp:['G3','B3','D4','F4']}] }
+    { name:'Marcia',    bpm:84,  root:57, scale:'minor',      drums:'march',
+      padType:'sawtooth', leadType:'triangle', cutoff:900,  density:0.52,
+      padVol:0.075, bassVol:0.16, leadVol:0.085, drumVol:0.17, prog:[0,5,3,4] },
+    { name:'Impero',    bpm:64,  root:53, scale:'dorian',     drums:'epic',
+      padType:'sawtooth', leadType:'sine',     cutoff:720,  density:0.34,
+      padVol:0.095, bassVol:0.17, leadVol:0.075, drumVol:0.19, prog:[0,6,4,5] },
+    { name:'Avventura', bpm:106, root:60, scale:'mixolydian', drums:'light',
+      padType:'triangle', leadType:'triangle', cutoff:1500, density:0.6,
+      padVol:0.06,  bassVol:0.13, leadVol:0.08,  drumVol:0.12, prog:[0,4,5,3] },
+    { name:'Notturno',  bpm:54,  root:55, scale:'lydian',     drums:'none',
+      padType:'sine',     leadType:'sine',     cutoff:1150, density:0.26,
+      padVol:0.105, bassVol:0.10, leadVol:0.065, drumVol:0,   prog:[0,5,3,6] }
   ];
+
   const Music = (function(){
-    let ctx=null, master=null, playing=false, enabled=true, timer=null, nextTime=0, step=0, idx=0;
-    const SEMI = {C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11};
-    function nf(n){ const nm=n.slice(0,-1), oc=+n.slice(-1); return 440*Math.pow(2,(SEMI[nm]+(oc-4)*12-9)/12); }
-    function tone(f,t,d,ty,pk){
+    let ctx=null, master=null, comp=null, conv=null, revGain=null, delay=null, fbGain=null;
+    let padG=null, bassG=null, leadG=null, drumG=null;
+    let playing=false, enabled=true, vol=0.5, idx=0, timer=null;
+    let nextBeat=0, beat=0, melodyPrev=null;
+
+    const mf = m => 440 * Math.pow(2, (m-69)/12);
+
+    function makeIR(seconds, decay){
+      const rate=ctx.sampleRate, len=Math.max(1,Math.floor(rate*seconds));
+      const buf=ctx.createBuffer(2,len,rate);
+      for(let ch=0;ch<2;ch++){
+        const d=buf.getChannelData(ch);
+        for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len, decay);
+      }
+      return buf;
+    }
+    function sendTo(node, target, amount){
+      const g=ctx.createGain(); g.gain.value=amount; node.connect(g); g.connect(target); return g;
+    }
+    function ensure(){
+      if(ctx) return true;
+      const AC = (typeof window!=='undefined') && (window.AudioContext||window.webkitAudioContext);
+      if(!AC) return false;
       try{
-        const o=ctx.createOscillator(), g=ctx.createGain();
-        o.type=ty; o.frequency.value=f;
-        g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(pk,t+0.03);
-        g.gain.exponentialRampToValueAtTime(0.0001,t+d);
-        o.connect(g); g.connect(master); o.start(t); o.stop(t+d+0.03);
+        ctx = new AC();
+        master = ctx.createGain(); master.gain.value = 0.0001;
+        comp = ctx.createDynamicsCompressor();
+        comp.threshold.value=-19; comp.knee.value=22; comp.ratio.value=3.2;
+        comp.attack.value=0.012; comp.release.value=0.3;
+        master.connect(comp); comp.connect(ctx.destination);
+
+        conv = ctx.createConvolver(); conv.buffer = makeIR(2.9, 2.5);
+        revGain = ctx.createGain(); revGain.gain.value = 0.5;
+        conv.connect(revGain); revGain.connect(master);
+
+        delay = ctx.createDelay(1.5); delay.delayTime.value = 0.34;
+        fbGain = ctx.createGain(); fbGain.gain.value = 0.27;
+        delay.connect(fbGain); fbGain.connect(delay);
+        const dOut = ctx.createGain(); dOut.gain.value = 0.5;
+        delay.connect(dOut); dOut.connect(master); dOut.connect(conv);
+
+        padG=ctx.createGain(); bassG=ctx.createGain(); leadG=ctx.createGain(); drumG=ctx.createGain();
+        [padG,bassG,leadG,drumG].forEach(g=>g.connect(master));
+        sendTo(padG, conv, 0.55); sendTo(leadG, conv, 0.4); sendTo(drumG, conv, 0.18);
+        sendTo(leadG, delay, 0.35);
+      }catch(e){ ctx=null; return false; }
+      return true;
+    }
+
+    function tone(dest, freq, t, dur, type, peak, o){
+      o = o || {};
+      try{
+        const osc=ctx.createOscillator(), g=ctx.createGain();
+        osc.type=type; osc.frequency.setValueAtTime(freq,t);
+        if(o.detune) osc.detune.setValueAtTime(o.detune,t);
+        let node=osc;
+        if(o.cutoff){
+          const f=ctx.createBiquadFilter(); f.type='lowpass';
+          f.frequency.setValueAtTime(o.cutoff,t);
+          if(o.sweep) f.frequency.linearRampToValueAtTime(o.sweep, t+dur);
+          f.Q.value = o.q||0.8;
+          osc.connect(f); node=f;
+        }
+        const atk = o.attack!==undefined ? o.attack : 0.02;
+        const rel = o.release!==undefined ? o.release : dur*0.5;
+        g.gain.setValueAtTime(0.0001,t);
+        g.gain.linearRampToValueAtTime(peak, t+atk);
+        if(o.hold && dur > atk*1.3) g.gain.setValueAtTime(peak, t+dur*0.75);
+        g.gain.exponentialRampToValueAtTime(0.0001, t+dur+rel);
+        node.connect(g); g.connect(dest);
+        osc.start(t); osc.stop(t+dur+rel+0.06);
       }catch(e){}
     }
-    function schedule(){
+    function noiseHit(dest, t, dur, peak, ftype, freq, q){
       try{
-        const T=TRACKS[idx]||TRACKS[0], spb=60/T.tempo;
-        while(nextTime < ctx.currentTime + 0.3){
-          const ch=T.prog[Math.floor(step/4)%T.prog.length], b=step%4;
-          if(b===0) tone(nf(ch.bass),nextTime,spb*4*0.95,T.bassType,T.bassVol);
-          const sw=(T.swing && b%2===1)? spb*T.swing:0;
-          tone(nf(ch.arp[b]),nextTime+sw,spb*0.85,T.leadType,T.leadVol);
-          nextTime+=spb; step++;
+        const len=Math.max(1,Math.floor(ctx.sampleRate*dur));
+        const b=ctx.createBuffer(1,len,ctx.sampleRate), d=b.getChannelData(0);
+        for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,1.7);
+        const s=ctx.createBufferSource(); s.buffer=b;
+        const f=ctx.createBiquadFilter(); f.type=ftype; f.frequency.value=freq; f.Q.value=q||1;
+        const g=ctx.createGain(); g.gain.value=peak;
+        s.connect(f); f.connect(g); g.connect(dest);
+        s.start(t); s.stop(t+dur+0.03);
+      }catch(e){}
+    }
+    function kick(dest, t, peak){
+      try{
+        const o=ctx.createOscillator(), g=ctx.createGain();
+        o.type='sine';
+        o.frequency.setValueAtTime(125,t); o.frequency.exponentialRampToValueAtTime(41,t+0.15);
+        g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(peak,t+0.006);
+        g.gain.exponentialRampToValueAtTime(0.0001,t+0.36);
+        o.connect(g); g.connect(dest); o.start(t); o.stop(t+0.4);
+      }catch(e){}
+    }
+
+    function scheduleBeat(t, b){
+      const T=TRACKS[idx], SC=SCALES[T.scale], spb=60/T.bpm;
+      const bar=Math.floor(b/4), inBar=b%4;
+      const deg = i => SC[((i%7)+7)%7] + 12*Math.floor(i/7);
+      const cd = T.prog[bar % T.prog.length];
+      const chord = [cd, cd+2, cd+4].map(deg);
+      const quiet = (Math.floor(bar/8) % 4) === 3;      // ogni tanto una sezione più rarefatta
+
+      // --- pad, una volta per battuta ---
+      if(inBar === 0){
+        const dur = spb*4;
+        const sweep = T.cutoff * (1 + 0.3*Math.sin(bar*0.7));
+        chord.forEach((c,i)=>{
+          const m = T.root + c + (i===0 ? 0 : 0);
+          [-7, 7].forEach(dt=>tone(padG, mf(m), t, dur*0.94, T.padType, T.padVol/2,
+            { attack: spb*1.1, release: spb*1.2, hold:true, cutoff:T.cutoff, sweep, detune:dt, q:1.2 }));
+        });
+        tone(padG, mf(T.root-12+chord[0]), t, dur*0.94, 'sine', T.padVol*0.5,
+          { attack: spb*0.8, release: spb, hold:true });
+      }
+
+      // --- basso ---
+      if(inBar===0 || inBar===2){
+        const fifth = (inBar===2 && bar%2===1) ? 7 : 0;
+        const m = T.root - 24 + chord[0] + fifth;
+        tone(bassG, mf(m), t, spb*0.85, 'triangle', T.bassVol, { attack:0.012, release:0.14, cutoff:360, q:0.9 });
+        tone(bassG, mf(m), t, spb*0.45, 'sine', T.bassVol*0.65, { attack:0.008, release:0.1 });
+      } else if(!quiet && T.drums==='light' && Math.random()<0.35){
+        tone(bassG, mf(T.root-24+chord[0]+7), t, spb*0.3, 'triangle', T.bassVol*0.5, { attack:0.01, release:0.1, cutoff:340 });
+      }
+
+      // --- melodia generativa ---
+      const restBar = (bar % 8 === 7) && Math.random() < 0.55;
+      const dens = T.density * (quiet ? 0.55 : 1);
+      if(!restBar){
+        for(let s=0;s<2;s++){
+          if(Math.random() > dens * (s===0 ? 1 : 0.55)) continue;
+          let g;
+          if(Math.random() < 0.62) g = chord[Math.floor(Math.random()*3)];
+          else g = deg(cd + Math.floor(Math.random()*7));
+          let m = T.root + 12 + g;
+          if(melodyPrev !== null && Math.abs(m - melodyPrev) > 9) m += (m > melodyPrev ? -12 : 12);
+          melodyPrev = m;
+          const tt = t + s*spb*0.5 + Math.random()*0.012;
+          const dur = spb * (s===0 ? 0.5 : 0.42) * (Math.random()<0.22 ? 2 : 1);
+          tone(leadG, mf(m), tt, dur, T.leadType, T.leadVol, { attack:0.035, release:dur*0.8, cutoff:2800, q:0.7 });
+        }
+      }
+
+      // --- percussioni ---
+      const dv = T.drumVol * (quiet ? 0.35 : 1);
+      if(dv > 0){
+        if(T.drums === 'march'){
+          if(inBar===0 || inBar===2) kick(drumG, t, dv*0.95);
+          if(inBar===1 || inBar===3) noiseHit(drumG, t, 0.17, dv*0.32, 'bandpass', 1900, 1.1);
+          if(bar%8===7 && inBar===3)
+            for(let i=0;i<4;i++) noiseHit(drumG, t+i*spb/4, 0.09, dv*0.24, 'bandpass', 2200, 1.2);
+        } else if(T.drums === 'epic'){
+          if(inBar===0) kick(drumG, t, dv);
+          if(inBar===2){ kick(drumG, t, dv*0.7); kick(drumG, t+spb*0.5, dv*0.45); }
+          if(bar%4===3 && inBar===3) noiseHit(drumG, t, 0.5, dv*0.2, 'lowpass', 420, 0.8);
+        } else if(T.drums === 'light'){
+          if(inBar===0 || inBar===2) kick(drumG, t, dv*0.8);
+          for(let s=0;s<2;s++) noiseHit(drumG, t+s*spb*0.5, 0.045, dv*0.17, 'highpass', 7200, 0.7);
+        }
+      }
+    }
+
+    function pump(){
+      if(!ctx || !playing) return;
+      try{
+        const spb = 60/TRACKS[idx].bpm;
+        let guard = 0;
+        while(nextBeat < ctx.currentTime + 0.35 && guard++ < 24){
+          if(nextBeat < ctx.currentTime) nextBeat = ctx.currentTime + 0.05;
+          scheduleBeat(nextBeat, beat);
+          beat++; nextBeat += spb;
         }
       }catch(e){}
     }
-    function start(){
-      const AC=(typeof window!=='undefined')&&(window.AudioContext||window.webkitAudioContext);
-      if(!AC) return;
-      if(!ctx){ try{ ctx=new AC(); master=ctx.createGain(); master.gain.value=enabled?0.6:0; master.connect(ctx.destination);}catch(e){return;} }
-      if(ctx.state==='suspended'){ try{ctx.resume();}catch(e){} }
-      if(playing) return;
-      playing=true; nextTime=ctx.currentTime+0.1; step=0; timer=setInterval(schedule,25);
+    function applyVol(fade){
+      if(!ctx || !master) return;
+      const target = Math.max(0.0001, enabled ? vol*0.62 : 0.0001);
+      try{
+        const now = ctx.currentTime;
+        master.gain.cancelScheduledValues(now);
+        master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), now);
+        master.gain.linearRampToValueAtTime(target, now + (fade||0.4));
+      }catch(e){ try{ master.gain.value = target; }catch(e2){} }
     }
-    function toggle(){ enabled=!enabled; if(master){ try{master.gain.value=enabled?0.6:0;}catch(e){} } return enabled; }
-    function setTrack(i){ idx=Math.max(0,Math.min(TRACKS.length-1,i|0)); step=0; if(ctx) nextTime=ctx.currentTime+0.05; return TRACKS[idx].name; }
-    return { start, toggle, setTrack, isEnabled:()=>enabled, trackName:()=>TRACKS[idx].name, count:TRACKS.length };
+    function start(){
+      if(!ensure()) return;
+      if(ctx.state === 'suspended'){ try{ ctx.resume(); }catch(e){} }
+      if(!playing){
+        playing = true; beat = 0; melodyPrev = null;
+        nextBeat = ctx.currentTime + 0.15;
+        timer = setInterval(pump, 40);
+      }
+      applyVol(2.2);
+    }
+    function toggle(){
+      enabled = !enabled;
+      if(enabled && !playing) start(); else applyVol(0.5);
+      return enabled;
+    }
+    function setVolume(v){ vol = Math.max(0, Math.min(1, v)); applyVol(0.15); return vol; }
+    function setTrack(i){
+      idx = Math.max(0, Math.min(TRACKS.length-1, i|0));
+      melodyPrev = null;
+      if(ctx && playing){ beat = 0; nextBeat = ctx.currentTime + 0.12; }
+      return TRACKS[idx].name;
+    }
+    if(typeof document !== 'undefined'){
+      const wake = ()=>{ if(ctx && ctx.state==='suspended'){ try{ ctx.resume(); }catch(e){} } };
+      document.addEventListener('pointerdown', wake);
+      document.addEventListener('keydown', wake);
+    }
+    return { start, toggle, setTrack, setVolume,
+             isEnabled:()=>enabled, volume:()=>vol,
+             trackName:()=>TRACKS[idx].name, trackIndex:()=>idx, count:TRACKS.length };
   })();
+
   const musicBtn = document.getElementById('musicBtn');
   const trackBtn = document.getElementById('trackBtn');
+  const volRange = document.getElementById('volRange');
+  const volVal   = document.getElementById('volVal');
   function refreshMusicButtons(){
-    musicBtn.textContent = Music.isEnabled() ? '♪ Musica: ON' : '♪ Musica: OFF';
+    if(musicBtn) musicBtn.textContent = Music.isEnabled() ? '♪ Musica: ON' : '♪ Musica: OFF';
     if(trackBtn) trackBtn.textContent = '🎵 Brano: ' + Music.trackName();
+    if(volRange) volRange.value = String(Math.round(SETTINGS.musicVol*100));
+    if(volVal)   volVal.textContent = Math.round(SETTINGS.musicVol*100) + '%';
+    const row = document.getElementById('musicRow');
+    if(row) row.querySelectorAll('.choiceBtn').forEach(b=>{
+      b.classList.toggle('active', b.dataset.v === String(SETTINGS.musicTrack));
+    });
   }
-  musicBtn.addEventListener('click', ()=>{ Music.toggle(); refreshMusicButtons(); });
-  trackBtn.addEventListener('click', ()=>{
+  if(musicBtn) musicBtn.addEventListener('click', ()=>{ Music.toggle(); refreshMusicButtons(); });
+  if(trackBtn) trackBtn.addEventListener('click', ()=>{
     SETTINGS.musicTrack = (SETTINGS.musicTrack % Music.count) + 1;
     Music.setTrack(SETTINGS.musicTrack-1); Music.start(); refreshMusicButtons();
+  });
+  if(volRange) volRange.addEventListener('input', ()=>{
+    SETTINGS.musicVol = parseInt(volRange.value,10)/100;
+    Music.setVolume(SETTINGS.musicVol); refreshMusicButtons();
   });
 
   // ================= OVERLAY =================
   const overlay = document.getElementById('overlay');
-  function showOverlay(title, text, recapHTML){
+  const INTRO_TEXT = `La mappa classica: 42 territori in 6 continenti. A inizio partita i territori vengono distribuiti a caso e <b>schieri tu</b> le tue armate una a una. Poi, a ogni turno: rinforzi (un'armata ogni 3 territori, minimo 3, più i bonus dei continenti interamente controllati e i tris di carte), attacchi con i dadi (fino a 3 in attacco, 2 in difesa, i pari li vince il difensore) e infine <b>un solo spostamento</b> tra due tuoi territori confinanti. Ogni territorio deve sempre mantenere almeno un'armata.`;
+  function settingsHTML(){
+    return `
+      <div class="settingsGrid">
+        <div class="settingGroup"><div class="settingLabel">Condizione di vittoria</div><div class="choiceRow" id="modeRow"></div></div>
+        <div class="settingGroup"><div class="settingLabel">Difficoltà IA</div><div class="choiceRow" id="diffRow"></div></div>
+      </div>
+      <div class="settingsGrid">
+        <div class="settingGroup"><div class="settingLabel">Carte e tris</div><div class="choiceRow" id="cardsRow"></div></div>
+        <div class="settingGroup"><div class="settingLabel">Valore dei tris</div><div class="choiceRow" id="setRow"></div>
+          <div class="setHint" id="setHint"></div></div>
+      </div>
+      <div class="settingsGrid">
+        <div class="settingGroup"><div class="settingLabel">Avversari</div><select class="dropdownSelect" id="opponentSelect"></select></div>
+        <div class="settingGroup"><div class="settingLabel">Il tuo colore</div><div class="choiceRow" id="colorRow"></div></div>
+      </div>
+      <div class="settingGroup wide"><div class="settingLabel">Colonna sonora</div><div class="choiceRow" id="musicRow"></div>
+        <div class="volRow" style="max-width:260px;margin:12px auto 0;">
+          <span style="width:auto">Volume</span><input type="range" id="ovVolRange" min="0" max="100" value="50"><span id="ovVolVal">50%</span>
+        </div>
+      </div>`;
+  }
+  function showOverlay(title, text, recapHTML, btnLabel, sub){
     document.getElementById('overlayInner').innerHTML = `
-      <h1>${title}</h1><p>${text}</p>
+      <h1>${title}</h1>
+      <div class="sub">${sub||'Il gioco della conquista del mondo'}</div>
+      <div class="rule"></div>
+      <p>${text}</p>
       ${recapHTML||''}
-      <div class="settingGroup"><div class="settingLabel">CONDIZIONE DI VITTORIA</div><div class="choiceRow" id="modeRow"></div></div>
-      <div class="settingGroup"><div class="settingLabel">CARTE E TRIS</div><div class="choiceRow" id="cardsRow"></div></div>
-      <div class="settingGroup"><div class="settingLabel">NUMERO DI AVVERSARI</div><select class="dropdownSelect" id="opponentSelect"></select></div>
-      <div class="settingGroup"><div class="settingLabel">IL TUO COLORE</div><div class="choiceRow" id="colorRow"></div></div>
-      <div class="settingGroup"><div class="settingLabel">DIFFICOLTÀ IA</div><div class="choiceRow" id="diffRow"></div></div>
-      <div class="settingGroup"><div class="settingLabel">MUSICA</div><div class="choiceRow" id="musicRow"></div></div>
+      ${settingsHTML()}
       <div class="legend" id="legendBox"></div>
-      <button class="mainBtn" id="startBtn">GIOCA ANCORA</button>`;
+      <p style="margin-top:14px;"><span class="kbd">Click</span> seleziona, attacca, sposta &nbsp;
+        <span class="kbd">Click</span> di nuovo per deselezionare</p>
+      <button class="mainBtn" id="startBtn">${btnLabel||'GIOCA ANCORA'}</button>`;
     overlay.classList.remove('hidden');
     setupOverlayControls();
   }
@@ -1537,14 +1888,41 @@
       {value:'yes', label:'Con carte'},
       {value:'no',  label:'Senza carte'}
     ], SETTINGS.useCards ? 'yes' : 'no', v=>{ SETTINGS.useCards = (v === 'yes'); });
+    const SET_HINTS = {
+      fixed:    'Tabella fissa del Risiko!: 4 con tre artiglierie, 6 con tre fanterie, 8 con tre cavallerie, 10 con uno per tipo, 12 con il jolly. Non cresce mai.',
+      low:      'Come sopra ma dimezzata (3–8 armate): i tris contano poco, la mappa conta di più.',
+      escalate: 'Vecchia scala del Risk americano: 4, 6, 8, 10, 12, 15 e poi +5 ogni volta, senza limite.'
+    };
+    choiceGroup('setRow', [
+      {value:'fixed',    label:'Fisso 4–12'},
+      {value:'low',      label:'Ridotto 3–8'},
+      {value:'escalate', label:'Crescente'}
+    ], SETTINGS.setBonus, v=>{
+      SETTINGS.setBonus = v;
+      const h = document.getElementById('setHint'); if(h) h.textContent = SET_HINTS[v];
+    });
+    const sh = document.getElementById('setHint'); if(sh) sh.textContent = SET_HINTS[SETTINGS.setBonus];
     populateOpponentSelect();
     choiceGroup('diffRow', [
       {value:'easy',label:'Facile'},{value:'medium',label:'Media'},
       {value:'hard',label:'Difficile'},{value:'impossible',label:'Impossibile'}
     ], SETTINGS.aiDifficulty, v=>{ SETTINGS.aiDifficulty = v; });
-    choiceGroup('musicRow', [
-      {value:'1',label:'Marcia'},{value:'2',label:'Tensione'},{value:'3',label:'Avventura'}
-    ], String(SETTINGS.musicTrack), v=>{ SETTINGS.musicTrack = parseInt(v,10); Music.setTrack(SETTINGS.musicTrack-1); refreshMusicButtons(); });
+    choiceGroup('musicRow', TRACKS.map((t,i)=>({value:String(i+1), label:t.name})),
+      String(SETTINGS.musicTrack), v=>{
+        SETTINGS.musicTrack = parseInt(v,10);
+        Music.setTrack(SETTINGS.musicTrack-1); Music.start(); refreshMusicButtons();
+      });
+    const ovVol = document.getElementById('ovVolRange'), ovVolVal = document.getElementById('ovVolVal');
+    if(ovVol){
+      ovVol.value = String(Math.round(SETTINGS.musicVol*100));
+      if(ovVolVal) ovVolVal.textContent = ovVol.value + '%';
+      ovVol.addEventListener('input', ()=>{
+        SETTINGS.musicVol = parseInt(ovVol.value,10)/100;
+        Music.setVolume(SETTINGS.musicVol);
+        if(ovVolVal) ovVolVal.textContent = ovVol.value + '%';
+        refreshMusicButtons();
+      });
+    }
     const colorRow = document.getElementById('colorRow');
     if(colorRow){
       colorRow.innerHTML = COLOR_PALETTE.map(c=>`<button class="colorSwatchBtn${c===SETTINGS.playerColor?' active':''}" data-c="${c}" style="background:${c};"></button>`).join('');
@@ -1564,7 +1942,7 @@
     });
   }
 
-  setupOverlayControls();
+  showOverlay('RISIKO', INTRO_TEXT, '', 'INIZIA PARTITA');
 })();
 </script>
 </body>
