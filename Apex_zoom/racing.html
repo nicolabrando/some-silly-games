@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom14">
+    <link rel="stylesheet" href="style.css?v=zoom16">
 </head>
 <body>
     <div id="game-container">
@@ -306,6 +306,12 @@
                     <button id="log-btn" class="menu-quiet">Race Log</button>
                 </div>
 
+                <!-- Which build this is, on screen. Opening the game from disk
+                     means the browser can serve a cached page, and then a fix
+                     delivered an hour ago simply is not there - with nothing to
+                     see. Now there is something to see. -->
+                <div id="build-stamp">build zoom16 &nbsp;·&nbsp; 23 Aug 2026</div>
+
                 <details id="how-to-play">
                     <summary>How to play</summary>
                     <div class="guide">
@@ -539,7 +545,11 @@
                                 writes a .txt that is both the race log and a save: <b>Load a file</b>,
                                 on that screen or on the Race Log, reads it back on any machine and
                                 merges it with what is already there &mdash; the same file twice changes
-                                nothing.</li>
+                                nothing. <b>Older logs work too</b>: a .txt written before any of this
+                                existed has no data block, so the report itself is read and the seasons
+                                are rebuilt from the classifications in it. Those are marked
+                                <i>from a log</i>, because a log never carried the drivers&rsquo;
+                                colours or how long the calendar was meant to be.</li>
                             <li><b>What you did here last time.</b> The tyre screen carries your own
                                 record book for that circuit: your best lap on each compound, dry and
                                 wet in separate columns, with the column for today's weather picked
@@ -667,7 +677,11 @@
                 <div id="ex-season-detail" style="display: none;"></div>
                 <div class="ex-io">
                     <button type="button" id="ex-seasons-export" class="menu-quiet">Download everything</button>
-                    <button type="button" id="ex-seasons-import" class="menu-quiet">Load a file</button>
+                    <!-- a LABEL, not a button: clicking a label bound to a file
+                         input opens the picker natively, in every browser, with
+                         no script in the way -->
+                    <label for="data-file" id="ex-seasons-import" class="menu-quiet ex-io-label"
+                           tabindex="0" role="button">Load a file</label>
                     <span class="ex-io-msg" id="ex-seasons-msg"></span>
                 </div>
                 <button id="ex-seasons-back" class="ex-back">Back</button>
@@ -799,12 +813,24 @@
                          seasons and the record book in a block at the end, so
                          one file is both the report you read and the save you
                          bring to another machine. -->
-                    <button id="log-load-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #37474f; color: #ddd;">Load .txt</button>
+                    <label for="data-file" id="log-load-btn" class="ex-io-label" tabindex="0" role="button"
+                           style="display:inline-block; padding: 10px 22px; margin-left: 8px; background: #37474f; color: #ddd; border-radius: 5px; cursor: pointer; font-weight: bold;">Load .txt</label>
                     <button id="log-close-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #555;">Close</button>
                 </div>
                 <div class="ex-io-msg" id="log-io-msg" style="text-align: center; margin-top: 8px;"></div>
-                <!-- one file input for both doors into the importer -->
-                <input type="file" id="data-file" accept=".txt,.json,text/plain" style="display: none;">
+                <!-- One file input for both doors into the importer, and three
+                     deliberate choices in one line.
+                     NOT display:none: Safari refuses a scripted .click() on a
+                     file input that is not rendered, so the picker simply never
+                     opened - "it won't let me load the file", with nothing on
+                     screen to say why. It is off-screen instead.
+                     NO accept filter: it was greying out perfectly good .txt
+                     files in some file dialogs, and a wrong file is answered
+                     with a sentence anyway, which is friendlier than a file you
+                     cannot even select.
+                     multiple: six logs is six loads otherwise. -->
+                <input type="file" id="data-file" multiple
+                       style="position:absolute; left:-9999px; width:1px; height:1px; opacity:0;">
             </div>
             <!-- Pinned to the top edge, styled in the stylesheet: a box in
                  the middle of the screen covered the road while the player
@@ -841,12 +867,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom14"></script>
-    <script src="track.js?v=zoom14"></script>
-    <script src="lines.js?v=zoom14"></script>
-    <script src="car.js?v=zoom14"></script>
-    <script src="ai.js?v=zoom14"></script>
-    <script src="audio.js?v=zoom14"></script>
+    <script src="racelog.js?v=zoom16"></script>
+    <script src="track.js?v=zoom16"></script>
+    <script src="lines.js?v=zoom16"></script>
+    <script src="car.js?v=zoom16"></script>
+    <script src="ai.js?v=zoom16"></script>
+    <script src="audio.js?v=zoom16"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -940,6 +966,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom14"></script>
+    <script src="main.js?v=zoom16"></script>
 </body>
 </html>

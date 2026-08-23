@@ -1663,6 +1663,18 @@ tr.ex-season-row td { border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
 /* your own row in a season's standings */
 tr.ex-me td { background: rgba(255, 213, 79, 0.09); }
 tr.ex-me td:nth-child(2) { font-weight: 700; }
+.ex-fromlog { color: #9ecbff; border-bottom: 1px dotted rgba(158, 203, 255, 0.5); cursor: help; }
+.ex-note {
+    background: rgba(158, 203, 255, 0.08);
+    border: 1px solid rgba(158, 203, 255, 0.25);
+    border-radius: 8px;
+    padding: 9px 12px;
+    margin: 10px 0 4px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: #b7cbe0;
+}
+.ex-note b { color: #dbe8f5; }
 .ex-scroll { overflow-x: auto; }
 .ex-standings { margin-top: 16px; min-width: 640px; }
 .ex-standings th { padding-bottom: 6px; }
@@ -1677,7 +1689,28 @@ tr.ex-me td:nth-child(2) { font-weight: 700; }
     padding-top: 14px;
     border-top: 1px solid #2e343a;
 }
-.ex-io button { width: auto; margin: 0; padding: 9px 16px; font-size: 13px; }
+.ex-io button, .ex-io .ex-io-label { width: auto; margin: 0; padding: 9px 16px; font-size: 13px; }
+/* the Load controls are labels bound to the file input, so they need a
+   button's manners: a pointer, a focus ring, and the same box */
+.ex-io-label {
+    display: inline-block;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    user-select: none;
+}
+.ex-io .ex-io-label { background: rgba(255, 255, 255, 0.06); border: 1px solid #37474f; color: #b0bec5; }
+.ex-io .ex-io-label:hover { background: rgba(255, 255, 255, 0.13); color: #e8eef2; }
+.ex-io-label:focus-visible { outline: 2px solid #9ecbff; outline-offset: 2px; }
+
+#build-stamp {
+    margin-top: 10px;
+    text-align: center;
+    font-size: 10.5px;
+    letter-spacing: 1px;
+    color: #4d5866;
+    font-variant-numeric: tabular-nums;
+}
 .ex-io-msg { font-size: 12px; color: #90a4ae; line-height: 1.5; flex: 1 1 240px; }
 .ex-io-ok { color: #69f0ae; }
 .ex-io-bad { color: #ff8a80; }

@@ -1237,38 +1237,53 @@ document.getElementById('ex-seasons-back').addEventListener('click', () => {
 // end up here.
 const dataFileInput = document.getElementById('data-file');
 let dataMsgEl = null;
-function askForDataFile(msgEl) {
+// The two Load controls are <label for="data-file">, so the picker opens
+// natively and this only decides where the answer gets written. The value is
+// cleared on the way in, or picking the same file twice fires no change event
+// and the game looks broken for the most reasonable thing a person can do.
+function armDataFile(msgEl) {
     dataMsgEl = msgEl || null;
     if (dataMsgEl) { dataMsgEl.textContent = ''; dataMsgEl.className = 'ex-io-msg'; }
-    if (dataFileInput) { dataFileInput.value = ''; dataFileInput.click(); }
+    if (dataFileInput) dataFileInput.value = '';
 }
 function sayImport(text, ok) {
     if (!dataMsgEl) return;
     dataMsgEl.textContent = text;
     dataMsgEl.className = 'ex-io-msg ' + (ok ? 'ex-io-ok' : 'ex-io-bad');
 }
-if (dataFileInput) {
-    dataFileInput.addEventListener('change', () => {
-        const f = dataFileInput.files && dataFileInput.files[0];
-        if (!f) return;
+// One file or a folder's worth: read them in order and report the total. Six
+// logs was six trips through the picker before this.
+function readOneFile(file) {
+    return new Promise((resolve) => {
         const rd = new FileReader();
-        rd.onload = () => {
-            const r = importDataText(String(rd.result || ''));
-            sayImport(r.ok ? ('Loaded ' + f.name + ' — ' + r.why)
-                           : ('Nothing loaded: ' + r.why), r.ok);
-            if (r.ok) {
-                // whatever screen asked for the file, both are now stale
-                if (document.getElementById('explore-seasons').style.display !== 'none') {
-                    exRenderSeasons();
-                }
-            }
-        };
-        rd.onerror = () => sayImport('That file could not be read.', false);
-        rd.readAsText(f);
+        rd.onload = () => resolve({ name: file.name, r: importDataText(String(rd.result || '')) });
+        rd.onerror = () => resolve({ name: file.name, r: { ok: false, why: 'it could not be read' } });
+        rd.readAsText(file);
     });
 }
+if (dataFileInput) {
+    dataFileInput.addEventListener('change', async () => {
+        const files = Array.prototype.slice.call(dataFileInput.files || []);
+        if (!files.length) return;
+        sayImport('Reading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…', true);
+        const lines = [];
+        let good = 0;
+        for (const f of files) {
+            const out = await readOneFile(f);
+            if (out.r.ok) good++;
+            lines.push(out.name + ' — ' + (out.r.ok ? out.r.why : 'nothing loaded: ' + out.r.why));
+        }
+        sayImport(files.length === 1 ? lines[0]
+                  : (good + ' of ' + files.length + ' files loaded · ' + lines.join(' · ')),
+                  good > 0);
+        if (good && document.getElementById('explore-seasons').style.display !== 'none') {
+            exRenderSeasons();
+        }
+    });
+}
+// The labels open the picker themselves; these only say where to answer.
 document.getElementById('ex-seasons-import').addEventListener('click', () =>
-    askForDataFile(document.getElementById('ex-seasons-msg')));
+    armDataFile(document.getElementById('ex-seasons-msg')));
 document.getElementById('ex-seasons-export').addEventListener('click', () => {
     RaceLog.download();
     const m = document.getElementById('ex-seasons-msg');
@@ -1279,7 +1294,13 @@ document.getElementById('ex-seasons-export').addEventListener('click', () => {
     }
 });
 document.getElementById('log-load-btn').addEventListener('click', () =>
-    askForDataFile(document.getElementById('log-io-msg')));
+    armDataFile(document.getElementById('log-io-msg')));
+// A label is not a button: it does not answer the keyboard on its own.
+Array.prototype.forEach.call(document.querySelectorAll('.ex-io-label'), (el) => {
+    el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+    });
+});
 
 // What travels with a downloaded log. Set here rather than inside racelog.js
 // so that file stays a log writer and nothing else.
@@ -4330,8 +4351,12 @@ function exRenderSeasons() {
                 '<td>' + (champ ? '<span class="tt-chip" style="background:' + champ.color +
                     ';"></span> ' + champ.name : '—') + '</td>' +
                 '<td class="' + cls + '">' + (place ? 'P' + place : '—') + '</td>' +
-                '<td class="ex-state">' + (e.complete ? 'finished'
-                    : (e.done >= e.rounds ? 'finished' : 'left at round ' + (e.done + 1))) + '</td>' +
+                '<td class="ex-state">' + (e.fromLog
+                    ? '<span class="ex-fromlog" title="rebuilt from a downloaded race log: ' +
+                      'the drivers\u2019 colours and the length of the calendar were never ' +
+                      'written into one">from a log</span>'
+                    : (e.complete ? 'finished'
+                        : (e.done >= e.rounds ? 'finished' : 'left at round ' + (e.done + 1)))) + '</td>' +
                 '</tr>';
         }).join('') + '</tbody></table>';
 
@@ -4350,7 +4375,16 @@ function exShowSeason(id) {
 
     let html = '<div class="ex-d-head"><h2>Season ' + (entry.seed || '') + '</h2>' +
         '<span class="ex-sml">' + exDate(entry.startedAt) + ' &nbsp;·&nbsp; ' +
-        (entry.complete ? 'finished' : 'left after round ' + entry.done) + '</span></div>';
+        (entry.fromLog ? 'rebuilt from a race log'
+                       : (entry.complete ? 'finished' : 'left after round ' + entry.done)) +
+        '</span></div>';
+    if (entry.fromLog) {
+        html += '<div class="ex-note">Read back out of a downloaded race log rather than saved by ' +
+            'the game. Everything here was counted from the classifications in that file &mdash; ' +
+            'but a log has never carried the drivers&rsquo; <b>colours</b> (those are assigned in ' +
+            'grid order) nor how long the calendar was <b>meant</b> to be, so &ldquo;' +
+            entry.rounds + ' rounds&rdquo; means that many are in the file.</div>';
+    }
 
     html += '<div class="ex-grid ex-career-grid">' +
         exCell('Rounds', entry.done + ' / ' + entry.rounds) +
@@ -4472,9 +4506,238 @@ function extractPayload(text) {
     try { return JSON.parse(after.slice(start)); } catch (e) { return null; }
 }
 
+// ---------------------------------------------------------------------------
+//  READING A LOG THAT PREDATES THE DATA BLOCK
+//
+//  Nicola brought a .txt written before any of this existed and the importer
+//  turned it away, correctly and uselessly: there is no data block in it. But
+//  everything a season is made of IS in that file, in the report - the
+//  calendar, the classifications, the poles, the fastest laps, the bonuses.
+//  So when there is no block to read, the text itself is read.
+//
+//  This is a parser of prose and it knows it. It is deliberately narrow: it
+//  only recognises what THIS game writes, it drops anything it cannot read
+//  rather than guessing, and what it produces is marked as reconstructed so
+//  that a season recovered from a report is never mistaken for one the game
+//  saved itself.
+//
+//  Two things a log has never carried, and no parser can invent:
+//    - the drivers' COLOURS. Names only. Colours are assigned in grid order
+//      from the game's own list, so an imported season is internally
+//      consistent and stable, but they are not the colours you raced.
+//    - how long the calendar was MEANT to be. What is counted is the rounds
+//      the log actually contains.
+// ---------------------------------------------------------------------------
+const LOG_COLOURS = ['red', 'blue', 'yellow', 'purple', 'orange', 'white',
+                     'green', 'cyan', 'pink', 'lime', 'gray'];
+const LOG_F1_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+
+// dd/mm/yyyy or mm/dd/yyyy? The log wrote whatever the browser's locale does,
+// so the browser is asked: format a date whose day cannot be a month and see
+// which number comes first.
+function localeDayFirst() {
+    try {
+        const probe = new Date(2026, 0, 31).toLocaleDateString();
+        const first = (probe.match(/\d+/) || [])[0];
+        return first === '31';
+    } catch (e) { return true; }
+}
+function parseLogDate(str) {
+    if (!str) return null;
+    const n = (str.match(/\d+/g) || []).map(Number);
+    if (n.length < 3) return null;
+    let d, m, y;
+    if (n[0] > 31) { y = n[0]; m = n[1]; d = n[2]; }            // yyyy-mm-dd
+    else if (n[0] > 12) { d = n[0]; m = n[1]; y = n[2]; }
+    else if (n[1] > 12) { m = n[0]; d = n[1]; y = n[2]; }
+    else if (localeDayFirst()) { d = n[0]; m = n[1]; y = n[2]; }
+    else { m = n[0]; d = n[1]; y = n[2]; }
+    const t = new Date(y, m - 1, d, n[3] || 0, n[4] || 0, n[5] || 0).getTime();
+    return isFinite(t) ? t : null;
+}
+
+// A short stable id from the season's own words, so importing the same log
+// twice lands on the same season instead of a second copy of it.
+function logSeasonId(seed, firstDate, tracks) {
+    let h = 0;
+    const s = 'log|' + (seed || '') + '|' + (firstDate || '') + '|' + tracks.join(',');
+    for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
+    return 'log' + (h >>> 0).toString(36);
+}
+
+function trackKeyFromLabel(label) {
+    if (!label) return null;
+    const want = String(label).trim().toLowerCase();
+    for (const k of Object.keys(TRACK_LABELS)) {
+        if (TRACK_LABELS[k].toLowerCase() === want) return k;
+    }
+    return null;
+}
+
+function parseLogSeasons(text) {
+    if (!text || text.indexOf('SESSION') < 0) return [];
+    const blocks = text.split(/^={10,}$/m);
+    const seasons = [];        // one per (seed, calendar) run
+    let pending = null;        // the pole from the qualifying session just read
+
+    for (const block of blocks) {
+        const head = block.match(/^SESSION\s+\d+\s+(.*)$/m);
+        const modeLine = block.match(/^\s*mode\s+(.+)$/m);
+        if (!head || !modeLine) continue;
+        const bits = modeLine[1].split('|').map(x => x.trim());
+        const mode = bits[0];
+        const get = (re) => { for (const b of bits) { const m = b.match(re); if (m) return m[1].trim(); } return null; };
+        const seed = get(/^season\s+(.+)$/);
+        const trackKey = trackKeyFromLabel(get(/^track\s+(.+)$/));
+        const weatherWord = bits.find(b => /^(dry|damp|soaked|wet)$/i.test(b)) || 'dry';
+        const wet = !/^dry$/i.test(weatherWord);
+
+        if (/^Qualifying/.test(mode)) {
+            const pole = block.match(/QUALI\s+session ended — pole:\s+(.+?)\s+[\d.]+\s*$/m);
+            pending = { seed: seed, track: trackKey, pole: pole ? pole[1].trim() : null };
+            continue;
+        }
+        if (mode !== 'Championship round' || !seed || !trackKey) { pending = null; continue; }
+
+        // ---- the classification --------------------------------------
+        const order = [];
+        const re = /^\s*P\s*(\d+)\s{2}(.+?)\s{2,}laps\s+(\S+)\s+time\s+(\S+)/gm;
+        let m;
+        while ((m = re.exec(block)) !== null) {
+            const pos = parseInt(m[1], 10);
+            const name = m[2].trim();
+            const dnf = /DNF/i.test(m[4]);
+            order.push({ name: name, pos: pos, dnf: dnf });
+        }
+        if (order.length < 2) { pending = null; continue; }
+
+        const fl = block.match(/FASTLAP\s+(.+?)\s+—/);
+        const ch = block.match(/CHELEM\s+(.+?)\s+—/);
+        const bonus = {};
+        const bre = /BONUS\s+(.+?)\s+—\s+\+(\d+)\s/g;
+        let b;
+        while ((b = bre.exec(block)) !== null) bonus[b[1].trim()] = parseInt(b[2], 10);
+
+        const race = {
+            track: trackKey, wet: wet,
+            pole: (pending && pending.seed === seed && pending.track === trackKey)
+                  ? pending.pole : null,
+            fastest: fl ? fl[1].trim() : null,
+            chelem: ch ? ch[1].trim() : null,
+            order: order.map(o => ({
+                name: o.name, pos: o.pos, dnf: o.dnf,
+                pts: o.dnf ? 0 : (LOG_F1_POINTS[o.pos - 1] || 0),
+                bonus: bonus[o.name] || 0
+            })),
+            you: get(/^you on\s+(.+)$/),
+            when: parseLogDate(head[1])
+        };
+        pending = null;
+
+        // A season never visits the same circuit twice, so a repeat means this
+        // is a DIFFERENT season that happens to share a seed - two attempts at
+        // the same calendar, which is exactly what a seed is for.
+        let season = null;
+        for (let i = seasons.length - 1; i >= 0; i--) {
+            if (seasons[i].seed === seed) {
+                if (seasons[i].races.some(r => r.track === trackKey)) break;
+                season = seasons[i];
+                break;
+            }
+        }
+        if (!season) { season = { seed: seed, races: [] }; seasons.push(season); }
+        season.races.push(race);
+    }
+
+    // ---- into archive entries -----------------------------------------
+    return seasons.filter(s => s.races.length).map(s => {
+        // colours in the order the drivers first appear, the player first
+        const names = [];
+        for (const r of s.races) for (const o of r.order) {
+            if (names.indexOf(o.name) < 0) names.push(o.name);
+        }
+        const playerName = names.find(n => /^you$/i.test(n)) || null;
+        const ordered = playerName
+            ? [playerName].concat(names.filter(n => n !== playerName)) : names;
+        const colourOf = {};
+        ordered.forEach((n, i) => { colourOf[n] = LOG_COLOURS[i % LOG_COLOURS.length]; });
+
+        const chassisWord = (s.races.find(r => r.you) || {}).you || '';
+        const chMatch = chassisWord.match(/\(([^)]+)\)/);
+        let chassisKey = null;
+        if (chMatch) {
+            const want = chMatch[1].trim().toLowerCase();
+            for (const k of Object.keys(CHASSIS)) {
+                if (CHASSIS[k].label.toLowerCase() === want) { chassisKey = k; break; }
+            }
+        }
+
+        const points = {}, bonusPoints = {};
+        for (const n of ordered) { points[colourOf[n]] = 0; bonusPoints[colourOf[n]] = 0; }
+        const results = s.races.map(r => {
+            for (const o of r.order) {
+                points[colourOf[o.name]] += (o.pts || 0) + (o.bonus || 0);
+                bonusPoints[colourOf[o.name]] += (o.bonus || 0);
+            }
+            return {
+                track: r.track, wet: r.wet,
+                pole: r.pole && colourOf[r.pole] ? colourOf[r.pole] : null,
+                fastest: r.fastest && colourOf[r.fastest] ? colourOf[r.fastest] : null,
+                chelem: r.chelem && colourOf[r.chelem] ? colourOf[r.chelem] : null,
+                order: r.order.map(o => ({
+                    color: colourOf[o.name], name: o.name, pos: o.pos,
+                    pts: o.pts, bonus: o.bonus, dnf: o.dnf
+                }))
+            };
+        });
+        const first = s.races[0].when || null;
+        return {
+            id: logSeasonId(s.seed, first, s.races.map(r => r.track)),
+            startedAt: first || Date.now(),
+            updatedAt: s.races[s.races.length - 1].when || first || Date.now(),
+            // What the log holds is what was played, so it is reported as a
+            // finished season - with fromLog set, because "ten rounds" here
+            // means ten rounds ARE IN THE FILE, not that the calendar was ten.
+            complete: true,
+            fromLog: true,
+            seed: s.seed,
+            difficulty: null,
+            rival: null,
+            rounds: s.races.length,
+            done: s.races.length,
+            tracks: s.races.map(r => r.track),
+            weather: s.races.map(r => r.wet),
+            participants: ordered.map(n => ({
+                color: colourOf[n],
+                driverName: /^you$/i.test(n) ? 'You' : n,
+                isPlayer: /^you$/i.test(n),
+                chassis: /^you$/i.test(n) ? chassisKey : null
+            })),
+            points: points, bonusPoints: bonusPoints, results: results
+        };
+    });
+}
+
 function importDataText(text) {
     const box = extractPayload(text);
-    if (!box) return { ok: false, why: 'no Apex data in that file' };
+    if (!box) {
+        // No data block: an older log, or one written by a build before the
+        // block existed. The report is the data then - see parseLogSeasons.
+        let recovered = [];
+        try { recovered = parseLogSeasons(text); } catch (e) { recovered = []; }
+        if (!recovered.length) {
+            return { ok: false, why: 'no Apex data and no championship rounds in that file' };
+        }
+        const r = seasonsMerge(recovered);
+        const bits = [];
+        if (r.added) bits.push(r.added + ' season' + (r.added > 1 ? 's' : '') + ' rebuilt from the report');
+        if (r.updated) bits.push(r.updated + ' updated');
+        if (!bits.length) bits.push('those seasons were already here');
+        return { ok: true, fromLog: true,
+                 why: bits.join(', ') + ' — colours and calendar length were never in a log, ' +
+                      'so they are reconstructed',
+                 report: { seasons: r, bests: 0 } };
+    }
     const r = importDataPayload(box);
     if (!r) return { ok: false, why: 'that file was not readable' };
     const bits = [];

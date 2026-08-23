@@ -756,6 +756,78 @@ la torre dei tempi**. Lo stesso span nella griglia di fine stagione era un
 inline-block vuoto senza larghezza: invisibile da sempre. Adesso la classe ha
 una dimensione sua e i colori si vedono in tutte e tre le tabelle.
 
+## Leggere un log scritto prima che esistesse il blocco dati
+
+Nicola ha provato a caricare un `.txt` scaricato **il giorno prima** che tutto
+questo esistesse, e l'importatore l'ha respinto. Aveva ragione a farlo: in quel
+file un blocco dati non c'e'. Ma la stagione **c'e'**, dentro il rapporto — il
+calendario, le classifiche, le pole, i giri veloci, i bonus. Quindi quando non
+c'e' il blocco da leggere, si legge il testo.
+
+E' un parser di prosa e lo sa: riconosce **solo** quello che scrive questo
+gioco, scarta quello che non sa leggere invece di indovinare, e marca quello che
+produce come ricostruito, così una stagione recuperata da un rapporto non viene
+mai scambiata per una che il gioco ha salvato da sé.
+
+Due cose che un log non ha mai portato, e che nessun parser può inventare:
+
+- **i colori dei piloti.** Ci sono solo i nomi. I colori vengono assegnati
+  nell'ordine di griglia dalla lista del gioco: la stagione importata è coerente
+  con sé stessa e stabile fra un caricamento e l'altro, ma non sono i colori con
+  cui hai corso.
+- **quanto doveva essere lungo il calendario.** Si contano i round che il file
+  contiene davvero. «10 rounds» vuol dire *dieci sono nel file*.
+
+Un dettaglio sui punti: i log vecchi vengono ricalcolati **con le regole di
+allora** — punti F1 per posizione più il bonus sorpassi che il log riporta, e
+niente punto del giro veloce, perché quando quella stagione è stata corsa quella
+regola non c'era. La classifica ricostruita è quella che hai visto, non quella
+che vedresti oggi.
+
+L'`id` di una stagione importata è derivato dalle sue stesse parole (seme, data
+della prima gara, calendario), quindi ricaricare lo stesso file due volte
+ricade sulla stessa stagione invece di crearne una copia. E se lo stesso seme
+compare due volte nello stesso log con un circuito che si ripete, sono due
+stagioni diverse sullo stesso calendario — che è esattamente a cosa serve un
+seme.
+
+## La porta, non l'importatore
+
+Nicola ha riprovato con sei log e ha detto: «ancora non mi lascia caricare
+questo tipo di file». Provati tutti e sei nel build corrente: **entrano tutti**,
+sette stagioni in totale. Quindi quello che non funzionava non era
+l'importatore — era la porta per arrivarci, e il round precedente aveva testato
+l'importatore e non la porta.
+
+Tre cose sistemate, ognuna un modo diverso in cui «non mi lascia caricare» può
+essere letteralmente vero:
+
+- **L'input era `display:none`.** Safari rifiuta un `.click()` da script su un
+  input file che non è renderizzato: il selettore semplicemente non si apre, e
+  sullo schermo non compare niente che spieghi perché. Ora è fuori schermo ma
+  renderizzato — e soprattutto i due pulsanti *Load* sono diventati
+  **`<label for="data-file">`**: un'etichetta legata a un input file apre il
+  selettore da sola, in qualunque browser, senza script di mezzo.
+- **`accept=".txt,.json,text/plain"`** poteva rendere non selezionabili file
+  `.txt` perfettamente validi in certe finestre di dialogo. Tolto: un file
+  sbagliato riceve una frase, che è più gentile di un file che non si riesce
+  nemmeno a scegliere.
+- **Un file alla volta.** Sei log erano sei giri nel selettore. Adesso l'input è
+  `multiple`, li legge in fila e riporta il totale.
+
+## Un timbro del build sullo schermo
+
+Aprire il gioco da disco vuol dire che il browser può servire una pagina in
+cache: una correzione consegnata un'ora fa **non c'è**, e non c'è niente da
+vedere che lo dica. Il `?v=` sui file busta gli script, ma non `racing.html`
+stesso — se è quella a venire dalla cache, chiede i vecchi indirizzi e il giro
+si chiude.
+
+Sotto il menu adesso c'è una riga piccola e grigia: **build zoom16 · 23 Aug
+2026**. Serve a rispondere in due secondi alla domanda che finora non aveva
+risposta — «sto guardando la versione nuova?» — e a farla diventare una domanda
+che si può fare a distanza.
+
 ## Verificato (Chromium headless, dpr 2)
 
 Gara singola con qualifiche su Oval fino al risultato (linea "shipped" ⇒
@@ -858,3 +930,25 @@ sono state corrette, non il gioco: davano per scontato che il menu si aprisse su
 serie: il caso «asciutto» non forzava l'asciutto e la gara singola tira pioggia
 una volta su cinque, quindi falliva una volta ogni cinque esecuzioni. Adesso il
 meteo è fissato.
+
+Sull'import dei log vecchi (`test_log_import.js`) il test gira **sul file vero di
+Nicola**, non su un campione inventato, perché il formato che deve reggere è
+quello che il gioco ha scritto davvero. Il file contiene una stagione da dieci
+round, e ne esce: seme `brake-hard-813`, dieci circuiti tutti diversi, tre
+bagnati, undici piloti, 110 partenze. Le pole (10), i giri veloci (10) e i Grand
+Chelem (3) sono **contati nel file con un metodo diverso da quello del parser** e
+confrontati. Il giocatore: 4 vittorie, 10 podi su 10 gare, 6 pole, 5 giri
+veloci, 2 Grand Chelem, zero ritiri, 221 punti, telaio Aero — e i punti
+dell'archivio tornano sommando gara per gara. Sullo schermo la stagione appare
+marcata «from a log» con la nota sui colori, e ricaricare lo stesso file una
+seconda volta non crea un doppione.
+
+Sulla porta (`test_multi_import.js`) il test guida **il vero `<input type=file>`
+con i file veri**, perché l'ultima volta il codice passava qui e falliva sulla
+sua macchina: era la porta a non essere testata. Controlla che l'input esista,
+sia `multiple`, non abbia filtro `accept`, non sia nascosto, e che i due
+controlli *Load* siano etichette legate a lui. Poi carica **tutti e sette i log
+in un colpo solo**: sette stagioni sullo scaffale — fra cui due volte
+`brake-hard-813`, stesso seme e due tentativi diversi, riconosciute come
+stagioni distinte — 59 gare, 28 vittorie, 6 titoli, 1277 punti in carriera. Gli
+stessi sette file una seconda volta non aggiungono niente.
