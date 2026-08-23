@@ -1647,8 +1647,11 @@ class Car {
                 this.finished = true;
                 this.raceTime = track.currentRaceTime; // passed via track object for convenience
                 if (this.jumpStartPenalty) {
-                    // 5s per offence, not a flat 5s however many times you jumped
-                    this.raceTime += 5000 * (this.jumpStartPenalties || 1);
+                    // The amount was worked out when the offence happened and
+                    // carried here, so the time added at the flag is exactly
+                    // the one the banner showed. It is no longer a flat five
+                    // seconds: see jumpPenaltySeconds() in main.js.
+                    this.raceTime += this.jumpPenaltyMs || 0;
                 }
             }
         }

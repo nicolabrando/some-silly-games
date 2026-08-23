@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom12">
+    <link rel="stylesheet" href="style.css?v=zoom13">
 </head>
 <body>
     <div id="game-container">
@@ -462,8 +462,24 @@
 
                         <h3>Racing</h3>
                         <ul>
-                            <li><b>Lights.</b> Move before they go out and you take a <b>5&nbsp;second penalty</b>
-                                and the grid is reset. The delay before the green is random &mdash; do not anticipate.</li>
+                            <li><b>Lights.</b> Move before they go out and the grid is reset &mdash; everyone
+                                back to their slot, wheels stopped, lap counters wiped &mdash; and you take a time
+                                penalty at the flag. The hold before the green is random, and it is drawn from
+                                the same range at a restart as at the first start, so jumping on purpose to be
+                                given an easier start to read buys you nothing.</li>
+                            <li><b>How big the penalty is.</b> Not a fixed number:
+                                <b>5% of a lap here &times; &radic;(laps&nbsp;&divide;&nbsp;5)</b>, never under a
+                                second and never over five. Five seconds is Formula 1's figure and it does not
+                                travel: there it is 5.6% of a ninety-second lap in a race whose finishers are
+                                four seconds apart, so it costs about one place. Here a lap is eighteen seconds
+                                and the field finishes 0.85s apart, so the same five seconds cost three to four
+                                places &mdash; a false start would decide the race rather than punish it. The
+                                square root is there because the field does not spread out in proportion to the
+                                distance: over three laps it finishes within 10.5s, over twenty within 20.5s.
+                                In practice that means <b>one second</b> on most circuits over a short race,
+                                1.8s over five laps of Marathon, 3.6s over twenty of them. Every further
+                                offence costs the same again, and the exact figure is on the banner and in the
+                                race log.</li>
                             <li><b>Slipstream.</b> Tuck in behind a car and you get a tow: more power, less drag.
                                 It builds the closer you get, so use it down the straight and pull out late.
                                 The car ahead has to be <i>moving</i> to leave a hole in the air &mdash; one that
@@ -789,12 +805,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom12"></script>
-    <script src="track.js?v=zoom12"></script>
-    <script src="lines.js?v=zoom12"></script>
-    <script src="car.js?v=zoom12"></script>
-    <script src="ai.js?v=zoom12"></script>
-    <script src="audio.js?v=zoom12"></script>
+    <script src="racelog.js?v=zoom13"></script>
+    <script src="track.js?v=zoom13"></script>
+    <script src="lines.js?v=zoom13"></script>
+    <script src="car.js?v=zoom13"></script>
+    <script src="ai.js?v=zoom13"></script>
+    <script src="audio.js?v=zoom13"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -888,6 +904,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom12"></script>
+    <script src="main.js?v=zoom13"></script>
 </body>
 </html>

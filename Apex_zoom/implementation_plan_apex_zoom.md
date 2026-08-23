@@ -597,6 +597,89 @@ tutto il libro dei record, cioè proprio i tempi che la schermata gomme ha
 appena cominciato a mostrare. Il nome è quello che si legge; quelle sono
 serrature.
 
+## La falsa partenza non costa più cinque secondi
+
+Nicola: «cinque secondi sono adeguati o troppi? Tanto non si può ingannare il
+sistema, nessuno guadagna nulla tentandola». Aveva ragione, e i numeri lo
+dicono — ma non del tutto, e la parte che mancava era proprio quella che
+giustificava la penalità.
+
+**Quanto costavano davvero cinque secondi.** Misurato su dodici gare simulate a
+calendario fisso (`measure_penalty2.js`): a 5 giri gli arrivati sono separati
+da 0,85s, quindi +5s costano in media **2,9 posizioni**, e su circuiti corti si
+arriva a 4,2. In F1 gli stessi cinque secondi ne costano **una**. Fuori scala
+di tre-quattro volte.
+
+**E il motivo per cui esistono in F1 qui non vale.** Una partenza anticipata non
+guadagna un centimetro: la griglia si rifà, le velocità si azzerano, i contagiri
+si cancellano. Non c'è nessun vantaggio da togliere.
+
+**Però un buco c'era.** Il semaforo del restart pescava fra 2,6 e 4,2 secondi,
+quello della partenza vera fra 2,6 e 6,5: una finestra due volte e mezzo più
+stretta, quindi più facile da anticipare. Bruciare la partenza per farsene dare
+una più leggibile era l'unico modo di fregare la procedura, ed era gratis.
+Adesso le due pescano dalla stessa `rollGoDelay()` — una funzione sola, così non
+possono più divergere.
+
+### La formula
+
+    penalità = 5% di un giro qui  x  radice(giri / 5)
+
+minimo 1 secondo, massimo 5.
+
+Il primo fattore è il rapporto della F1: cinque secondi su un giro da novanta.
+Il secondo c'è perché **il campo non si allarga in proporzione alla distanza**.
+Misurato sugli stessi tre circuiti:
+
+| giri | gara del vincitore | ampiezza del campo | per giro | una posizione vale |
+|---|---|---|---|---|
+| 3 | 57s | 10,5s | 3,50s | 0,72s |
+| 5 | 101s | 11,8s | 2,35s | 0,85s |
+| 10 | 201s | 15,4s | 1,54s | 1,23s |
+| 20 | 401s | 20,5s | 1,03s | 1,62s |
+
+Sestuplicando la distanza il campo si allarga del doppio: i distacchi crescono
+come la **radice** dei giri. Una penalità lineare nei giri — l'idea ovvia —
+ricomincerebbe a strafare sulle gare lunghe come i 5s fissi strafanno su quelle
+corte.
+
+Cosa ne esce, in pratica:
+
+| | 5 giri | 20 giri |
+|---|---|---|
+| Oval (giro 8,7s) | 1,0s | 1,0s |
+| Kart (18,0s) | 1,0s | 2,0s |
+| Colossus (24,8s) | 1,2s | 2,5s |
+| Marathon (36,3s) | 1,8s | 3,6s |
+
+Sui circuiti normali e sulle gare corte **vince il minimo di un secondo**, ed è
+giusto così: la formula lì darebbe 0,4-0,9s, cioè esattamente una posizione, ma
+sotto il secondo non è una penalità, è un arrotondamento. La formula conta sui
+circuiti XL e sulle gare lunghe, che è dove i cinque secondi fissi erano più
+sbagliati.
+
+Ogni infrazione successiva costa di nuovo lo stesso, e l'importo esatto lo dice
+il cartello («+1.0 second penalty — 5% of a lap here, over 3 laps»), il registro
+di gara e il tooltip sul foglio dei risultati.
+
+### Dettagli implementativi
+
+Il giro di riferimento è **lo stesso numero che l'anteprima del Gran Premio
+stampa come "Est. lap time"**, così la penalità e la schermata che la annuncia
+non possono contraddirsi. Misurarlo vuol dire simulare un giro (50-140 ms),
+quindi si fa una volta per circuito per sessione e si tiene in cache — e
+l'anteprima la riempie gratis quando disegna. In prova libera non si misura
+niente: lì la procedura di partenza non esiste.
+
+L'importo viene calcolato **quando avviene l'infrazione** e portato sull'auto
+(`jumpPenaltyMs`), non ricalcolato alla bandiera: il tempo aggiunto al traguardo
+è per costruzione quello che il cartello aveva mostrato.
+
+Il valore iniziale di `racePenaltyS` è scritto a mano e non letto da
+`JUMP_MIN_S`: quella costante vive più in basso nel file e sarebbe nella
+temporal dead zone. È la stessa trappola che aveva nascosto il banner Resume per
+un'intera build — due volte in una sessione basta.
+
 ## Verificato (Chromium headless, dpr 2)
 
 Gara singola con qualifiche su Oval fino al risultato (linea "shipped" ⇒
@@ -668,3 +751,13 @@ il gioco costruisce davvero, non dalla stringa che lo compone —
 `apex3-log-2026-08-23T05-39-49.txt` da un blob, prima riga `APEX 3 — race log`,
 la sessione e i suoi eventi ancora dentro, e la parola `apex2` che non compare
 da nessuna parte nel file.
+
+Sulla falsa partenza (`test_false_start.js`), tre cose. La formula interrogata
+direttamente sui circuiti veri: Oval/Kart/F1 a 5 giri → 1,0s (il minimo),
+Colossus 1,2s, Marathon 1,8s, Marathon x20 3,6s, x50 5,0s (il tetto), e la forma
+a radice verificata lontano dai due clamp — quadruplicando i giri la penalità
+raddoppia esatta (2,0 → 4,0). Il semaforo: 4000 estrazioni, da 2,60s a 6,50s, e
+la stessa funzione chiamata sia alla partenza sia al restart. Poi una gara vera
+con l'acceleratore tenuto giù mentre le luci sono ancora accese: un'infrazione
+registrata, 1,0s portato sull'auto, il cartello che dice «+1.0 second penalty», e
+al traguardo 60s che diventano 61s.

@@ -451,6 +451,12 @@ let recoveries = [];       // { car, phase, t, from, to, crane }
 // and two of them never occupy the same patch of ground.
 let raceFinished = false;
 let isFalseStartResetting = false;
+// Seconds added for one jumped start in the race currently being run. Set by
+// startGame from the circuit and the distance - see jumpPenaltySeconds().
+// The initial value is written out rather than read from JUMP_MIN_S: that
+// const lives further down the file and would be in the temporal dead zone
+// here - the same trap that hid the Resume banner for a whole build.
+let racePenaltyS = 1.0;
 // v7 Globals
 let globalSkidMarks = [];
 let globalParticles = [];
@@ -588,6 +594,68 @@ function chooseChassisForWeekend(done) {
 // One championship point per position recovered from the grid, up to five.
 const PLACES_BONUS_PER = 1;
 const PLACES_BONUS_CAP = 5;
+
+// --- The false-start penalty ---------------------------------------------
+//  It used to be F1's five seconds, and five seconds is the wrong number here.
+//  In F1 that is 5.6% of a ninety-second lap, in a race where the classified
+//  runners finish four to six seconds apart: it costs about ONE place. Here a
+//  lap is eighteen seconds and the finishers are 0.85s apart, so the same five
+//  seconds cost between three and four places. Measured over twelve simulated
+//  races on a fixed calendar - /root/tools/measure_penalty2.js.
+//
+//  Worse, the F1 rationale does not even apply. A jumped start here gains no
+//  track position at all: the grid is put back, velocities zeroed, lap
+//  counters wiped. There is nothing to take away. The penalty exists only so
+//  that anticipating deliberately is not free - and see rollGoDelay() for the
+//  one thing anticipating used to buy.
+//
+//  So the penalty is scaled to the race rather than being a number:
+//
+//        penalty  =  5% of a lap  x  sqrt(laps / 5)
+//
+//  The first factor is F1's own ratio. The second is there because the field
+//  does NOT spread out in proportion to the distance: on the same three
+//  circuits the spread grows from 10.5s over three laps only to 20.5s over
+//  twenty, so gaps grow roughly like the SQUARE ROOT of the distance. A
+//  penalty linear in the lap count - the obvious idea - would start
+//  over-punishing long races the way a flat 5s over-punishes short ones.
+//
+//  Floored at a second, because below that it is a rounding error rather than
+//  a penalty, and capped at five, which is where it used to begin.
+const JUMP_LAP_SHARE = 0.05;      // F1: 5s of a 90s lap
+const JUMP_REF_LAPS = 5;          // the game's default race
+const JUMP_MIN_S = 1.0;
+const JUMP_MAX_S = 5.0;
+function jumpPenaltySeconds(lapMs, laps) {
+    if (!lapMs || !isFinite(lapMs)) return JUMP_MIN_S;   // no reference: the floor
+    const raw = JUMP_LAP_SHARE * (lapMs / 1000) *
+                Math.sqrt(Math.max(1, laps || 1) / JUMP_REF_LAPS);
+    return Math.min(JUMP_MAX_S, Math.max(JUMP_MIN_S, Math.round(raw * 10) / 10));
+}
+
+// The reference lap: the same figure the Grand Prix preview prints as "Est.
+// lap time", so the penalty and the screen that predicts it can never
+// disagree. Measuring it means simulating a lap (50-140ms), so it is done
+// once per circuit per session and kept - and the preview seeds this cache
+// for free when it draws.
+const _lapRefCache = {};
+function lapRefMs(trackObj, key, wet) {
+    const id = (key || '?') + (wet ? ':wet' : '');
+    if (_lapRefCache[id] !== undefined) return _lapRefCache[id];
+    let ms = null;
+    try { ms = measureTrackStats(trackObj, !!wet).lap; } catch (e) { ms = null; }
+    _lapRefCache[id] = ms;
+    return ms;
+}
+
+// How long the lights hold, first start and restart alike. It lives in one
+// function because the two had drifted apart: the restart used to roll
+// 2.6-4.2s against the first start's 2.6-6.5s, a window two and a half times
+// narrower and therefore easier to anticipate. That made jumping the start
+// worth something after all - abort the start you cannot read, get one you
+// can - which is the only way the procedure could be gamed. Same window now,
+// so a false start buys exactly nothing.
+function rollGoDelay() { return 2.5 + 0.1 + Math.random() * 3.9; }
 
 // --- The point for the fastest lap ---------------------------------------
 // F1's rule, and F1's condition with it: the lap only pays if the driver is
@@ -2676,6 +2744,9 @@ function showGpPreview(trackType) {
     const line = pTrack.getRacingLine();
     const corners = countCorners(pTrack);
     const stats = measureTrackStats(pTrack, wet);
+    // Free of charge: the false-start penalty needs exactly this number, and
+    // measuring it costs a simulated lap. See lapRefMs().
+    if (stats && stats.lap) _lapRefCache[trackType + (wet ? ':wet' : '')] = stats.lap;
 
     document.getElementById('gp-title').innerText =
         `Round ${round}/${total} — ${trackLabel(trackType)}`;
@@ -4268,6 +4339,11 @@ function startGame(forceTrackType = null) {
     // Assign correct initial waypoint and jump start states
     cars.forEach(car => {
         car.jumpStartPenalty = false;
+        // and the amount with the flag: a car is built fresh every race, but
+        // leaving these to chance is how the last race's penalty would follow
+        // a driver into the next one.
+        car.jumpStartPenalties = 0;
+        car.jumpPenaltyMs = 0;
         
         // AI random jump start chance (5%)
         if (!car.isPlayer) {
@@ -4331,10 +4407,19 @@ function startGame(forceTrackType = null) {
         grid: cars.map(c => c.driverName || c.color)
     });
 
+    // What a false start costs at THIS circuit over THIS distance. Worked out
+    // here, once, rather than at the moment somebody jumps: the reference lap
+    // has to be simulated the first time a circuit comes up, and the middle of
+    // a start sequence is not where that 100ms belongs. Not in free practice -
+    // that has no start procedure at all, so it would be 100ms spent on a rule
+    // that cannot fire.
+    racePenaltyS = isPractice ? JUMP_MIN_S
+        : jumpPenaltySeconds(lapRefMs(track, currentTrackKey, isRaining), TOTAL_LAPS);
+
     gameState = 'countdown';
     countdownTimer = 0;
     lightState = 0;
-    goDelay = 2.5 + 0.1 + Math.random() * 3.9; // Wait between 0.1 and 4 seconds before GO
+    goDelay = rollGoDelay();
 
     // ---- FREE PRACTICE HAS NO START PROCEDURE ---------------------------
     // It used to run the full one: five red lights, a random hold, and the
@@ -5410,7 +5495,8 @@ function updateHUD() {
             c.finishIndex = finishCounter++;
             RaceLog.event('FINISH', `P${c.finishIndex + 1} ${c.driverName || c.color} — ` +
                 `${RaceLog.fmt(c.raceTime)} after ${c.lap} laps` +
-                (c.jumpStartPenalty ? ' (incl. 5s jump-start penalty)' : ''));
+                (c.jumpStartPenalty
+                    ? ` (incl. ${((c.jumpPenaltyMs || 0) / 1000).toFixed(1)}s jump-start penalty)` : ''));
         }
     });
 
@@ -5941,7 +6027,7 @@ function updateHUD() {
                 <td${dim}>${timeStr}</td>
                 <td style="color: ${isFastest ? '#ce93d8' : '#4CAF50'}; font-weight: ${isFastest ? 'bold' : 'normal'};">${bestLapStr}</td>
                 <td>${gapStr}</td>
-                <td style="color: ${isQuickest ? '#ffd54f' : '#cfd8dc'}; font-weight: ${isQuickest ? 'bold' : 'normal'};"${c.jumpStartPenalty ? ' title="jump start — penalty applied"' : (isQuickest ? ' title="quickest away from the lights"' : '')}>${reactStr}${c.jumpStartPenalty ? ' &#9888;' : ''}</td>
+                <td style="color: ${isQuickest ? '#ffd54f' : '#cfd8dc'}; font-weight: ${isQuickest ? 'bold' : 'normal'};"${c.jumpStartPenalty ? ` title="jump start — +${((c.jumpPenaltyMs || 0) / 1000).toFixed(1)}s added to the race time"` : (isQuickest ? ' title="quickest away from the lights"' : '')}>${reactStr}${c.jumpStartPenalty ? ' &#9888;' : ''}</td>
                 <td>${isChampionship ? (ptsEarned || 0) : '-'}</td>
                 <td class="pts-bonus"${extraEarned > 0 ? ` title="${[
                     bonusEarned > 0 ? `${Math.max(0, (c.startGridPos || (index + 1)) - (index + 1))} places gained (P${c.startGridPos} to P${index + 1}): +${bonusEarned}` : '',
@@ -6274,9 +6360,14 @@ function gameLoop(timestamp) {
             if ((car.inputs.up || hasMoved) && lightState < 6 && !isFalseStartResetting) {
                 car.jumpStartPenalties = (car.jumpStartPenalties || 0) + 1;
                 car.jumpStartPenalty = true;
+                // Each offence costs the same again. The total is carried on
+                // the car rather than recomputed at the flag, so a penalty is
+                // always the one that was shown on the banner.
+                car.jumpPenaltyMs = (car.jumpPenaltyMs || 0) + racePenaltyS * 1000;
                 isFalseStartResetting = true;
                 RaceLog.event('PENALTY', `${car.driverName || car.color} jumped the start ` +
-                    `(offence #${car.jumpStartPenalties}) — +${car.jumpStartPenalties * 5}s total, grid reset`);
+                    `(offence #${car.jumpStartPenalties}) — +${(car.jumpPenaltyMs / 1000).toFixed(1)}s ` +
+                    `total (${racePenaltyS.toFixed(1)}s each), grid reset`);
                 // Show banner.
                 // Always dark background + white body text; the offender's name
                 // is the only coloured element and carries a dark outline, so
@@ -6300,8 +6391,12 @@ function gameLoop(timestamp) {
                                                   1px -1px 0 #000, -1px 1px 0 #000;">${whoName}</span>${whoCar}
                     </div>
                     <div style="font-size: 19px; color: #ffd54f; font-weight: bold;">
-                        +${car.jumpStartPenalties * 5} second penalty${car.jumpStartPenalties > 1
-                            ? ` &nbsp;(offence #${car.jumpStartPenalties})` : ''}
+                        +${racePenaltyS.toFixed(1)} second penalty${car.jumpStartPenalties > 1
+                            ? ` &nbsp;(offence #${car.jumpStartPenalties}, ` +
+                              `${(car.jumpPenaltyMs / 1000).toFixed(1)}s in all)` : ''}
+                    </div>
+                    <div style="font-size: 13px; color: #8d99a6; margin-top: 6px;">
+                        5% of a lap here, over ${TOTAL_LAPS} lap${TOTAL_LAPS === 1 ? '' : 's'}
                     </div>
                     <div style="font-size: 15px; color: #bbb; margin-top: 8px;">
                         Cars back to the grid &mdash; restarting&hellip;
@@ -6314,8 +6409,8 @@ function gameLoop(timestamp) {
                     isFalseStartResetting = false;
                     countdownTimer = 0;
                     lightState = 0;
-                    // shorter build-up on a restart than on the first start
-                    goDelay = 2.5 + 0.1 + Math.random() * 1.6;
+                    // The same window as the first start - see rollGoDelay()
+                    goDelay = rollGoDelay();
                     
                     cars.forEach(c => {
                         c.x = c.startX;
