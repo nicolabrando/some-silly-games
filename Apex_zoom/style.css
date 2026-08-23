@@ -59,7 +59,7 @@ canvas {
 /* Every centred panel must be listed here: #ui-layer is pointer-events:none,
    so a panel left out of this rule renders unstyled AND its buttons are dead. */
 #menu, #game-over, #championship-final, #quali-screen, #gp-preview, #tyre-screen,
-#chassis-screen, #explore-tracks, #explore-drivers {
+#chassis-screen, #explore-tracks, #explore-drivers, #explore-seasons {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -293,7 +293,7 @@ canvas {
 
 .menu-btn-row {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 8px;
     margin-top: 8px;
 }
@@ -455,6 +455,31 @@ button:hover {
     letter-spacing: 0.3px;
     overflow: hidden;
     white-space: nowrap;
+}
+
+/* A driver's colour, as a chip. It had only ever been given a SIZE inside the
+   timing tower, so the same span in the season grid drew nothing at all: an
+   empty inline-block with no width. It has been invisible there for as long as
+   that table has existed. */
+.tt-chip {
+    display: inline-block;
+    width: 7px;
+    height: 12px;
+    border-radius: 1px;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    vertical-align: middle;
+}
+.ex-rival {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    background: rgba(255, 213, 79, 0.16);
+    color: #ffd54f;
+    vertical-align: middle;
 }
 
 #timing-tower .tt-chip {
@@ -1535,7 +1560,7 @@ button.chassis-opt:hover {
    Two reference screens off the menu: the circuits and the drivers. They are
    wide - a grid of cards is the point - and they scroll, because seventeen
    circuits and ten drivers do not fit on a phone otherwise. */
-#explore-tracks, #explore-drivers {
+#explore-tracks, #explore-drivers, #explore-seasons {
     min-width: 720px;
     max-width: 92vw;
     text-align: left;
@@ -1588,6 +1613,74 @@ button.chassis-opt:hover {
 .ex-cell { background: rgba(255, 255, 255, 0.06); border-radius: 6px; padding: 8px 6px; }
 .ex-k { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.55; margin-bottom: 3px; }
 .ex-v { font-size: 15px; font-weight: bold; font-variant-numeric: tabular-nums; }
+
+/* ---- the seasons screen ------------------------------------------------
+   A history rather than a reference: the career strip at the top, the list
+   of seasons under it, and one season opened in place of the list. */
+#explore-seasons { max-width: 96vw; }
+#explore-seasons .ex-rec-h { margin-bottom: 8px; }
+#ex-career { margin-bottom: 18px; }
+.ex-career-grid {
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    margin-bottom: 0;
+}
+.ex-sml { font-size: 11px; opacity: 0.6; font-weight: normal; }
+.ex-empty {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid #2e343a;
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #b0bec5;
+}
+
+table.ex-seasons {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+table.ex-seasons th {
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #90a4ae;
+    font-weight: normal;
+    text-align: center;
+    padding: 0 8px 6px;
+    border-bottom: 1px solid #2e343a;
+    white-space: nowrap;
+}
+table.ex-seasons th:first-child,
+table.ex-seasons td:first-child { text-align: left; }
+table.ex-seasons td { padding: 6px 8px; text-align: center; color: #cfd8dc; }
+tr.ex-season-row { cursor: pointer; }
+tr.ex-season-row:hover td { background: rgba(255, 255, 255, 0.07); }
+tr.ex-season-row td { border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+.ex-seed { font-weight: 700; color: #eceff1; }
+.ex-state { font-size: 11px; opacity: 0.6; }
+/* your own row in a season's standings */
+tr.ex-me td { background: rgba(255, 213, 79, 0.09); }
+tr.ex-me td:nth-child(2) { font-weight: 700; }
+.ex-scroll { overflow-x: auto; }
+.ex-standings { margin-top: 16px; min-width: 640px; }
+.ex-standings th { padding-bottom: 6px; }
+
+/* download and load, on the two screens that offer them */
+.ex-io {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #2e343a;
+}
+.ex-io button { width: auto; margin: 0; padding: 9px 16px; font-size: 13px; }
+.ex-io-msg { font-size: 12px; color: #90a4ae; line-height: 1.5; flex: 1 1 240px; }
+.ex-io-ok { color: #69f0ae; }
+.ex-io-bad { color: #ff8a80; }
 
 /* the records, measured on demand */
 .ex-rec { background: rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px 12px; }

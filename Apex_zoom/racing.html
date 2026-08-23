@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom13">
+    <link rel="stylesheet" href="style.css?v=zoom14">
 </head>
 <body>
     <div id="game-container">
@@ -98,8 +98,8 @@
                      only mode it applies to, so the "championship only" tags and
                      the paragraph explaining them have nothing left to explain. -->
                 <div id="mode-tabs" role="tablist">
-                    <button type="button" class="mode-tab" data-mode="race" role="tab">Single Race</button>
                     <button type="button" class="mode-tab" data-mode="champ" role="tab">Championship</button>
+                    <button type="button" class="mode-tab" data-mode="race" role="tab">Single Race</button>
                     <button type="button" class="mode-tab" data-mode="practice" role="tab">Practice</button>
                 </div>
 
@@ -300,6 +300,7 @@
                 </div>
                 <!-- the reading room: nothing here starts a session -->
                 <div class="menu-btn-row">
+                    <button id="explore-seasons-btn" class="menu-quiet">The seasons</button>
                     <button id="explore-tracks-btn" class="menu-quiet">The circuits</button>
                     <button id="explore-drivers-btn" class="menu-quiet">The drivers</button>
                     <button id="log-btn" class="menu-quiet">Race Log</button>
@@ -529,6 +530,16 @@
                                 performance, not how much. A set lasts the same fraction of any race, so a
                                 soft covers twice as many laps in a ten-lap race as in a five-lap one.
                                 Sliding the car wears it faster. The bar in the corner shows what is left.</li>
+                            <li><b>Every season is kept.</b> <b>The seasons</b>, from the menu, holds
+                                every championship you have run &mdash; filed from its first Grand Prix,
+                                so the ones you walk away from are there too. Open one for the full
+                                standings with starts, wins, podiums, poles, fastest laps, retirements
+                                and best finish per driver, plus the round-by-round grid; the strip at
+                                the top adds it all up across your career. <b>Download everything</b>
+                                writes a .txt that is both the race log and a save: <b>Load a file</b>,
+                                on that screen or on the Race Log, reads it back on any machine and
+                                merges it with what is already there &mdash; the same file twice changes
+                                nothing.</li>
                             <li><b>What you did here last time.</b> The tyre screen carries your own
                                 record book for that circuit: your best lap on each compound, dry and
                                 wet in separate columns, with the column for today's weather picked
@@ -645,6 +656,23 @@
                  full page with a map, the numbers, and the records - which are
                  measured on demand rather than shipped as a table, so they are
                  always the times this build actually produces. -->
+            <!-- Every season ever run, kept as it is run rather than only when
+                 it finishes: a championship abandoned at round four is still
+                 four rounds of racing. Filled by showExploreSeasons(). -->
+            <div id="explore-seasons" style="display: none;">
+                <h1 class="ex-title">The seasons</h1>
+                <div class="ex-sub" id="ex-seasons-sub"></div>
+                <div id="ex-career"></div>
+                <div id="ex-season-list"></div>
+                <div id="ex-season-detail" style="display: none;"></div>
+                <div class="ex-io">
+                    <button type="button" id="ex-seasons-export" class="menu-quiet">Download everything</button>
+                    <button type="button" id="ex-seasons-import" class="menu-quiet">Load a file</button>
+                    <span class="ex-io-msg" id="ex-seasons-msg"></span>
+                </div>
+                <button id="ex-seasons-back" class="ex-back">Back</button>
+            </div>
+
             <div id="explore-tracks" style="display: none;">
                 <h1 class="ex-title">The circuits</h1>
                 <div class="ex-sub" id="ex-tracks-sub">Twenty-two of them, two bigger than the screen. Pick one.</div>
@@ -767,8 +795,16 @@
                      margin: 0; white-space: pre; color: #cfd8dc;"></pre>
                 <div style="text-align: center; margin-top: 14px;">
                     <button id="log-download-btn" style="width: auto; padding: 10px 22px;">Download .txt</button>
+                    <!-- The same file, read back. The download carries the
+                         seasons and the record book in a block at the end, so
+                         one file is both the report you read and the save you
+                         bring to another machine. -->
+                    <button id="log-load-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #37474f; color: #ddd;">Load .txt</button>
                     <button id="log-close-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #555;">Close</button>
                 </div>
+                <div class="ex-io-msg" id="log-io-msg" style="text-align: center; margin-top: 8px;"></div>
+                <!-- one file input for both doors into the importer -->
+                <input type="file" id="data-file" accept=".txt,.json,text/plain" style="display: none;">
             </div>
             <!-- Pinned to the top edge, styled in the stylesheet: a box in
                  the middle of the screen covered the road while the player
@@ -805,12 +841,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom13"></script>
-    <script src="track.js?v=zoom13"></script>
-    <script src="lines.js?v=zoom13"></script>
-    <script src="car.js?v=zoom13"></script>
-    <script src="ai.js?v=zoom13"></script>
-    <script src="audio.js?v=zoom13"></script>
+    <script src="racelog.js?v=zoom14"></script>
+    <script src="track.js?v=zoom14"></script>
+    <script src="lines.js?v=zoom14"></script>
+    <script src="car.js?v=zoom14"></script>
+    <script src="ai.js?v=zoom14"></script>
+    <script src="audio.js?v=zoom14"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -904,6 +940,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom13"></script>
+    <script src="main.js?v=zoom14"></script>
 </body>
 </html>

@@ -1119,7 +1119,10 @@ menu.querySelectorAll('.mode-tab').forEach(b => {
         setMenuMode(b.dataset.mode);
     });
 });
-setMenuMode('race');
+// Championship first, and first also means default: it is the tab most of
+// this game's screens exist for, and a first tab that is not the one you land
+// on reads as an accident.
+setMenuMode('champ');
 
 startBtn.addEventListener('click', () => {
     isChampionship = false;
@@ -1212,6 +1215,75 @@ document.getElementById('ex-drivers-back').addEventListener('click', () => {
     document.getElementById('explore-drivers').style.display = 'none';
     showMenu();
 });
+
+// ---- the seasons screen, and the one file that carries them --------------
+document.getElementById('explore-seasons-btn')
+    .addEventListener('click', () => showExploreSeasons());
+// Back is one step back here too: from an opened season to the list, and only
+// from the list out to the menu.
+document.getElementById('ex-seasons-back').addEventListener('click', () => {
+    const detail = document.getElementById('ex-season-detail');
+    if (detail && detail.style.display !== 'none') {
+        detail.style.display = 'none';
+        document.getElementById('ex-season-list').style.display = '';
+        document.getElementById('ex-career').style.display = '';   // it went with the list
+        return;
+    }
+    document.getElementById('explore-seasons').style.display = 'none';
+    showMenu();
+});
+
+// One file input, two doors: the Race Log screen and the seasons screen both
+// end up here.
+const dataFileInput = document.getElementById('data-file');
+let dataMsgEl = null;
+function askForDataFile(msgEl) {
+    dataMsgEl = msgEl || null;
+    if (dataMsgEl) { dataMsgEl.textContent = ''; dataMsgEl.className = 'ex-io-msg'; }
+    if (dataFileInput) { dataFileInput.value = ''; dataFileInput.click(); }
+}
+function sayImport(text, ok) {
+    if (!dataMsgEl) return;
+    dataMsgEl.textContent = text;
+    dataMsgEl.className = 'ex-io-msg ' + (ok ? 'ex-io-ok' : 'ex-io-bad');
+}
+if (dataFileInput) {
+    dataFileInput.addEventListener('change', () => {
+        const f = dataFileInput.files && dataFileInput.files[0];
+        if (!f) return;
+        const rd = new FileReader();
+        rd.onload = () => {
+            const r = importDataText(String(rd.result || ''));
+            sayImport(r.ok ? ('Loaded ' + f.name + ' — ' + r.why)
+                           : ('Nothing loaded: ' + r.why), r.ok);
+            if (r.ok) {
+                // whatever screen asked for the file, both are now stale
+                if (document.getElementById('explore-seasons').style.display !== 'none') {
+                    exRenderSeasons();
+                }
+            }
+        };
+        rd.onerror = () => sayImport('That file could not be read.', false);
+        rd.readAsText(f);
+    });
+}
+document.getElementById('ex-seasons-import').addEventListener('click', () =>
+    askForDataFile(document.getElementById('ex-seasons-msg')));
+document.getElementById('ex-seasons-export').addEventListener('click', () => {
+    RaceLog.download();
+    const m = document.getElementById('ex-seasons-msg');
+    if (m) {
+        m.className = 'ex-io-msg ex-io-ok';
+        m.textContent = 'Downloaded — that .txt carries every season and lap record on this ' +
+                        'machine, and Load reads it back.';
+    }
+});
+document.getElementById('log-load-btn').addEventListener('click', () =>
+    askForDataFile(document.getElementById('log-io-msg')));
+
+// What travels with a downloaded log. Set here rather than inside racelog.js
+// so that file stays a log writer and nothing else.
+RaceLog.payload = dataPayload;
 
 document.getElementById('log-close-btn').addEventListener('click', () => {
     logScreen.style.display = 'none';
@@ -3212,6 +3284,11 @@ const EX_STORE_KEY = 'apexzoom.explore.records';
 const CHAMP_STORE_KEY = 'apexzoom.championship';
 function saveChampionship() {
     if (!championshipState) return;
+    ensureSeasonId(championshipState);
+    // The archive is written from here rather than from the final screen: this
+    // runs at season creation and at the top of every round, so a season is in
+    // the history from its first Grand Prix and stays there if it is abandoned.
+    try { archiveSeason(championshipState, false); } catch (e) { /* history is not load-bearing */ }
     try {
         window.localStorage.setItem(CHAMP_STORE_KEY,
             JSON.stringify({ v: 1, state: championshipState }));
@@ -3306,6 +3383,7 @@ function resumeChampionship() {
     const s = loadChampionshipSave();
     if (!s) { refreshChampResume(); return; }
     championshipState = s;
+    ensureSeasonId(championshipState);   // saves written before the archive existed
     isChampionship = true;
     raceMode = 'championship';
     pendingGrid = null;
@@ -3319,6 +3397,203 @@ function resumeChampionship() {
         .some(p => p.isPlayer && !p.chassis);
     if (unpicked) chooseChassisForSeason(() => nextChampionshipRound());
     else nextChampionshipRound();
+}
+
+// ---------------------------------------------------------------------------
+//  THE SEASON ARCHIVE
+//
+//  Every championship ever run, kept. Not written at the final screen but at
+//  every round, because a season abandoned at round four is still four rounds
+//  of racing and "save them as they go" has to mean that a season you walked
+//  away from is still there. The in-progress save (CHAMP_STORE_KEY) is a
+//  different thing: that is ONE season, the one you can resume, and it is
+//  wiped when the season ends. This is the history, and nothing wipes it.
+// ---------------------------------------------------------------------------
+const SEASON_ARCHIVE_KEY = 'apexzoom.seasons';
+const SEASON_ARCHIVE_MAX = 40;
+
+// A season needs a name of its own the moment it exists: the seed is not one
+// (two seasons can share a seed - that is what a seed is FOR) and the start
+// time alone would collide on a fast retry.
+function seasonId() {
+    return 's' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+}
+function ensureSeasonId(state) {
+    if (!state) return null;
+    if (!state.id) state.id = seasonId();
+    if (!state.startedAt) state.startedAt = Date.now();
+    return state.id;
+}
+
+function seasonsLoad() {
+    try {
+        const raw = window.localStorage.getItem(SEASON_ARCHIVE_KEY);
+        if (!raw) return [];
+        const box = JSON.parse(raw);
+        const list = (box && Array.isArray(box.seasons)) ? box.seasons : [];
+        // shape-checked on the way in, because this list is also fed by files
+        // a player brings from somewhere else
+        return list.filter(seasonEntryOk);
+    } catch (e) { return []; }
+}
+
+function seasonEntryOk(e) {
+    return !!(e && typeof e.id === 'string' && Array.isArray(e.tracks) &&
+              Array.isArray(e.results) && e.points && typeof e.points === 'object');
+}
+
+function seasonsSave(list) {
+    // Newest first and capped: a ten-round season is a few kilobytes, and
+    // localStorage is a shelf, not a database. If the write still will not
+    // fit, the oldest go one at a time until it does rather than the whole
+    // archive being lost to one quota error.
+    let keep = list.slice()
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        .slice(0, SEASON_ARCHIVE_MAX);
+    while (keep.length) {
+        try {
+            window.localStorage.setItem(SEASON_ARCHIVE_KEY,
+                JSON.stringify({ v: 1, seasons: keep }));
+            return keep;
+        } catch (e) { keep = keep.slice(0, keep.length - 1); }
+    }
+    try { window.localStorage.removeItem(SEASON_ARCHIVE_KEY); } catch (e) { }
+    return [];
+}
+
+// A snapshot of the season as it stands now, replacing the previous snapshot
+// of the same season.
+function archiveSeason(state, complete) {
+    if (!state || !Array.isArray(state.tracks)) return;
+    ensureSeasonId(state);
+    const list = seasonsLoad();
+    const entry = {
+        id: state.id,
+        startedAt: state.startedAt || Date.now(),
+        updatedAt: Date.now(),
+        complete: !!complete,
+        seed: state.seed || null,
+        difficulty: state.difficulty || null,
+        // who was given the season's boost. Part of what that championship
+        // was, and the archive is the only place it can still be read once
+        // the season is over.
+        rival: (state.rival && state.rival.driver) || null,
+        rounds: state.tracks.length,
+        done: Math.max(0, Math.min(state.currentTrackIndex || 0, state.tracks.length)),
+        tracks: state.tracks.slice(),
+        weather: (state.weather || []).slice(),
+        // trimmed to what the archive shows: the live state carries AI
+        // modifiers and per-seat scratch that mean nothing once it is over
+        participants: (state.participants || []).map(p => ({
+            color: p.color, driverName: p.driverName || null,
+            isPlayer: !!p.isPlayer, chassis: p.chassis || null
+        })),
+        points: Object.assign({}, state.points),
+        bonusPoints: Object.assign({}, state.bonusPoints),
+        results: state.results || []
+    };
+    const i = list.findIndex(x => x.id === entry.id);
+    if (i >= 0) list[i] = entry; else list.push(entry);
+    seasonsSave(list);
+}
+
+// Merge, never replace: importing a file must not cost you the seasons you
+// already had. Same id wins by whichever snapshot is newer, which is also
+// what makes importing the same file twice a no-op.
+function seasonsMerge(incoming) {
+    const have = seasonsLoad();
+    const byId = {};
+    for (const e of have) byId[e.id] = e;
+    let added = 0, updated = 0, skipped = 0;
+    for (const e of (incoming || [])) {
+        if (!seasonEntryOk(e)) { skipped++; continue; }
+        const cur = byId[e.id];
+        if (!cur) { byId[e.id] = e; added++; }
+        else if ((e.updatedAt || 0) > (cur.updatedAt || 0)) { byId[e.id] = e; updated++; }
+    }
+    seasonsSave(Object.keys(byId).map(k => byId[k]));
+    return { added, updated, skipped };
+}
+
+// What each driver did across one season, counted from the race records
+// rather than stored: a total that is derived cannot drift from the races it
+// is supposed to summarise.
+function seasonTally(entry) {
+    const by = {};
+    const get = (c) => (by[c] || (by[c] = {
+        color: c, name: c, chassis: null, isPlayer: false,
+        races: 0, wins: 0, podiums: 0, poles: 0, fl: 0, chelem: 0,
+        dnf: 0, dns: 0, best: null, racePts: 0, extra: 0, total: 0
+    }));
+    for (const p of entry.participants || []) {
+        const d = get(p.color);
+        d.name = p.driverName || p.color;
+        d.isPlayer = !!p.isPlayer;
+        d.chassis = p.chassis || null;
+    }
+    for (const r of entry.results || []) {
+        if (r.pole) get(r.pole).poles++;
+        if (r.fastest) get(r.fastest).fl++;
+        if (r.chelem) get(r.chelem).chelem++;
+        for (const o of (r.order || [])) {
+            const d = get(o.color);
+            if (o.name) d.name = o.name;
+            if (o.dns) { d.dns++; continue; }
+            d.races++;
+            d.racePts += (o.pts || 0);
+            d.extra += (o.bonus || 0);
+            if (o.dnf) { d.dnf++; continue; }
+            if (o.pos === 1) d.wins++;
+            if (o.pos && o.pos <= 3) d.podiums++;
+            if (o.pos && (d.best === null || o.pos < d.best)) d.best = o.pos;
+        }
+    }
+    // The season's own points table is what the standings showed, so it is
+    // what the archive reports - the sum above is a cross-check, not a source.
+    for (const c of Object.keys(entry.points || {})) get(c).total = entry.points[c] || 0;
+    return Object.keys(by).map(k => by[k]).sort((a, b) => b.total - a.total);
+}
+
+// And across all of them.
+function careerTally(list) {
+    const out = {
+        seasons: list.length, complete: 0, titles: 0, runnerUp: 0,
+        races: 0, wins: 0, podiums: 0, poles: 0, fl: 0, chelem: 0,
+        dnf: 0, dns: 0, points: 0, bestFinish: null, wetRaces: 0,
+        circuits: {}, chassis: {}, rivals: {}
+    };
+    for (const e of list) {
+        if (e.complete) out.complete++;
+        const rows = seasonTally(e);
+        const me = rows.find(r => r.isPlayer);
+        if (me) {
+            const place = rows.indexOf(me) + 1;
+            if (e.complete && place === 1) out.titles++;
+            if (e.complete && place === 2) out.runnerUp++;
+            out.races += me.races; out.wins += me.wins; out.podiums += me.podiums;
+            out.poles += me.poles; out.fl += me.fl; out.chelem += me.chelem;
+            out.dnf += me.dnf; out.dns += me.dns; out.points += me.total;
+            if (me.best !== null && (out.bestFinish === null || me.best < out.bestFinish)) {
+                out.bestFinish = me.best;
+            }
+            if (me.chassis) out.chassis[me.chassis] = (out.chassis[me.chassis] || 0) + 1;
+        }
+        (e.results || []).forEach((r, i) => {
+            if (r.wet) out.wetRaces++;
+            const t = r.track || (e.tracks || [])[i];
+            if (!t) return;
+            const c = out.circuits[t] || (out.circuits[t] = { races: 0, wins: 0 });
+            c.races++;
+            const win = (r.order || []).find(o => o.pos === 1);
+            if (win && me && win.color === me.color) c.wins++;
+        });
+        // who kept beating you
+        const champ = rows[0];
+        if (e.complete && champ && !champ.isPlayer) {
+            out.rivals[champ.name] = (out.rivals[champ.name] || 0) + 1;
+        }
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -3959,6 +4234,255 @@ function exRenderRecords(key) {
             `both rain compounds in the wet</div>`;
     }
     box.innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+//  THE SEASONS SCREEN
+//  Three layers, one screen: what you have done in all of them, the list of
+//  them, and one of them opened up. Everything on it is COUNTED from the race
+//  records rather than stored alongside them - a total that is derived cannot
+//  drift away from the races it summarises.
+// ---------------------------------------------------------------------------
+const exSeasonsScreen = () => document.getElementById('explore-seasons');
+
+function exDate(ts) {
+    if (!ts) return '—';
+    try { return new Date(ts).toLocaleDateString(undefined,
+        { year: 'numeric', month: 'short', day: 'numeric' }); }
+    catch (e) { return '—'; }
+}
+function exCell(k, v, title) {
+    return '<div class="ex-cell"' + (title ? ' title="' + title + '"' : '') + '>' +
+           '<div class="ex-k">' + k + '</div><div class="ex-v">' + v + '</div></div>';
+}
+
+function showExploreSeasons() {
+    menu.style.display = 'none';
+    document.getElementById('ex-season-detail').style.display = 'none';
+    document.getElementById('ex-season-list').style.display = '';
+    document.getElementById('ex-career').style.display = '';
+    exRenderSeasons();
+    exSeasonsScreen().style.display = 'block';
+}
+
+function exRenderSeasons() {
+    const list = seasonsLoad().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const sub = document.getElementById('ex-seasons-sub');
+    const career = document.getElementById('ex-career');
+    const host = document.getElementById('ex-season-list');
+    if (!host) return;
+
+    if (!list.length) {
+        if (sub) sub.textContent = 'Nothing here yet.';
+        if (career) career.innerHTML = '';
+        host.innerHTML = '<div class="ex-empty">No seasons on record. Every championship you ' +
+            'start is filed here from its first Grand Prix &mdash; including the ones you walk ' +
+            'away from. If you have a season file from somewhere else, load it below.</div>';
+        return;
+    }
+
+    const c = careerTally(list);
+    if (sub) {
+        sub.textContent = list.length + (list.length === 1 ? ' season' : ' seasons') +
+            ' on record, ' + c.complete + ' run to the end. Pick one to open it.';
+    }
+    if (career) {
+        const rate = c.races ? (100 * c.wins / c.races) : 0;
+        const fav = Object.keys(c.circuits)
+            .sort((a, b) => (c.circuits[b].wins - c.circuits[a].wins) ||
+                            (c.circuits[b].races - c.circuits[a].races))[0];
+        const car = Object.keys(c.chassis).sort((a, b) => c.chassis[b] - c.chassis[a])[0];
+        const nemesis = Object.keys(c.rivals).sort((a, b) => c.rivals[b] - c.rivals[a])[0];
+        career.innerHTML = '<div class="ex-rec-h">Your career</div>' +
+            '<div class="ex-grid ex-career-grid">' +
+            exCell('Titles', c.titles + (c.runnerUp ? '<span class="ex-sml"> · ' + c.runnerUp + ' 2nd</span>' : '')) +
+            exCell('Races', c.races) +
+            exCell('Wins', c.wins + '<span class="ex-sml"> · ' + rate.toFixed(0) + '%</span>') +
+            exCell('Podiums', c.podiums) +
+            exCell('Poles', c.poles) +
+            exCell('Fastest laps', c.fl) +
+            exCell('Grand Chelems', c.chelem) +
+            exCell('Retirements', c.dnf) +
+            exCell('Points', c.points) +
+            exCell('Best finish', c.bestFinish === null ? '—' : 'P' + c.bestFinish) +
+            exCell('Wet races', c.wetRaces) +
+            exCell('Best circuit', fav ? (TRACK_LABELS[fav] || fav) : '—',
+                   fav ? (c.circuits[fav].wins + ' win(s) from ' + c.circuits[fav].races) : '') +
+            exCell('Usual car', car ? (CHASSIS[car] ? CHASSIS[car].label : car) : '—') +
+            exCell('Beaten by', nemesis || '—',
+                   nemesis ? (c.rivals[nemesis] + ' title(s)') : 'nobody has taken a title off you') +
+            '</div>';
+    }
+
+    host.innerHTML = '<table class="ex-seasons"><thead><tr>' +
+        '<th>Season</th><th>Started</th><th>Rounds</th><th>Champion</th>' +
+        '<th>You</th><th></th></tr></thead><tbody>' +
+        list.map(e => {
+            const rows = seasonTally(e);
+            const me = rows.find(r => r.isPlayer);
+            const champ = rows[0];
+            const place = me ? rows.indexOf(me) + 1 : null;
+            const cls = e.complete ? (place === 1 ? 'sr-win' : (place && place <= 3 ? 'sr-pod' : '')) : '';
+            return '<tr class="ex-season-row" data-id="' + e.id + '">' +
+                '<td class="ex-seed">' + (e.seed || '—') + '</td>' +
+                '<td>' + exDate(e.startedAt) + '</td>' +
+                '<td>' + e.done + ' / ' + e.rounds + '</td>' +
+                '<td>' + (champ ? '<span class="tt-chip" style="background:' + champ.color +
+                    ';"></span> ' + champ.name : '—') + '</td>' +
+                '<td class="' + cls + '">' + (place ? 'P' + place : '—') + '</td>' +
+                '<td class="ex-state">' + (e.complete ? 'finished'
+                    : (e.done >= e.rounds ? 'finished' : 'left at round ' + (e.done + 1))) + '</td>' +
+                '</tr>';
+        }).join('') + '</tbody></table>';
+
+    Array.prototype.forEach.call(host.querySelectorAll('.ex-season-row'), (tr) => {
+        tr.addEventListener('click', () => exShowSeason(tr.getAttribute('data-id')));
+    });
+}
+
+function exShowSeason(id) {
+    const entry = seasonsLoad().find(e => e.id === id);
+    const host = document.getElementById('ex-season-detail');
+    if (!entry || !host) return;
+    const rows = seasonTally(entry);
+    const me = rows.find(r => r.isPlayer);
+    const wet = (entry.results || []).filter(r => r.wet).length;
+
+    let html = '<div class="ex-d-head"><h2>Season ' + (entry.seed || '') + '</h2>' +
+        '<span class="ex-sml">' + exDate(entry.startedAt) + ' &nbsp;·&nbsp; ' +
+        (entry.complete ? 'finished' : 'left after round ' + entry.done) + '</span></div>';
+
+    html += '<div class="ex-grid ex-career-grid">' +
+        exCell('Rounds', entry.done + ' / ' + entry.rounds) +
+        exCell('AI', entry.difficulty || '—') +
+        exCell('Your car', me && me.chassis ? (CHASSIS[me.chassis] ? CHASSIS[me.chassis].label : me.chassis) : '—') +
+        exCell('Wet rounds', wet) +
+        exCell('Champion', rows[0] ? rows[0].name : '—') +
+        exCell('You', me ? 'P' + (rows.indexOf(me) + 1) : 'spectator') +
+        exCell('Season rival', entry.rival || '—',
+               'one opponent runs the whole season with a little more') +
+        '</div>';
+
+    // in its own scroller: fourteen columns do not fit a narrow window, and a
+    // table that widens the panel pushes the whole screen sideways
+    html += '<div class="ex-scroll"><table class="ex-seasons ex-standings"><thead><tr>' +
+        '<th>Pos</th><th>Driver</th><th title="races started">Starts</th>' +
+        '<th>Wins</th><th>Podiums</th><th title="pole positions">Poles</th>' +
+        '<th title="fastest laps">FL</th><th title="Grand Chelems">★</th>' +
+        '<th title="retirements">DNF</th><th title="Grands Prix skipped">DNS</th>' +
+        '<th title="best finishing position">Best</th>' +
+        '<th title="points for finishing position">Race</th>' +
+        '<th title="places gained and fastest laps">Extra</th><th>Total</th>' +
+        '</tr></thead><tbody>' +
+        rows.map((d, i) => '<tr' + (d.isPlayer ? ' class="ex-me"' : '') + '>' +
+            '<td>' + (i + 1) + '</td>' +
+            '<td style="text-align:left;white-space:nowrap;">' +
+            '<span class="tt-chip" style="background:' + d.color + ';"></span> ' + d.name +
+            (d.chassis && CHASSIS[d.chassis]
+                ? ' <span class="ch-pip" style="background:' + CHASSIS[d.chassis].accent + ';">' +
+                  CHASSIS[d.chassis].short + '</span>' : '') +
+            (entry.rival && d.name === entry.rival ? ' <span class="ex-rival">rival</span>' : '') +
+            '</td>' +
+            '<td>' + d.races + '</td><td>' + d.wins + '</td><td>' + d.podiums + '</td>' +
+            '<td>' + d.poles + '</td><td>' + d.fl + '</td><td>' + (d.chelem || '') + '</td>' +
+            '<td>' + d.dnf + '</td><td>' + (d.dns || '') + '</td>' +
+            '<td>' + (d.best === null ? '—' : 'P' + d.best) + '</td>' +
+            '<td>' + (d.total - d.extra) + '</td>' +
+            '<td class="pts-bonus">' + (d.extra ? '+' + d.extra : '—') + '</td>' +
+            '<td><b>' + d.total + '</b></td></tr>').join('') +
+        '</tbody></table></div>';
+
+    html += '<div id="ex-season-grid"></div>';
+    host.innerHTML = html;
+    // the same grid the end-of-season screen draws, from the archived season
+    renderSeasonRecap(entry, document.getElementById('ex-season-grid'), 'Round by round');
+
+    // The career strip belongs to the list: with a season open it is 150px of
+    // numbers about something else, pushing the season down the screen.
+    document.getElementById('ex-career').style.display = 'none';
+    document.getElementById('ex-season-list').style.display = 'none';
+    host.style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------
+//  ONE FILE, OUT AND BACK
+//  The .txt the Race Log writes is a report meant to be read. It now carries
+//  the seasons and the record book in a block at the end as well, so the same
+//  file is also the save: download it on one machine, load it on another, and
+//  the history goes with you. Reading prose back would have been the other
+//  way to do this, and prose is not a data format.
+// ---------------------------------------------------------------------------
+function dataPayload() {
+    return {
+        v: 1,
+        game: 'APEX 3',
+        exported: new Date().toISOString(),
+        seasons: seasonsLoad(),
+        bests: pbLoad()
+    };
+}
+
+// Merges rather than replaces, and reports what it did in numbers a person
+// can check against what they expected.
+function importDataPayload(box) {
+    if (!box || typeof box !== 'object') return null;
+    const out = { seasons: { added: 0, updated: 0, skipped: 0 }, bests: 0 };
+    if (Array.isArray(box.seasons)) {
+        const r = seasonsMerge(box.seasons);
+        out.seasons = r;
+    }
+    // Personal bests merge on the stopwatch: the quicker lap wins, whichever
+    // machine it was set on. A slower imported time never overwrites yours.
+    if (box.bests && typeof box.bests === 'object') {
+        const mine = pbLoad();
+        for (const trackKey of Object.keys(box.bests)) {
+            const theirs = box.bests[trackKey];
+            if (!theirs || typeof theirs !== 'object') continue;
+            const t = mine[trackKey] || (mine[trackKey] = {});
+            for (const slot of Object.keys(theirs)) {
+                const rec = theirs[slot];
+                if (!rec || typeof rec.ms !== 'number' || !isFinite(rec.ms)) continue;
+                if (!t[slot] || rec.ms < t[slot].ms) { t[slot] = rec; out.bests++; }
+            }
+        }
+        pbSave();
+    }
+    return out;
+}
+
+// Read from RaceLog rather than repeated here: see RaceLog.dataMark.
+function dataMark() {
+    return (typeof RaceLog !== 'undefined' && RaceLog.dataMark) ||
+           '=== APEX 3 DATA \u2014 do not edit below this line ===';
+}
+
+function extractPayload(text) {
+    if (!text) return null;
+    // A whole file that is just JSON works too: someone will paste one.
+    const trimmed = text.replace(/^﻿/, '').trim();
+    if (trimmed.charAt(0) === '{') {
+        try { return JSON.parse(trimmed); } catch (e) { /* fall through */ }
+    }
+    const mark = dataMark();
+    const i = text.indexOf(mark);
+    if (i < 0) return null;
+    const after = text.slice(i + mark.length);
+    const start = after.indexOf('{');
+    if (start < 0) return null;
+    try { return JSON.parse(after.slice(start)); } catch (e) { return null; }
+}
+
+function importDataText(text) {
+    const box = extractPayload(text);
+    if (!box) return { ok: false, why: 'no Apex data in that file' };
+    const r = importDataPayload(box);
+    if (!r) return { ok: false, why: 'that file was not readable' };
+    const bits = [];
+    if (r.seasons.added) bits.push(r.seasons.added + ' season' + (r.seasons.added > 1 ? 's' : '') + ' added');
+    if (r.seasons.updated) bits.push(r.seasons.updated + ' updated');
+    if (r.bests) bits.push(r.bests + ' lap record' + (r.bests > 1 ? 's' : '') + ' improved');
+    if (r.seasons.skipped) bits.push(r.seasons.skipped + ' entry rejected');
+    return { ok: true, why: bits.length ? bits.join(', ') : 'nothing new in that file', report: r };
 }
 
 function showExploreTracks() {
@@ -6896,6 +7420,8 @@ function startChampionship() {
     const wetKind = weather.map(w => (w ? rollWetKind(rng) : null));
 
     championshipState = {
+        id: seasonId(),
+        startedAt: Date.now(),
         seed: seedText,
         tracks: tracks,
         weather: weather,
@@ -7100,6 +7626,9 @@ function nextChampionshipRound() {
 }
 
 function showChampionshipFinal() {
+    // Marked complete BEFORE the resume slot is cleared: after that call the
+    // season no longer exists anywhere else.
+    try { archiveSeason(championshipState, true); } catch (e) { /* as above */ }
     clearChampionshipSave();
     hud.style.display = 'none';
     hideSplitHud();
@@ -7156,20 +7685,24 @@ function showChampionshipFinal() {
 }
 
 // Full season grid: every driver, every race, with the fastest lap starred.
-function renderSeasonRecap() {
-    const host = document.getElementById('season-recap');
-    if (!host) return;
+// Takes the season rather than reading the live one, so the archive screen can
+// draw a season from three months ago with the same code that draws the one
+// that has just finished. No arguments still means "the one being played".
+function renderSeasonRecap(state, hostEl, title) {
+    const st = state || championshipState;
+    const host = hostEl || document.getElementById('season-recap');
+    if (!host || !st) return;
 
-    const races = championshipState.results || [];
+    const races = st.results || [];
     if (!races.length) { host.innerHTML = ''; return; }
 
-    const order = Object.keys(championshipState.points)
-        .sort((a, b) => championshipState.points[b] - championshipState.points[a]);
+    const order = Object.keys(st.points)
+        .sort((a, b) => st.points[b] - st.points[a]);
 
     // trackCode, not a slice: the column heads used to read the raw key.
     const short = (t) => trackCode(t);
 
-    let html = '<h2 style="margin:18px 0 8px;">Season Results</h2>' +
+    let html = '<h2 style="margin:18px 0 8px;">' + (title || 'Season Results') + '</h2>' +
         '<div style="overflow-x:auto;"><table class="season-table"><thead><tr>' +
         '<th style="text-align:left;">Driver</th>';
     races.forEach(r => {
@@ -7179,7 +7712,7 @@ function renderSeasonRecap() {
     html += '<th>Pts</th></tr></thead><tbody>';
 
     for (const color of order) {
-        const p = championshipState.participants.find(x => x.color === color);
+        const p = (st.participants || []).find(x => x.color === color);
         const label = p ? participantCode(p) : color.slice(0, 3).toUpperCase();
         html += `<tr><td style="text-align:left;white-space:nowrap;">` +
                 `<span class="tt-chip" style="background:${color};display:inline-block;vertical-align:middle;margin-right:6px;"></span>` +
@@ -7202,7 +7735,7 @@ function renderSeasonRecap() {
             }
             html += `<td class="${cls}">${txt}${marks}</td>`;
         }
-        html += `<td><b>${championshipState.points[color]}</b></td></tr>`;
+        html += `<td><b>${st.points[color]}</b></td></tr>`;
     }
     html += '</tbody></table></div>' +
         '<div style="font-size:11px;opacity:0.65;margin-top:6px;">' +

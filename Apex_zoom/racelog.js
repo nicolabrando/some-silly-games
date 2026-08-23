@@ -111,6 +111,31 @@ const RaceLog = {
     // the title screen had stopped saying it.
     title: 'APEX 3',
 
+    // Where the readable report ends and the data begins. Defined here, once,
+    // and read by the importer in main.js: the writer and the reader of a file
+    // format must not each keep their own copy of the line that separates it.
+    dataMark: '=== APEX 3 DATA \u2014 do not edit below this line ===',
+
+    // What travels with the file besides the text. A hook, not a dependency:
+    // main.js sets this to a function returning the seasons and the record
+    // book, and racelog.js goes on knowing nothing about either.
+    payload: null,
+
+    // The file as it is written to disk: the report, then the data.
+    fileText() {
+        let out = this.text(false);
+        let box = null;
+        if (typeof this.payload === 'function') {
+            try { box = this.payload(); } catch (e) { box = null; }
+        }
+        if (box) {
+            out += '\n\n' + this.dataMark + '\n' +
+                   '(this block is what makes the file loadable again: seasons and lap records)\n' +
+                   JSON.stringify(box) + '\n';
+        }
+        return out;
+    },
+
     text(onlyLast) {
         const list = onlyLast && this.current ? [this.current] : this.sessions;
         if (!list.length) return 'No sessions recorded yet.';
@@ -122,7 +147,7 @@ const RaceLog = {
     },
 
     download() {
-        const blob = new Blob([this.text(false)], { type: 'text/plain' });
+        const blob = new Blob([this.fileText()], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

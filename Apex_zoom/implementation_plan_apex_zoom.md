@@ -680,6 +680,82 @@ Il valore iniziale di `racePenaltyS` è scritto a mano e non letto da
 temporal dead zone. È la stessa trappola che aveva nascosto il banner Resume per
 un'intera build — due volte in una sessione basta.
 
+## Le linguette, e su quale si atterra
+
+*Championship* è la prima, *Single Race* la seconda. E prima vuol dire anche
+predefinita: il menu si apre sul campionato. Una prima linguetta su cui non
+atterri si legge come una svista.
+
+## L'archivio delle stagioni
+
+Ogni campionato mai giocato, tenuto. **Non al traguardo finale ma a ogni
+round**: una stagione abbandonata al quarto Gran Premio sono comunque quattro
+gare, e «salvale man mano» vuol dire esattamente che quella che hai mollato
+resta. Lo snapshot lo scrive `saveChampionship()`, che gira alla creazione della
+stagione e all'inizio di ogni round.
+
+Da non confondere col salvataggio che già c'era: `apexzoom.championship` è **una**
+stagione, quella che puoi riprendere, e viene cancellata quando finisce.
+`apexzoom.seasons` è la storia, e non la cancella niente. Massimo 40 stagioni,
+le più recenti; se la scrittura non ci sta lo storage viene sfoltito una
+stagione alla volta invece di perdere tutto l'archivio per un errore di quota.
+
+Una stagione ha un `id` suo dal momento in cui nasce: il seme non basta (due
+stagioni possono condividerlo — è a questo che serve) e l'orario di inizio da
+solo collide se ne rilanci una subito.
+
+### La schermata
+
+Dal menu, **The seasons**, tre livelli:
+
+- **La carriera**, in cima: titoli, gare, vittorie con percentuale, podi, pole,
+  giri veloci, Grand Chelem, ritiri, punti, miglior piazzamento, gare sul
+  bagnato, circuito dove hai vinto di più, telaio che usi di solito, e chi ti ha
+  portato via più titoli.
+- **L'elenco**: seme, data, round fatti su totali, campione, dove sei arrivato,
+  e se è finita o a che round l'hai lasciata.
+- **La stagione aperta**: dati del campionato (round, difficoltà, la tua auto,
+  quanti round bagnati, campione, tu, e **il rivale della stagione** — quello a
+  cui il gioco dà una spinta, che finora spariva insieme alla stagione), la
+  classifica completa con partenze / vittorie / podi / pole / giri veloci /
+  Grand Chelem / ritiri / DNS / miglior piazzamento / punti gara / punti extra
+  / totale per ogni pilota, e la **griglia round per round**.
+
+Tutti quei numeri sono **contati dai verbali di gara**, non salvati accanto a
+essi: un totale derivato non può divergere dalle gare che dovrebbe riassumere.
+E la griglia round per round è disegnata da `renderSeasonRecap()`, la stessa
+funzione della schermata di fine stagione — generalizzata per accettare una
+stagione invece di leggere quella in corso, così una stagione di tre mesi fa si
+disegna con lo stesso codice di quella appena finita.
+
+## Un file solo, che esce e rientra
+
+Il `.txt` del Race Log era un rapporto da leggere. Adesso porta in fondo anche
+un blocco di dati — stagioni e libro dei record — dopo una riga marcatore. Lo
+stesso file è quindi il rapporto **e** il salvataggio: lo scarichi su una
+macchina, lo carichi su un'altra, e la storia ti segue. Rileggere la prosa
+sarebbe stato l'altro modo di farlo, e la prosa non è un formato dati.
+
+Si carica da due porte, il Race Log e la schermata delle stagioni, con un solo
+`<input type="file">`. E si **unisce**, non sostituisce: importare non può
+costarti le stagioni che avevi già. A parità di `id` vince lo snapshot più
+recente, il che rende importare due volte lo stesso file un'operazione a vuoto
+invece che un duplicato. I tempi sul giro si fondono **sul cronometro**: vince
+il più veloce, da qualunque macchina venga, e un tempo importato più lento non
+sovrascrive mai il tuo.
+
+Il marcatore è definito una volta sola, in `racelog.js` che lo scrive, e letto
+da lì dall'importatore: chi scrive e chi legge un formato non possono tenere
+ciascuno la propria copia della riga che lo separa. E `racelog.js` non sa niente
+di stagioni: `RaceLog.payload` è un gancio che main.js riempie.
+
+### Un bug trovato per strada
+
+Il pallino col colore del pilota (`.tt-chip`) aveva una dimensione **solo dentro
+la torre dei tempi**. Lo stesso span nella griglia di fine stagione era un
+inline-block vuoto senza larghezza: invisibile da sempre. Adesso la classe ha
+una dimensione sua e i colori si vedono in tutte e tre le tabelle.
+
 ## Verificato (Chromium headless, dpr 2)
 
 Gara singola con qualifiche su Oval fino al risultato (linea "shipped" ⇒
@@ -761,3 +837,24 @@ la stessa funzione chiamata sia alla partenza sia al restart. Poi una gara vera
 con l'acceleratore tenuto giù mentre le luci sono ancora accese: un'infrazione
 registrata, 1,0s portato sull'auto, il cartello che dice «+1.0 second penalty», e
 al traguardo 60s che diventano 61s.
+
+Sull'archivio (`test_seasons.js`): linguette nell'ordine giusto e atterraggio su
+Championship; archivio vuoto che lo dice invece di mostrare una tabella vuota;
+una stagione da 3 round giocata davvero → archiviata **dopo il primo round**,
+`done 1 / 3`, non completa; tornati al menu compare nell'elenco come «left at
+round 2»; aperta, undici piloti in classifica, e le vittorie e le partenze
+contate confrontate con quelle scritte nei verbali (10 partenze, non 11: quel
+round il giocatore l'aveva saltato ed è DNS). Poi due stagioni inventate a mano
+per far quadrare la carriera: 1 titolo, 4 gare, 2 vittorie, 4 podi, 2 gare
+bagnate, «beaten by Rival». Infine il giro completo del file: scaricato,
+`localStorage` **azzerato**, ricaricato — stesse tre stagioni, stessi id, stessi
+verbali, due tempi sul giro migliorati; caricato una seconda volta non aggiunge
+niente; e un file senza dati dentro risponde «no Apex data in that file».
+
+Le suite esistenti passano tutte. Due di loro (`test_game`, `test_features`)
+sono state corrette, non il gioco: davano per scontato che il menu si aprisse su
+*Single Race*, cosa che funzionava per caso perché era la prima linguetta.
+`test_tyre_records` aveva un difetto suo, che si è visto solo eseguendolo in
+serie: il caso «asciutto» non forzava l'asciutto e la gara singola tira pioggia
+una volta su cinque, quindi falliva una volta ogni cinque esecuzioni. Adesso il
+meteo è fissato.
