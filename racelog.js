@@ -71,7 +71,21 @@ const RaceLog = {
         lines.push(`SESSION ${s.id}  ${s.startedAt.toLocaleString()}`);
         const m = s.meta || {};
         lines.push(`  mode ${m.mode || '?'} | track ${m.track || '?'} | laps ${m.laps || '-'} ` +
-                   `| AI ${m.difficulty || '-'} | ${m.weather || '?'}`);
+                   `| AI ${m.difficulty || '-'} | ${m.weather || '?'}` +
+                   (m.playerTyre ? ` | you on ${m.playerTyre}` : '') +
+                   (m.playerChassis ? ` (${m.playerChassis})` : '') +
+                   // The seed makes a season repeatable, so it belongs in the
+                   // log: without it a championship you want to run again on
+                   // another tyre is gone the moment you close the page.
+                   (m.seed ? ` | season ${m.seed}` : ''));
+        // Which rubber everyone started on. This was missing, and its absence
+        // made a whole question unanswerable: two championships were run to
+        // find out whether one compound was too strong and the logs could not
+        // say which compound had been used. A log that cannot answer the
+        // question it was collected for is not a log.
+        if (m.tyres && m.tyres.length) {
+            lines.push('  tyres: ' + m.tyres.join(', '));
+        }
         if (m.grid && m.grid.length) {
             lines.push('  grid: ' + m.grid.map((g, i) => `P${i + 1} ${g}`).join(', '));
         }
@@ -84,25 +98,61 @@ const RaceLog = {
             lines.push('  CLASSIFICATION');
             s.result.forEach((r, i) => {
                 lines.push(`   P${String(i + 1).padStart(2)}  ${String(r.name).padEnd(22)} ` +
-                           `laps ${r.laps}  time ${r.time}  best ${r.best}  ${r.note || ''}`);
+                           `laps ${r.laps}  time ${r.time}  best ${r.best}  ` +
+                           `${(r.tyre || '').padEnd(7)}${r.note || ''}`);
             });
         }
         return lines.join('\n');
     },
 
+    // The name the game goes by on screen. One place, because it appears
+    // twice - at the top of the file and in the file's own name - and they
+    // were allowed to drift: the download was still called apex2 long after
+    // the title screen had stopped saying it.
+    title: 'APEX 3',
+
+    // Where the readable report ends and the data begins. Defined here, once,
+    // and read by the importer in main.js: the writer and the reader of a file
+    // format must not each keep their own copy of the line that separates it.
+    dataMark: '=== APEX 3 DATA \u2014 do not edit below this line ===',
+
+    // What travels with the file besides the text. A hook, not a dependency:
+    // main.js sets this to a function returning the seasons and the record
+    // book, and racelog.js goes on knowing nothing about either.
+    payload: null,
+
+    // The file as it is written to disk: the report, then the data.
+    fileText() {
+        let out = this.text(false);
+        let box = null;
+        if (typeof this.payload === 'function') {
+            try { box = this.payload(); } catch (e) { box = null; }
+        }
+        if (box) {
+            out += '\n\n' + this.dataMark + '\n' +
+                   '(this block is what makes the file loadable again: seasons and lap records)\n' +
+                   JSON.stringify(box) + '\n';
+        }
+        return out;
+    },
+
     text(onlyLast) {
         const list = onlyLast && this.current ? [this.current] : this.sessions;
         if (!list.length) return 'No sessions recorded yet.';
-        return list.map(s => this.sessionText(s)).join('\n\n');
+        // A log read six months from now should say what wrote it.
+        const head = `${this.title} — race log` +
+                     `\nexported ${new Date().toLocaleString()}` +
+                     `\n${list.length} session${list.length > 1 ? 's' : ''}\n`;
+        return head + list.map(s => this.sessionText(s)).join('\n\n');
     },
 
     download() {
-        const blob = new Blob([this.text(false)], { type: 'text/plain' });
+        const blob = new Blob([this.fileText()], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         a.href = url;
-        a.download = `apex2-log-${stamp}.txt`;
+        a.download = `${this.title.toLowerCase().replace(/\s+/g, '')}-log-${stamp}.txt`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

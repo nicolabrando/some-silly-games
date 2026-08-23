@@ -1,23 +1,391 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// The world. Everything - track geometry, crane parking, the mini-map - is in
-// these units, and the canvas is scaled to the window by CSS. 16:9, so a
-// modern screen is filled rather than letterboxed with two green bands.
-const WORLD_W = 1280;
-const WORLD_H = 720;
+// ---------------------------------------------------------------------------
+//  RESOLUTION
+//  The canvas used to keep a fixed 1360x765 backing store whatever the
+//  screen: on a phone or any retina display the CSS scaled it up and every
+//  line went soft. The backing store now follows devicePixelRatio (capped at
+//  2 - beyond that the cost quadruples for sharpness nobody can see) and one
+//  setTransform maps world units onto it, so every draw call in the game
+//  keeps thinking in 1360x765 and nothing else changes.
+//
+//  The ELEMENT, on the other hand, must NOT follow: its CSS box derived from
+//  the width/height attributes, so doubling the backing store would double
+//  the layout size on a big screen. The box is therefore sized by the
+//  stylesheet - width: min(world, viewport width, viewport height by the
+//  aspect ratio) - which shrinks to fit on BOTH axes, the way the intrinsic
+//  size used to. The world number is fed in from here as --world-w rather
+//  than typed into the CSS, because no canvas limit is written by hand.
+//
+//  The first version pinned style.width to the world size and left the
+//  shrinking to max-width/max-height. That holds only while the WIDTH is
+//  the tight axis: in a window short of height - Nicola's retina Firefox,
+//  with tabs, URL bar and bookmarks eating a strip - a replaced element
+//  with an explicit width does not give it back, the canvas kept its 1360px
+//  and the bottom of the HUD slid off the screen. min() asks the question
+//  on both axes at once, which is what the old intrinsic behaviour did.
+// ---------------------------------------------------------------------------
+let RES = 1;
+function applyResolution() {
+    const dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
+    if (RES === dpr && canvas.width === Math.round(WORLD_W * dpr)) return;
+    RES = dpr;
+    document.documentElement.style.setProperty('--world-w', WORLD_W + 'px');
+    canvas.width = Math.round(WORLD_W * RES);
+    canvas.height = Math.round(WORLD_H * RES);
+    ctx.setTransform(RES, 0, 0, RES, 0, 0);
+}
+applyResolution();
+if (typeof window !== 'undefined' && window.addEventListener) {
+    // zoom or a move to another monitor changes dpr; the store follows
+    window.addEventListener('resize', applyResolution);
+}
 
+// ---------------------------------------------------------------------------
+//  THE CAMERA (Apex Zoom)
+//
+//  The canvas is no longer the world: it is a WINDOW on it. WORLD_W x WORLD_H
+//  (1360x765) is now the size of the window - the canvas element, the HUD
+//  stage and the menus are untouched - while the world itself belongs to the
+//  circuit: track.worldW x track.worldH, defaulting to the classic size so
+//  every shipped circuit is bit-identical, and free to be far bigger (see
+//  MaratonaTrack). Nothing in the physics, the AI or the track geometry knows
+//  the camera exists: every mechanic reads and writes world coordinates
+//  exactly as before. The camera only decides which part of the world the
+//  frame shows.
+//
+//  It follows the car you are driving, magnified (the zoom is a menu setting),
+//  led a little down the road in the direction of travel so the window shows
+//  where you are going, smoothed exponentially so it arrives rather than
+//  teleports - except when the WORLD teleports (session start, a false-start
+//  grid reset), which it detects by distance and answers with a hard snap.
+//  With two players on one keyboard there is one window and no split screen,
+//  as ever: the camera frames the pair, zooming out only as far as the gap
+//  between the cars demands and back in as they regroup. Spectating, it
+//  follows whichever car the timing tower is following. It never shows past
+//  the edge of the world; on a world smaller than the window it centres it,
+//  which reproduces the old full-screen framing exactly.
+//
+//  The car sits on the CENTRE OF THE VISIBLE BOX, not of the canvas: the HUD
+//  column covers the left PANEL_W pixels of the window, and a car centred
+//  under the timing tower would be a car you cannot see.
+// ---------------------------------------------------------------------------
+const CAMERA_ZOOMS = { wide: 1.5, standard: 1.85, close: 2.3 };
+const CAM_STORE_KEY = 'apexzoom.camera';
+let cameraZoomChoice = 'standard';
+try {
+    const v = localStorage.getItem(CAM_STORE_KEY);
+    if (CAMERA_ZOOMS[v]) cameraZoomChoice = v;
+} catch (e) { /* no storage: the default */ }
+function cameraBaseZoom() { return CAMERA_ZOOMS[cameraZoomChoice] || 1.85; }
+
+const CAM_AX = (PANEL_W + WORLD_W) / 2;    // screen anchor: centre of the
+const CAM_AY = WORLD_H / 2;                // part the HUD does not cover
+
+const camera = { x: CAM_AX, y: CAM_AY, zoom: 1.85, lookX: 0, lookY: 0, ok: false };
+
+function curWorldW() { return (track && track.worldW) || WORLD_W; }
+function curWorldH() { return (track && track.worldH) || WORLD_H; }
+
+// The cars this frame has to keep on screen: your car (both cars, two-player),
+// skipping any that has been craned off or has parked after qualifying; when
+// nobody human is left driving, whichever car the HUD is following.
+function cameraTargets() {
+    const live = (c) => c && cars.indexOf(c) >= 0 && !c.recovered && !c.qualiDone;
+    const out = [];
+    if (playerCar && live(playerCar)) out.push(playerCar);
+    if (player2Car && live(player2Car)) out.push(player2Car);
+    if (!out.length) {
+        const c = hudCar() || raceLeader();
+        if (c) out.push(c);
+    }
+    return out;
+}
+
+function updateCamera(dt) {
+    const W = curWorldW(), H = curWorldH();
+    const base = cameraBaseZoom();
+    const t = cameraTargets();
+    let tx, ty, tz = base;
+
+    if (!t.length) {
+        // nothing to follow: frame the whole world, old-style
+        tx = W / 2; ty = H / 2;
+        tz = Math.min(base, (WORLD_W - PANEL_W) / W, WORLD_H / H);
+        camera.lookX = 0; camera.lookY = 0;
+    } else if (t.length === 1) {
+        const c = t[0];
+        // look down the road: lead by a fraction of the velocity, smoothed on
+        // its own clock so a twitch of the car is not a twitch of the world
+        const lead = 0.42, MAXLOOK = 170;
+        const lx = Math.max(-MAXLOOK, Math.min(MAXLOOK, c.velocity.x * lead));
+        const ly = Math.max(-MAXLOOK, Math.min(MAXLOOK, c.velocity.y * lead));
+        const kl = 1 - Math.exp(-dt * 2.2);
+        camera.lookX += (lx - camera.lookX) * kl;
+        camera.lookY += (ly - camera.lookY) * kl;
+        tx = c.x + camera.lookX;
+        ty = c.y + camera.lookY;
+    } else {
+        // two drivers, one screen: frame the pair
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (const c of t) {
+            x0 = Math.min(x0, c.x); x1 = Math.max(x1, c.x);
+            y0 = Math.min(y0, c.y); y1 = Math.max(y1, c.y);
+        }
+        tx = (x0 + x1) / 2; ty = (y0 + y1) / 2;
+        const PAD = 190;   // room around the pair, so they sit in the window, not on its edge
+        const fit = Math.min((WORLD_W - PANEL_W) / (x1 - x0 + PAD * 2),
+                             WORLD_H / (y1 - y0 + PAD * 2));
+        tz = Math.max(0.55, Math.min(base, fit));
+        camera.lookX = 0; camera.lookY = 0;
+    }
+
+    // arrive smoothly; jump only when the world does
+    if (!camera.ok || Math.hypot(tx - camera.x, ty - camera.y) > 420) {
+        camera.x = tx; camera.y = ty; camera.zoom = tz; camera.ok = true;
+    } else {
+        const kp = 1 - Math.exp(-dt * 4.2);
+        const kz = 1 - Math.exp(-dt * 2.6);
+        camera.x += (tx - camera.x) * kp;
+        camera.y += (ty - camera.y) * kp;
+        camera.zoom += (tz - camera.zoom) * kz;
+    }
+
+    // never look past the edge of the world; a world smaller than the window
+    // sits centred instead, which is exactly the old framing
+    const z = camera.zoom;
+    const xMin = CAM_AX / z, xMax = W - (WORLD_W - CAM_AX) / z;
+    camera.x = xMin > xMax ? W / 2 : Math.max(xMin, Math.min(xMax, camera.x));
+    const yMin = CAM_AY / z, yMax = H - (WORLD_H - CAM_AY) / z;
+    camera.y = yMin > yMax ? H / 2 : Math.max(yMin, Math.min(yMax, camera.y));
+}
+
+// world units -> the window, through the camera
+function applyWorldTransform(g) {
+    const z = camera.zoom;
+    g.setTransform(RES * z, 0, 0, RES * z,
+                   RES * (CAM_AX - camera.x * z),
+                   RES * (CAM_AY - camera.y * z));
+}
+// window units, camera ignored: HUD drawn on the canvas (lights, rain, minimap)
+function applyScreenTransform(g) {
+    g.setTransform(RES, 0, 0, RES, 0, 0);
+}
+
+// the part of the world the window can see right now, clamped to the world
+function cameraVisibleRect() {
+    const z = camera.zoom, W = curWorldW(), H = curWorldH();
+    const x0 = Math.max(0, camera.x - CAM_AX / z);
+    const y0 = Math.max(0, camera.y - CAM_AY / z);
+    const x1 = Math.min(W, camera.x + (WORLD_W - CAM_AX) / z);
+    const y1 = Math.min(H, camera.y + (WORLD_H - CAM_AY) / z);
+    return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+}
+
+// Sound: one setting for engines, music and effects together.
+{
+    const soundSelect = document.getElementById('sound-select');
+    if (soundSelect && typeof soundLevelKey === 'function') {
+        soundSelect.value = soundLevelKey();
+        soundSelect.addEventListener('change', () => setSoundLevel(soundSelect.value));
+    }
+}
+
+// The magnification is a menu setting, remembered like every other. It also
+// applies mid-session: the layers notice the wanted scale changed and rebake.
+{
+    const zoomSelect = document.getElementById('zoom-select');
+    if (zoomSelect) {
+        zoomSelect.value = cameraZoomChoice;
+        zoomSelect.addEventListener('change', () => {
+            cameraZoomChoice = CAMERA_ZOOMS[zoomSelect.value] ? zoomSelect.value : 'standard';
+            try { localStorage.setItem(CAM_STORE_KEY, cameraZoomChoice); } catch (e) { /* fine */ }
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  THE STATIC TRACK LAYER
+//  Grass ring, kerbs, asphalt, start line, barriers, stands, puddles: none
+//  of it moves during a session, and it was all being re-stroked from paths
+//  every frame - hundreds of barrier panels and kerb arcs, sixty times a
+//  second, which on a phone was most of the frame. It is now drawn ONCE into
+//  an offscreen canvas at full resolution and blitted per frame.
+//
+//  What stays out of the layer is what moves: skid marks, particles, rain,
+//  the cars, the cranes, the bridge deck (painted OVER the cars that drive
+//  under it) - and the STANDS, which look static but are not: the crowd's
+//  shirts shimmer on a 260ms clock, and baking them into the circuit would
+//  freeze the crowd for the whole race. They get a LAYER OF THEIR OWN,
+//  transparent, redrawn only when the shimmer clock actually ticks - four
+//  times a second instead of sixty - and blitted between the background and
+//  the circuit, which is exactly where the old code painted them. Measured
+//  before this split: the crowd alone was 0.7-2.3ms per frame, most of what
+//  the bake had just saved.
+//
+//  The frame is therefore three cheap operations: background fill, stands
+//  blit, circuit blit. The circuit layer rebuilds when its inputs change -
+//  a new track instance (every session makes one), a new resolution, or a
+//  reassigned puddle list (weather is rolled after the track is made, so
+//  the reference is the honest signal); the stands layer additionally on
+//  the shimmer tick.
+// ---------------------------------------------------------------------------
+let trackLayer = null;
+let standsLayer = null;
+
+// Device pixels per WORLD pixel in the baked layers. Ideally RES * zoom, so
+// the bake is pixel-sharp under the camera's magnification; capped by a
+// memory budget and a per-side limit so a big world cannot ask the browser
+// for half a gigabyte of canvas. Under the cap a big circuit trades a little
+// sharpness instead - minification is free, magnification is what blurs.
+function layerScale() {
+    const W = curWorldW(), H = curWorldH();
+    const budget = IS_MOBILE ? 12e6 : 44e6;    // device pixels per layer
+    const maxDim = IS_MOBILE ? 4096 : 8192;    // per side
+    let s = RES * cameraBaseZoom();
+    s = Math.min(s, maxDim / W, maxDim / H, Math.sqrt(budget / (W * H)));
+    return Math.max(0.5, s);
+}
+
+function drawTrackFrame(g) {
+    const W = curWorldW(), H = curWorldH();
+    const S = layerScale();
+    if (!trackLayer || trackLayer.track !== track ||
+        trackLayer.scale !== S || trackLayer.puddles !== track.puddles) {
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(W * S);
+        cv.height = Math.round(H * S);
+        const t = cv.getContext('2d');
+        t.setTransform(S, 0, 0, S, 0, 0);
+        const st = track._stands;      // the crowd is the other layer's job
+        track._stands = [];
+        track.draw(t);                 // transparent outside its own strokes
+        track._stands = st;
+        trackLayer = { canvas: cv, track: track, scale: S, puddles: track.puddles };
+    }
+    const tick = Math.floor(Date.now() / 260);   // drawStands' own clock
+    if (!standsLayer || standsLayer.track !== track || standsLayer.scale !== S) {
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(W * S);
+        cv.height = Math.round(H * S);
+        standsLayer = { canvas: cv, track: track, scale: S, tick: null };
+    }
+    if (standsLayer.tick !== tick) {
+        const t = standsLayer.canvas.getContext('2d');
+        t.setTransform(1, 0, 0, 1, 0, 0);
+        t.clearRect(0, 0, standsLayer.canvas.width, standsLayer.canvas.height);
+        t.setTransform(S, 0, 0, S, 0, 0);
+        track.drawStands(t);
+        standsLayer.tick = tick;
+    }
+    // Grass to the horizon: fill the whole WINDOW in screen space, so the
+    // world's edge never shows as a hard line against the void.
+    applyScreenTransform(g);
+    g.fillStyle = '#388E3C';
+    g.fillRect(0, 0, WORLD_W, WORLD_H);
+    // Then only the part of the bake the camera can actually see: on a big
+    // world blitting the whole layer per frame would move forty megapixels a
+    // frame for two megapixels shown.
+    applyWorldTransform(g);
+    const v = cameraVisibleRect();
+    if (v.w > 0 && v.h > 0) {
+        g.drawImage(standsLayer.canvas, v.x * S, v.y * S, v.w * S, v.h * S,
+                    v.x, v.y, v.w, v.h);
+        g.drawImage(trackLayer.canvas, v.x * S, v.y * S, v.w * S, v.h * S,
+                    v.x, v.y, v.w, v.h);
+    }
+    // NOTE: the context is left in WORLD space - everything the callers draw
+    // next (skid marks, ghost, cars, cranes, particles) is world geometry.
+}
+
+// ---------------------------------------------------------------------------
+//  THE MINIMAP
+//  The price of a camera is that the circuit is no longer all on screen, and
+//  a racing game where you cannot see who is coming up behind is a different
+//  game. So: the whole circuit in the top-right corner, a dot per car, a ring
+//  on the car(s) the camera is following, and a thin rectangle showing
+//  exactly which slice of the world the window is looking at. The silhouette
+//  is baked once per session; per frame it is one blit and a dozen dots.
+// ---------------------------------------------------------------------------
+let miniLayer = null;
+const MINI_MAX_W = 200, MINI_MAX_H = 138, MINI_PAD = 12;
+
+function drawMinimap(g) {
+    if (!track || skipMode) return;
+    const W = curWorldW(), H = curWorldH();
+    const sc = Math.min(MINI_MAX_W / W, MINI_MAX_H / H);
+    const mw = W * sc, mh = H * sc;
+    if (!miniLayer || miniLayer.track !== track) {
+        const SS = 2 * RES;      // supersampled, then drawn small: crisp edges
+        const cv = document.createElement('canvas');
+        cv.width = Math.ceil(mw * SS);
+        cv.height = Math.ceil(mh * SS);
+        const t = cv.getContext('2d');
+        t.setTransform(sc * SS, 0, 0, sc * SS, 0, 0);
+        t.beginPath();
+        const segs = track.segments;
+        for (let i = 0; i < segs.length; i++) {
+            const s = segs[i];
+            if (s.type === 'line') {
+                if (i === 0) t.moveTo(s.x1, s.y1);
+                t.lineTo(s.x2, s.y2);
+            } else {
+                if (i === 0) t.moveTo(s.cx + s.r * Math.cos(s.start),
+                                      s.cy + s.r * Math.sin(s.start));
+                t.arc(s.cx, s.cy, s.r, s.start, s.end, s.ccw);
+            }
+        }
+        t.closePath();
+        t.lineCap = 'round';
+        t.lineJoin = 'round';
+        t.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+        t.lineWidth = track.trackWidth * 2 + 30;
+        t.stroke();
+        t.strokeStyle = 'rgba(232, 236, 238, 0.95)';
+        t.lineWidth = track.trackWidth * 2;
+        t.stroke();
+        miniLayer = { canvas: cv, track: track };
+    }
+    const x0 = WORLD_W - mw - MINI_PAD, y0 = MINI_PAD;
+    g.save();
+    // backing card, so the map reads on grass and tarmac alike
+    g.fillStyle = 'rgba(8, 12, 16, 0.40)';
+    g.beginPath();
+    g.roundRect(x0 - 7, y0 - 7, mw + 14, mh + 14, 9);
+    g.fill();
+    g.drawImage(miniLayer.canvas, x0, y0, mw, mh);
+    // the window: which slice of the world you are looking at
+    const v = cameraVisibleRect();
+    g.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    g.lineWidth = 1;
+    g.strokeRect(x0 + v.x * sc, y0 + v.y * sc, v.w * sc, v.h * sc);
+    // one dot per car; the followed car(s) get a white ring
+    const followed = cameraTargets();
+    for (const c of cars) {
+        if (c.recovered) continue;               // craned off: not on track
+        const mine = followed.indexOf(c) >= 0;
+        const px = x0 + c.x * sc, py = y0 + c.y * sc;
+        g.beginPath();
+        g.arc(px, py, mine ? 3.6 : 2.6, 0, Math.PI * 2);
+        g.fillStyle = c.isBroken ? '#455a64' : c.color;
+        g.fill();
+        g.lineWidth = mine ? 1.6 : 1;
+        g.strokeStyle = mine ? '#fff' : 'rgba(0, 0, 0, 0.75)';
+        g.stroke();
+    }
+    g.restore();
+}
+
+// The world, the HUD column and the racing box all live in track.js: they are
+// facts about where a circuit is allowed to be, and track.js is what puts the
+// circuits there (`centreInArena`). This file reads them.
+//
 // The HUD is one column down the left: the timing tower, the driver's
 // readouts, the two-player cards and the VSC strip all live in it, so there is
 // only ONE thing taking room from the circuits instead of two. Everything to
-// the right of it, top to bottom, is racing surface - the circuits are laid
-// out strictly inside that box (see track.js), so nothing ever sits on the
-// road.
-const PANEL_W = 210;
-const ARENA_X0 = PANEL_W;
-const ARENA_X1 = WORLD_W;
-const ARENA_Y0 = 0;
-const ARENA_Y1 = WORLD_H;
+// the right of it, top to bottom, is racing surface - and the circuits are
+// centred inside that box by track.js, so nothing is ever drawn off the edge.
 
 // The HUD lives in #stage, a WORLD_W x WORLD_H box laid exactly over the
 // canvas and scaled with it. Without that the bands would be reserved in world
@@ -64,18 +432,31 @@ let raceMode = 'race';     // 'race' | 'championship' | 'practice'
 // reads vscPowerFactor, ai.js caps its target speed with it.
 let vscActive = false;
 let vscPowerFactor = 1;
-const VSC_POWER = 0.28;    // engine power while the VSC is out
+// La VSC e' un limite di VELOCITA', non di potenza. Nella prima versione era
+// solo potenza al 28%, e la potenza e' relativa: la velocita' che ne esce e'
+// proporzionale al motore, quindi al TELAIO. Misurato su Oval, sotto VSC il
+// piu' veloce del gruppo viaggiava il 32% piu' del piu' lento (95 contro 72
+// px/s) - un Bolt (top 1.098) contro un Aero (0.928), piu' il carattere del
+// pilota. Sotto una neutralizzazione i distacchi non devono cambiare, quindi
+// il numero che conta e' assoluto e uguale per tutti; la potenza resta
+// limitata solo per rendere la ripartenza morbida, ed e' abbastanza alta che
+// anche il telaio piu' lento arrivi al tetto.
+const VSC_SPEED = 90;     // px/s: la velocita' della VSC, uguale per chiunque
+const VSC_POWER = 0.50;   // engine power while the VSC is out
 // Once the track is clear the VSC runs 3 more seconds, counted down on the
 // banner in tenths, so the restart is never a surprise.
 const VSC_ENDING_MS = 3000;
 let vscEndsAt = null;      // wall-clock (raceNow) moment the VSC will end
 let recoveries = [];       // { car, phase, t, from, to, crane }
-// A crane is a machine parked on the circuit, not a decal: cars bounce off it,
 // and two of them never occupy the same patch of ground.
-const CRANE_RADIUS = 20;      // solid body a car has to go round
-const CRANE_CLEARANCE = 54;   // how far apart two cranes are kept
 let raceFinished = false;
 let isFalseStartResetting = false;
+// Seconds added for one jumped start in the race currently being run. Set by
+// startGame from the circuit and the distance - see jumpPenaltySeconds().
+// The initial value is written out rather than read from JUMP_MIN_S: that
+// const lives further down the file and would be in the temporal dead zone
+// here - the same trap that hid the Resume banner for a whole build.
+let racePenaltyS = 1.0;
 // v7 Globals
 let globalSkidMarks = [];
 let globalParticles = [];
@@ -95,6 +476,8 @@ let qualiTrack = null;      // the track object the session is running on
 let qualiTrackType = null;
 let pendingGrid = null;     // participant order handed to the next startGame
 let pendingWeather = null;  // weather chosen at qualifying, reused for the race
+let pendingWetLevel = null; // 'damp' | 'soaked', pinned with it
+let wetLevel = null;        // the live one, read by car.js and ai.js
 let racePoleColor = null;   // who started P1 in the race now running
 // Who crossed the line first on each lap. The last piece of a Grand Chelem:
 // pole + win + fastest lap + led every single lap.
@@ -131,8 +514,67 @@ function seatChassis(index) {
 // a new weekend asks again and qualifying-then-race does not.
 let weekendChassisAsked = false;
 
+// Is anybody actually driving? Spectator mode has no player, so there is
+// nothing to equip and nobody to ask.
+//
+// `humanSeats()` reads the menu, which is right for a one-off race and wrong
+// for a championship: a season's field is settled when it is created, not by
+// whatever the dropdowns say now. qualifyingEnabled() already made that
+// distinction; this is the same question asked once, in one place, so the two
+// screens that ask the player something cannot disagree about whether there is
+// a player.
+// ---------------------------------------------------------------------------
+//  WHO THE HUD IS ABOUT
+// ---------------------------------------------------------------------------
+//  Yours, if you are driving. If you are spectating there is no car of yours,
+//  and the panel used to fall back to two lines about the leader - which lap
+//  and who. Now a spectator can pick a car out of the timing tower and get the
+//  whole panel for it: lap, speed, live lap time, tyre and wear.
+//
+//  It falls back to the leader when nothing is picked, and also when the car
+//  you picked is out of the race - a HUD frozen on a wreck is worse than one
+//  that moves on.
+let spectateCar = null;
+
+function raceLeader() {
+    let best = null, bestLap = -1, bestProg = -1;
+    for (const c of cars) {
+        const lap = Math.min(c.lap, TOTAL_LAPS);
+        const prog = c.trackProgress || 0;
+        if (lap > bestLap || (lap === bestLap && prog > bestProg)) {
+            best = c; bestLap = lap; bestProg = prog;
+        }
+    }
+    return best;
+}
+
+function hudCar() {
+    if (twoPlayer) return null;              // each seat has its own card
+    if (playerCar) return playerCar;
+    if (spectateCar && cars.indexOf(spectateCar) >= 0 &&
+        !(spectateCar.isBroken && !spectateCar.finished)) return spectateCar;
+    return raceLeader();
+}
+
+// Clicking a row in the tower follows that car. Only while spectating: with a
+// car of your own the panel is about you and nothing else.
+function spectateFollow(idx) {
+    if (playerCar || twoPlayer) return;
+    const c = cars[idx];
+    if (!c) return;
+    spectateCar = (spectateCar === c) ? null : c;   // click again to let go
+}
+
+function anyoneDriving() {
+    if (isChampionship) {
+        return !!(championshipState &&
+                  championshipState.participants.some(p => p.isPlayer));
+    }
+    return humanSeats().length > 0;
+}
+
 function chooseChassisForWeekend(done) {
-    if (weekendChassisAsked || !humanSeats().length) { done(); return; }
+    if (weekendChassisAsked || !anyoneDriving()) { done(); return; }
     const seats = humanSeats();
     const ask = (n) => {
         if (n >= seats.length) { weekendChassisAsked = true; done(); return; }
@@ -152,6 +594,88 @@ function chooseChassisForWeekend(done) {
 // One championship point per position recovered from the grid, up to five.
 const PLACES_BONUS_PER = 1;
 const PLACES_BONUS_CAP = 5;
+
+// --- The false-start penalty ---------------------------------------------
+//  It used to be F1's five seconds, and five seconds is the wrong number here.
+//  In F1 that is 5.6% of a ninety-second lap, in a race where the classified
+//  runners finish four to six seconds apart: it costs about ONE place. Here a
+//  lap is eighteen seconds and the finishers are 0.85s apart, so the same five
+//  seconds cost between three and four places. Measured over twelve simulated
+//  races on a fixed calendar - /root/tools/measure_penalty2.js.
+//
+//  Worse, the F1 rationale does not even apply. A jumped start here gains no
+//  track position at all: the grid is put back, velocities zeroed, lap
+//  counters wiped. There is nothing to take away. The penalty exists only so
+//  that anticipating deliberately is not free - and see rollGoDelay() for the
+//  one thing anticipating used to buy.
+//
+//  So the penalty is scaled to the race rather than being a number:
+//
+//        penalty  =  5% of a lap  x  sqrt(laps / 5)
+//
+//  The first factor is F1's own ratio. The second is there because the field
+//  does NOT spread out in proportion to the distance: on the same three
+//  circuits the spread grows from 10.5s over three laps only to 20.5s over
+//  twenty, so gaps grow roughly like the SQUARE ROOT of the distance. A
+//  penalty linear in the lap count - the obvious idea - would start
+//  over-punishing long races the way a flat 5s over-punishes short ones.
+//
+//  Floored at a second, because below that it is a rounding error rather than
+//  a penalty, and capped at five, which is where it used to begin.
+const JUMP_LAP_SHARE = 0.05;      // F1: 5s of a 90s lap
+const JUMP_REF_LAPS = 5;          // the game's default race
+const JUMP_MIN_S = 1.0;
+const JUMP_MAX_S = 5.0;
+function jumpPenaltySeconds(lapMs, laps) {
+    if (!lapMs || !isFinite(lapMs)) return JUMP_MIN_S;   // no reference: the floor
+    const raw = JUMP_LAP_SHARE * (lapMs / 1000) *
+                Math.sqrt(Math.max(1, laps || 1) / JUMP_REF_LAPS);
+    return Math.min(JUMP_MAX_S, Math.max(JUMP_MIN_S, Math.round(raw * 10) / 10));
+}
+
+// The reference lap: the same figure the Grand Prix preview prints as "Est.
+// lap time", so the penalty and the screen that predicts it can never
+// disagree. Measuring it means simulating a lap (50-140ms), so it is done
+// once per circuit per session and kept - and the preview seeds this cache
+// for free when it draws.
+const _lapRefCache = {};
+function lapRefMs(trackObj, key, wet) {
+    const id = (key || '?') + (wet ? ':wet' : '');
+    if (_lapRefCache[id] !== undefined) return _lapRefCache[id];
+    let ms = null;
+    try { ms = measureTrackStats(trackObj, !!wet).lap; } catch (e) { ms = null; }
+    _lapRefCache[id] = ms;
+    return ms;
+}
+
+// How long the lights hold, first start and restart alike. It lives in one
+// function because the two had drifted apart: the restart used to roll
+// 2.6-4.2s against the first start's 2.6-6.5s, a window two and a half times
+// narrower and therefore easier to anticipate. That made jumping the start
+// worth something after all - abort the start you cannot read, get one you
+// can - which is the only way the procedure could be gamed. Same window now,
+// so a false start buys exactly nothing.
+function rollGoDelay() { return 2.5 + 0.1 + Math.random() * 3.9; }
+
+// --- The point for the fastest lap ---------------------------------------
+// F1's rule, and F1's condition with it: the lap only pays if the driver is
+// classified in the top ten. Without that condition the point belongs to
+// whoever is furthest out of contention - a car three laps down has nothing
+// to lose and a clear track to do it on, and would take it nearly every
+// weekend. Retire and it pays nothing either: the race has to be finished.
+// The star beside the lap time is not conditional - the fastest lap of the
+// race is a fact - so a lap can be starred and unpaid, which is exactly what
+// happens in the real thing.
+const FASTEST_LAP_POINT = 1;
+const FASTEST_LAP_TOP_N = 10;
+// The whole rule, in a function of its own, so it can be asked the question
+// without running a race: the end-of-race scoring is 200 lines inside the
+// results screen and there is no way to hand it a made-up field.
+// `index` is the finishing position, zero-based.
+function fastestLapPointFor(isFastest, index, finished) {
+    if (!isFastest || !finished) return 0;
+    return index < FASTEST_LAP_TOP_N ? FASTEST_LAP_POINT : 0;
+}
 let pendingTyreCb = null;
 
 // --- Timing tower display order -----------------------------------------
@@ -165,34 +689,102 @@ const TOWER_MARGIN = 22;    // px of track progress needed to take a position
 
 // Single monotone score: finishers are locked in their finishing order and
 // always ahead of anyone still running.
-function towerScore(c) {
-    // Finishers: DISTANCE first, then race time - exactly what the results
-    // sheet does. Time alone is wrong, and this is what put lapped cars near
-    // the top of the tower. Once the leader has taken the flag everyone else
-    // is classified the next time they cross the line, whether or not that
-    // crossing completed a lap; a car being lapped crosses the line SOONER
-    // than the cars still on the lead lap, so it was credited a quicker race
-    // time - Vettel classified at 42.466 over Senna's 45.374 while a whole lap
-    // behind - and the tower duly ranked it second.
-    //
-    // Time still has to be the tie-break rather than the order cars crossed
-    // the line: a car that takes the flag fifth with a five-second jump-start
-    // penalty is classified lower, and ranking by crossing order left the live
-    // order and the results sheet three places apart.
-    if (c.finished) {
-        const laps = Math.min(c.lap, TOTAL_LAPS);
-        // Two cars can take the flag on the same frame and record the same
-        // time to the millisecond. The one that physically crossed first is
-        // ahead; the nudge is far smaller than a frame, so it only ever
-        // decides a dead heat.
-        return 1e12 + laps * 1e9 - (isFinite(c.raceTime) ? c.raceTime : 0)
-               - (c.finishIndex || 0) * 1e-3;
+// ---------------------------------------------------------------------------
+//  HOW MANY LAPS DOWN, HONESTLY
+//  The tower used to answer this with DISTANCE: "is the car on the row above
+//  me more than a lap-length in front?". That is not what being lapped
+//  means, and it read wrong most of the time - measured over a fifteen-lap
+//  race, 85% of the rows belonging to lapped cars were shown with an
+//  ordinary time interval, so a car a whole lap down appeared as "+0.0"
+//  against the car above it. Nicola could not tell who was racing whom,
+//  which is the one thing a timing tower is for.
+//
+//  Being lapped is a fact about LAPS: the leader has completed more of them
+//  than you AND is in front of you on the road. The correction term is what
+//  makes it exact - a car three seconds behind a leader who has just crossed
+//  the line reads lap 5 against his 6 and is not lapped at all, it is simply
+//  further round the current lap than he is.
+//
+//      lapsDown = (leader.lap - c.lap) - (c.lapS > leader.lapS ? 1 : 0)
+//
+//  Clamped at zero: the car with the most distance covered IS the leader,
+//  and nobody is a negative lap behind him.
+// ---------------------------------------------------------------------------
+function lapsDownFrom(leader, c) {
+    if (!leader || !c || leader === c) return 0;
+    const behindOnLap = (c.lapS || 0) > (leader.lapS || 0) ? 1 : 0;
+    return Math.max(0, (leader.lap || 0) - (c.lap || 0) - behindOnLap);
+}
+
+// ---------------------------------------------------------------------------
+//  ONE ORDER FOR THE WHOLE FIELD
+//  Finished, retired and still circulating, ranked by one comparator that
+//  both the timing tower and the results sheet use. This is the fix for the
+//  last places rearranging themselves while the stragglers come in.
+//
+//  What it used to do: a finished car scored 1e12 + laps, a running car
+//  scored its distance - about 9000. So the instant ANY car took the flag it
+//  leapt above every car still on the road, including cars physically ahead
+//  of it. Probed directly: a lapped backmarker crossing the line scored
+//  1.004e12 against 8923 for a lead-lap car still circulating a thousand
+//  pixels further down the road. The backmarker jumped above it, then fell
+//  back the moment that car crossed - and with cars trickling in over the
+//  closing laps the bottom of the tower rearranged itself every few seconds.
+//
+//  Two rules, and they are the ones a race steward would use:
+//
+//    * two CLASSIFIED cars are separated by laps, then by the clock. Never
+//      by distance - two cars that finish a second apart freeze their
+//      odometers within a few pixels of each other, and a few pixels of
+//      frame-capture noise must not be allowed to reorder a podium.
+//    * anything else is separated by DISTANCE COVERED, with a classified car
+//      counted at the odometer reading it had when it was classified rather
+//      than its live one. A finished car keeps rolling after the flag
+//      (measured, up to 344px of it) and a retired one gets carried off by a
+//      crane; neither is racing any more, and neither should move.
+//
+//  A car crossing the line therefore lands exactly where it already was, and
+//  the order stops moving. The first attempt at this put a finished car at
+//  "laps x lap length", which looked right and was not: trackProgress does
+//  not start at zero - the grid sits most of a lap behind the line - so that
+//  number sat a whole lap below the running cars and the churn got worse.
+//  Freezing the car's own odometer is the version that has no origin to get
+//  wrong.
+// ---------------------------------------------------------------------------
+function progressOf(c) {
+    if (!c) return 0;
+    return (c._classProgress !== undefined) ? c._classProgress : (c.trackProgress || 0);
+}
+
+// Negative when a is ahead of b.
+function raceCmp(a, b) {
+    const af = !!a.finished, bf = !!b.finished;
+    if (af && bf) {
+        const la = Math.min(a.lap, TOTAL_LAPS), lb = Math.min(b.lap, TOTAL_LAPS);
+        if (la !== lb) return lb - la;
+        const ta = isFinite(a.raceTime) ? a.raceTime : Infinity;
+        const tb = isFinite(b.raceTime) ? b.raceTime : Infinity;
+        if (ta !== tb) return ta - tb;
+        return (a.finishIndex || 0) - (b.finishIndex || 0);
     }
-    // A retired car is ranked by the distance it covered, exactly as the
-    // classification does. Sinking it to the bottom of the tower looked tidier
-    // but meant the live order and the final results sheet disagreed - by up
-    // to three places at the flag.
-    return c.trackProgress || 0;
+    const pa = progressOf(a), pb = progressOf(b);
+    if (pa !== pb) return pb - pa;
+    // dead level: a classified car is ahead of one still waiting to be
+    if (af !== bf) return af ? -1 : 1;
+    return 0;
+}
+
+// The odometer is frozen the moment a car is classified - see raceCmp.
+function freezeClassified() {
+    for (const c of cars) {
+        if ((c.finished || c.isBroken) && c._classProgress === undefined) {
+            c._classProgress = c.trackProgress || 0;
+        }
+    }
+}
+
+function towerScore(c) {
+    return progressOf(c);
 }
 
 // One settling pass towards the true order, with hysteresis on each swap.
@@ -211,8 +803,11 @@ function stableTowerOrder(sorted) {
         ? track.getRacingLine('standard').length : Infinity;
     // No hysteresis where the order is a fact rather than a judgement call:
     // between two cars that have taken the flag, or across a whole lap.
+    // Hysteresis only where the order is a judgement call: two cars still
+    // racing, nose to tail. Never between classified cars, and never across
+    // a lap.
     const marginFor = (a, b) => (a.finished || b.finished ||
-        Math.abs(towerScore(a) - towerScore(b)) > lapLen * 0.5) ? 0 : TOWER_MARGIN;
+        Math.abs(progressOf(a) - progressOf(b)) > lapLen * 0.5) ? 0 : TOWER_MARGIN;
 
     // Two settling passes a frame while the race is running, so the hysteresis
     // does its job. Once cars are taking the flag their order is a fact rather
@@ -221,7 +816,7 @@ function stableTowerOrder(sorted) {
     // lap-scale inversion is settled completely too.
     let lapGap = false;
     for (let i = 0; i < towerOrder.length - 1 && !lapGap; i++) {
-        if (towerScore(towerOrder[i + 1]) > towerScore(towerOrder[i]) + lapLen * 0.5) {
+        if (progressOf(towerOrder[i + 1]) > progressOf(towerOrder[i]) + lapLen * 0.5) {
             lapGap = true;
         }
     }
@@ -229,7 +824,11 @@ function stableTowerOrder(sorted) {
     for (let pass = 0; pass < nPasses; pass++) {
         for (let i = 0; i < towerOrder.length - 1; i++) {
             const a = towerOrder[i], b = towerOrder[i + 1];
-            if (towerScore(b) > towerScore(a) + marginFor(a, b)) {
+            const m = marginFor(a, b);
+            const swap = m > 0
+                ? progressOf(b) > progressOf(a) + m       // racing: needs to earn it
+                : raceCmp(b, a) < 0;                      // settled: the truth wins
+            if (swap) {
                 towerOrder[i] = b;
                 towerOrder[i + 1] = a;
             }
@@ -401,6 +1000,19 @@ window.addEventListener('keyup', (e) => {
     if (routeKey(e.key, false)) e.preventDefault();
 });
 
+// A key held while the window loses focus never sends its keyup HERE: it goes
+// to whatever took the focus, and the flag would stay down for ever - a car
+// stuck on full throttle and full left lock the moment you came back. So
+// losing focus releases everything. This is the ONLY place the controls are
+// force-released (pausing deliberately does not - see setPaused), and it
+// covers a live race as well as a paused one.
+if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('blur', () => clearKeys());
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) clearKeys();
+    });
+}
+
 // --- menu: players + controls -------------------------------------------
 // Seat 2 always takes whichever scheme seat 1 did not, so the menu only ever
 // asks one question and the hint spells out the consequence.
@@ -422,9 +1034,9 @@ function syncControlsUi() {
 
     if (g2) g2.style.display = two ? 'block' : 'none';
     const l1 = document.getElementById('p1-color-label');
-    if (l1) l1.innerText = two ? 'Player 1 car color:' : 'Choose your car color:';
+    if (l1) l1.innerText = two ? 'Player 1 car' : 'Your car';
     const cl = document.getElementById('controls-label');
-    if (cl) cl.innerText = two ? 'Controls (Player 1):' : 'Controls:';
+    if (cl) cl.innerText = two ? 'Controls — Player 1' : 'Controls';
 
     // Two people, nobody spectating.
     if (spectator) spectator.disabled = two;
@@ -451,11 +1063,72 @@ function syncControlsUi() {
 });
 syncControlsUi();
 
+// --- menu: the mode tabs -------------------------------------------------
+// The menu grew one control at a time until every setting needed a tag saying
+// which mode it belonged to, and a paragraph to explain the tags. The tabs put
+// each setting under the only mode that reads it, so nothing needs a caveat -
+// and the one Start button on show is always the right one. The buttons and
+// their wiring above do not change; the two that do not apply are just hidden.
+const MENU_MODES = {
+    race: {
+        hint: 'One weekend: pick a car, qualify — a warm-up lap and two flying ' +
+              'laps, your best counts — and the classification is the grid. ' +
+              'The race is run in whatever weather qualifying got.'
+    },
+    champ: {
+        hint: 'A season with F1 points: the calendar is drawn at random — never ' +
+              'the same circuit twice — and every round rolls its own weather. ' +
+              'One car for the whole season, qualifying before every race. ' +
+              '<b>Reverse grid</b> sets each grid from the standings instead, ' +
+              'leader last — round&nbsp;1 drawn by lot.'
+    },
+    practice: {
+        hint: 'Your circuit and weather, no opponents, as many laps as you ' +
+              'like — every one of them timed. <b>Stop</b> in the HUD ends the ' +
+              'session and lists them all, best lap marked.'
+    }
+};
+
+function setMenuMode(mode) {
+    if (!MENU_MODES[mode]) mode = 'race';
+    menu.dataset.mode = mode;
+    menu.querySelectorAll('.mode-tab').forEach(b => {
+        const on = b.dataset.mode === mode;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    menu.querySelectorAll('[data-modes]').forEach(el => {
+        el.style.display = el.dataset.modes.split(' ').includes(mode) ? '' : 'none';
+    });
+    const hint = document.getElementById('mode-hint');
+    if (hint) hint.innerHTML = MENU_MODES[mode].hint;
+}
+
+// Every way back to the menu goes through here. The menu is the one screen
+// that has to tell you about a season waiting in storage, and it used to be
+// told only at boot and when a save was written - so the banner was correct
+// by luck rather than by construction. One door, one refresh.
+function showMenu() {
+    menu.style.display = 'block';
+    if (typeof refreshChampResume === 'function') refreshChampResume();
+}
+
+menu.querySelectorAll('.mode-tab').forEach(b => {
+    b.addEventListener('click', () => {
+        if (typeof disarmChampWipe === 'function') disarmChampWipe();
+        setMenuMode(b.dataset.mode);
+    });
+});
+// Championship first, and first also means default: it is the tab most of
+// this game's screens exist for, and a first tab that is not the one you land
+// on reads as an accident.
+setMenuMode('champ');
+
 startBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'race';
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
     // The car is chosen on the same screen a season uses, and asked once for
     // the whole weekend - not again between qualifying and the race. There
@@ -473,17 +1146,46 @@ startBtn.addEventListener('click', () => {
 });
 
 champBtn.addEventListener('click', () => {
+    // A season in progress is not thrown away on one click.
+    const saved = loadChampionshipSave();
+    if (saved && !champWipeArmed) {
+        champBtn.textContent = 'Discard round ' + (saved.currentTrackIndex + 1) +
+            ' of ' + saved.tracks.length + '? Press again';
+        champBtn.classList.add('menu-danger');
+        champWipeArmed = setTimeout(disarmChampWipe, 6000);
+        return;
+    }
+    disarmChampWipe();
     isChampionship = true;
     raceMode = 'championship';
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     startChampionship();
 });
+
+// The saved season, if there is one. hidden (the attribute) rather than
+// style.display, because setMenuMode writes display on everything tagged
+// data-modes and would un-hide it on every visit to the tab.
+const champResumeBtn = document.getElementById('champ-resume-btn');
+if (champResumeBtn) champResumeBtn.addEventListener('click', resumeChampionship);
 
 practiceBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'practice';
-    chooseChassisForWeekend(() => startGame());
+    pendingGrid = null;
+    // A fresh roll of the weather, as for a race: without this a practice
+    // run after a wet weekend inherited that weekend's rain.
+    pendingWeather = null; pendingWetLevel = null;
+    // The same two screens a race weekend opens with. Practice used to skip
+    // the second and start on whatever set was chosen last, under weather it
+    // never announced - so you could pull out on slicks into the rain and only
+    // find out at the first corner. Nothing wears in free running (TOTAL_LAPS
+    // is 9999), so the life line says so instead of quoting a race distance.
+    chooseChassisForWeekend(() => {
+        chooseTyres('Practice tyres',
+            'Free running: nothing wears out here. Take the set you want to learn.',
+            0, () => startGame());
+    });
 });
 
 logBtn.addEventListener('click', () => {
@@ -491,6 +1193,97 @@ logBtn.addEventListener('click', () => {
     logScreen.style.display = 'block';
     logBody.scrollTop = logBody.scrollHeight;
 });
+
+// The two reference screens. They are pure reading - nothing they do can start
+// a session - so they simply swap places with the menu and swap back.
+document.getElementById('explore-tracks-btn')
+    .addEventListener('click', () => showExploreTracks());
+document.getElementById('explore-drivers-btn')
+    .addEventListener('click', () => showExploreDrivers());
+// Back is one step back, not all the way out. From a circuit's card it returns
+// to the wall of circuits - which is where you were, and where you almost
+// certainly want to go next - and only from the wall does it leave for the
+// menu. It used to drop you at the menu from either, so looking at two
+// circuits in a row meant walking in through the front door twice.
+document.getElementById('ex-tracks-back').addEventListener('click', () => {
+    const detail = document.getElementById('ex-track-detail');
+    if (detail && detail.style.display !== 'none') { exShowTrackList(); return; }
+    document.getElementById('explore-tracks').style.display = 'none';
+    showMenu();
+});
+document.getElementById('ex-drivers-back').addEventListener('click', () => {
+    document.getElementById('explore-drivers').style.display = 'none';
+    showMenu();
+});
+
+// ---- the seasons screen, and the one file that carries them --------------
+document.getElementById('explore-seasons-btn')
+    .addEventListener('click', () => showExploreSeasons());
+// Back is one step back here too: from an opened season to the list, and only
+// from the list out to the menu.
+document.getElementById('ex-seasons-back').addEventListener('click', () => {
+    const detail = document.getElementById('ex-season-detail');
+    if (detail && detail.style.display !== 'none') {
+        detail.style.display = 'none';
+        document.getElementById('ex-season-list').style.display = '';
+        document.getElementById('ex-career').style.display = '';   // it went with the list
+        return;
+    }
+    document.getElementById('explore-seasons').style.display = 'none';
+    showMenu();
+});
+
+// One file input, two doors: the Race Log screen and the seasons screen both
+// end up here.
+const dataFileInput = document.getElementById('data-file');
+let dataMsgEl = null;
+function askForDataFile(msgEl) {
+    dataMsgEl = msgEl || null;
+    if (dataMsgEl) { dataMsgEl.textContent = ''; dataMsgEl.className = 'ex-io-msg'; }
+    if (dataFileInput) { dataFileInput.value = ''; dataFileInput.click(); }
+}
+function sayImport(text, ok) {
+    if (!dataMsgEl) return;
+    dataMsgEl.textContent = text;
+    dataMsgEl.className = 'ex-io-msg ' + (ok ? 'ex-io-ok' : 'ex-io-bad');
+}
+if (dataFileInput) {
+    dataFileInput.addEventListener('change', () => {
+        const f = dataFileInput.files && dataFileInput.files[0];
+        if (!f) return;
+        const rd = new FileReader();
+        rd.onload = () => {
+            const r = importDataText(String(rd.result || ''));
+            sayImport(r.ok ? ('Loaded ' + f.name + ' — ' + r.why)
+                           : ('Nothing loaded: ' + r.why), r.ok);
+            if (r.ok) {
+                // whatever screen asked for the file, both are now stale
+                if (document.getElementById('explore-seasons').style.display !== 'none') {
+                    exRenderSeasons();
+                }
+            }
+        };
+        rd.onerror = () => sayImport('That file could not be read.', false);
+        rd.readAsText(f);
+    });
+}
+document.getElementById('ex-seasons-import').addEventListener('click', () =>
+    askForDataFile(document.getElementById('ex-seasons-msg')));
+document.getElementById('ex-seasons-export').addEventListener('click', () => {
+    RaceLog.download();
+    const m = document.getElementById('ex-seasons-msg');
+    if (m) {
+        m.className = 'ex-io-msg ex-io-ok';
+        m.textContent = 'Downloaded — that .txt carries every season and lap record on this ' +
+                        'machine, and Load reads it back.';
+    }
+});
+document.getElementById('log-load-btn').addEventListener('click', () =>
+    askForDataFile(document.getElementById('log-io-msg')));
+
+// What travels with a downloaded log. Set here rather than inside racelog.js
+// so that file stays a log writer and nothing else.
+RaceLog.payload = dataPayload;
 
 document.getElementById('log-close-btn').addEventListener('click', () => {
     logScreen.style.display = 'none';
@@ -533,6 +1326,16 @@ function pzBar(frac, colour) {
 function pzCol(head, body) {
     return `<div class="pz-col"><div class="pz-h">${head}</div>${body}</div>`;
 }
+// The damage costs POWER AND GRIP, not health points, and the two numbers are
+// not the same: car.js holds the car at full performance until 40% of its
+// health is gone, then fades it linearly to 70% at the point of destruction.
+// So "Condition 75%, Performance 100%" is a real and useful thing to read -
+// nothing has been lost yet - and "Condition 20%, Performance 80%" says how
+// much car is left to race with.
+function pzPerfClass(p) {
+    return p >= 0.999 ? 'pz-good' : (p >= 0.90 ? 'pz-warn' : 'pz-bad');
+}
+
 // Green while there is plenty, amber past halfway, red near the end.
 function pzWearClass(left) {
     return left > 0.5 ? 'pz-good' : (left > 0.22 ? 'pz-warn' : 'pz-bad');
@@ -556,6 +1359,14 @@ function pauseCarCol(car) {
     body += pzBar(tyreLeft, pzWearColour(tyreLeft));
     body += pzRow('Condition', (hp * 100).toFixed(0) + '%', pzWearClass(hp));
     body += pzBar(hp, pzWearColour(hp));
+    // ...and what that is costing on track. `condition` is the number car.js
+    // multiplies the engine and the grip by, and top speed is power over drag,
+    // so this single figure is the car's performance as a fraction of the one
+    // that left the pits.
+    const perf = (car.condition === undefined || !isFinite(car.condition)) ? 1 : car.condition;
+    // Just the number: .pz-row does not wrap, so a longer value hangs out of
+    // the right-hand side of the panel instead of shortening.
+    body += pzRow('Performance', (perf * 100).toFixed(0) + '%', pzPerfClass(perf));
     body += pzRow('Speed', speed.toFixed(0));
     return pzCol('Your car', body);
 }
@@ -628,7 +1439,7 @@ function renderPausePanel() {
             : '&mdash;');
         sess += pzRow('Pole time', pole ? fmtLapMs(pole.lap) : '&mdash;');
         sess += pzRow('Runners in', order.filter(r => r.lap !== null).length + ' of ' + order.length);
-        sess += pzRow('Circuit', TRACK_LABELS[currentTrackKey] || currentTrackKey || '&mdash;');
+        sess += pzRow('Circuit', currentTrackKey ? trackLabel(currentTrackKey) : '&mdash;');
         sess += pzRow('Weather', isRaining ? 'wet' : 'dry', isRaining ? 'pz-warn' : '');
         cols.push(pzCol('Session', sess));
         pauseStats.innerHTML = cols.join('');
@@ -731,8 +1542,33 @@ function setPaused(want) {
         pauseOverlay.style.display = 'flex';
         pauseBtn.innerText = '▶ Resume';
         if (typeof stopAudio === 'function') stopAudio();
-        // release the controls so no car is left on full throttle
-        clearKeys();
+        // ------------------------------------------------------------------
+        //  THE CONTROLS ARE **NOT** RELEASED HERE, and that is deliberate.
+        //
+        //  This used to call clearKeys(), on the reasoning that no car should
+        //  be left on full throttle. Nothing is: the frame loop returns while
+        //  paused, so not a wheel turns whatever the keys say. What it cost
+        //  instead was real - pause with the throttle held (which is what
+        //  pausing with the SPACE BAR mid-corner looks like) and the flag was
+        //  wiped while the key was still physically down. The browser sends no
+        //  fresh keydown for a key that never came up, so on resume the car
+        //  coasted until the keyboard's AUTO-REPEAT fired: about half a second
+        //  of no gas, at the exact moment you were trying to get going again.
+        //
+        //  Keeping the state is correct in every case, because the listeners
+        //  stay live through the pause:
+        //    * still holding it     -> no keyup arrived, the flag is true, and
+        //                              the throttle is there the instant the
+        //                              loop restarts;
+        //    * let go while paused  -> keyup arrives and clears it as usual;
+        //    * touch throttle       -> the strip springs back to neutral on
+        //                              touchend, so it is already right.
+        //  The one way a key could stick is the window losing focus while it
+        //  is down - alt-tab, another app, the tab going to the background -
+        //  because the keyup is then delivered to somebody else. That is what
+        //  the blur/visibility guard below handles, and it is a better place
+        //  for it: it covers a race in progress too, which this never did.
+        // ------------------------------------------------------------------
         return;
     }
 
@@ -800,21 +1636,21 @@ qualiRaceBtn.addEventListener('click', () => {
 qualiMenuBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     isChampionship = false;
     weekendChassisAsked = false;   // a new weekend, a new choice of car
-    menu.style.display = 'block';
+    showMenu();
 });
 
 restartBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     skipMode = false;
     skipPlayer = null;
     skipPlayers = [];
     weekendChassisAsked = false;   // a new weekend, a new choice of car
-    menu.style.display = 'block';
+    showMenu();
 });
 
 nextRoundBtn.addEventListener('click', () => {
@@ -828,7 +1664,7 @@ nextRoundBtn.addEventListener('click', () => {
 champRestartBtn.addEventListener('click', () => {
     champFinalScreen.style.display = 'none';
     weekendChassisAsked = false;   // a new weekend, a new choice of car
-    menu.style.display = 'block';
+    showMenu();
 });
 
 quitBtn.addEventListener('click', () => {
@@ -843,7 +1679,7 @@ quitBtn.addEventListener('click', () => {
     stopSessionBtn.innerText = 'Stop Session';
     if (isMobile) mobileControls.style.display = 'none';
     weekendChassisAsked = false;   // a new weekend, a new choice of car
-    menu.style.display = 'block';
+    showMenu();
     if (typeof stopAudio === 'function') stopAudio();
     isChampionship = false;
     // Abandoning a session mid-run must not leave a stale grid or weather
@@ -851,7 +1687,7 @@ quitBtn.addEventListener('click', () => {
     qualiQueue = [];
     qualiTimes = [];
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
     skipMode = false;
     skipPlayer = null;
     skipPlayers = [];
@@ -999,7 +1835,26 @@ function reverseGridEnabled() {
     return !!(box && box.checked);
 }
 
+// Every track made here is tagged with the key it was made from. Several
+// things downstream need to ask a track object what it is - the AI's compound
+// choice depends on the layout now - and reverse-mapping a constructor name is
+// the kind of thing that breaks silently when a circuit is renamed.
 function makeTrack(trackType) {
+    const t = makeTrackRaw(trackType);
+    t.trackKey = trackType;
+    return t;
+}
+function trackKeyOf(t) { return (t && t.trackKey) || null; }
+
+// Il rivale della stagione vale SOLO in campionato: in gara singola la griglia
+// torna quella tarata. Questa riga gira all'inizio di ogni sessione, quindi
+// una stagione ripresa da localStorage si riporta dietro il suo rivale senza
+// che nessuno debba ricordarselo.
+function applySeasonRival() {
+    AI.seasonRival = (isChampionship && championshipState && championshipState.rival)
+                   ? championshipState.rival : null;
+}
+function makeTrackRaw(trackType) {
     switch (trackType) {
         case 'f1':           return new F1Track();
         case 'peanut':       return new PeanutTrack();
@@ -1016,7 +1871,12 @@ function makeTrack(trackType) {
         case 'kettle':       return new KettleTrack();
         case 'harbour':      return new HarbourTrack();
         case 'crossover':    return new CrossoverTrack();
-        case 'lombard':      return new LombardTrack();
+        case 'kart':       return new KartTrack();
+        case 'anchor':       return new AnchorTrack();
+        case 'arrow':        return new ArrowTrack();
+        case 'pentagon':     return new PentagonTrack();
+        case 'maratona':     return new MaratonaTrack();
+        case 'colosso':      return new ColossoTrack();
         default:             return new OvalTrack();
     }
 }
@@ -1075,7 +1935,13 @@ function buildField() {
 // Every global the physics touches is saved and restored, so this can be
 // called mid-session without disturbing the race the player is driving.
 // ---------------------------------------------------------------------------
-function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, raining, chassis) {
+// `out`, when given, comes back with what the lap was actually run on -
+// currently the compound, which the driver picks for themselves and which the
+// qualifying screens report, so a time can be read next to the rubber that set
+// it. It is an out-parameter rather than a changed return value because four
+// other callers (the record book, the line judge, the track stats) want the
+// lap time and nothing else.
+function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, raining, chassis, out) {
     const sCars = cars, sSkid = globalSkidMarks, sPart = globalParticles;
     const sRain = isRaining, sLaps = TOTAL_LAPS, sVsc = vscPowerFactor;
     const sLeader = qTrack.leaderFinished, sTime = qTrack.currentRaceTime;
@@ -1099,8 +1965,10 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
     car.nextWaypoint = 0;
     car._lapPixels = line.length;
     car._tyreRaceLaps = QUALI_LAPS;
-    car.tyre = TYRES[AI.chooseTyre(driverName, QUALI_LAPS, raining)] || TYRES.medium;
+    car.tyre = TYRES[AI.chooseTyre(driverName, QUALI_LAPS, raining, qTrack)] ||
+               TYRES.medium;
     car.tyreWear = 0;
+    if (out) out.tyre = car.tyre.key;
     // Standing start, exactly like the player's session: lap 1 is the warm-up
     // lap and is thrown away, laps 2 and 3 are the flying laps.
     car.velocity = { x: 0, y: 0 };
@@ -1135,6 +2003,37 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
     return car.bestLapTime;   // null if the lap was never completed
 }
 
+// The line judge. track.js asks for this when it has to choose between
+// candidate racing lines (THE LINE, AND HOW IT IS CHOSEN, in track.js): the
+// top AI drives each candidate alone for a flying lap - medium, dry, the
+// reference chassis, a driver with no personality - and the quickest
+// candidate is the line. Returns the lap in ms, null if none was completed.
+// It only ever runs for a circuit whose line is not in lines.js (an edited
+// or new layout), once; the answer is then remembered in localStorage.
+// How many flying laps the judge drives per candidate, best kept. ZERO in the
+// game: judging means running the race simulation from inside getRacingLine(),
+// which the interface calls, and a circuit that is not in lines.js is an
+// edited circuit - it gets the proxy's answer straight away instead of a
+// multi-second freeze. genlines.js sets 3, because there the whole job is to
+// choose well and the sim is noisy to about a per cent.
+let RACING_LINE_JUDGE_REPS = 0;
+function judgeRacingLine(qTrack) {
+    const real = AI.chooseTyre;
+    AI.chooseTyre = () => 'medium';
+    try {
+        let best = null;
+        for (let r = 0; r < Math.max(1, RACING_LINE_JUDGE_REPS); r++) {
+            const lap = simulateQualifyingLap(qTrack, 'Line judge', 'impossible', 1.1, false, CHASSIS_DEFAULT);
+            if (lap && isFinite(lap) && (best === null || lap < best)) best = lap;
+        }
+        return best;
+    } catch (e) {
+        return null;
+    } finally {
+        AI.chooseTyre = real;
+    }
+}
+
 // Run through the pending AI drivers, one per frame, while the player drives.
 // The player's damage handicap is a difficulty setting like any other: it is on
 // everywhere except Alien, whose whole premise is that the player is given
@@ -1152,11 +2051,14 @@ function qualiTick() {
     const difficulty = isChampionship
         ? championshipState.difficulty
         : document.getElementById('difficulty-select').value;
+    const ran = {};
     const lap = simulateQualifyingLap(qualiTrack, p.driverName, difficulty, p.skillVariation,
-                                      isRaining, p.chassis);
-    qualiTimes.push({ p: p, lap: lap });
+                                      isRaining, p.chassis, ran);
+    qualiTimes.push({ p: p, lap: lap, tyre: ran.tyre });
     if (lap !== null) {
-        RaceLog.event('QUALI', `${p.driverName || p.color} ${(lap / 1000).toFixed(3)}`);
+        const t = TYRES[ran.tyre];
+        RaceLog.event('QUALI', `${p.driverName || p.color} ${(lap / 1000).toFixed(3)}` +
+            (t ? ` on ${t.label.toLowerCase()}` : ''));
     }
 }
 
@@ -1164,7 +2066,7 @@ function qualiTick() {
 function qualiOrder() {
     const rows = qualiTimes
         .filter(q => q.lap !== null)
-        .map(q => ({ p: q.p, lap: q.lap }));
+        .map(q => ({ p: q.p, lap: q.lap, tyre: q.tyre }));
 
     // One row per human on track. A driver whose session is already over keeps
     // the time they set - laps driven afterwards do not count.
@@ -1174,6 +2076,7 @@ function qualiOrder() {
             p: pendingField.find(x => x.isPlayer && (x.playerIndex || 1) === seat),
             lap: c.qualiDone ? (c.qualiFinalTime !== undefined ? c.qualiFinalTime : c.bestLapTime)
                              : c.bestLapTime,   // null until the first flying lap
+            tyre: (c.tyre && c.tyre.key) || seatTyre(seat),
             isPlayer: true
         });
     }
@@ -1201,10 +2104,19 @@ function renderQualiTower() {
         const ck = r.p && r.p.isPlayer ? seatChassis(r.p.playerIndex || 1)
                                        : (r.p && r.p.chassis);
         const ch = CHASSIS[ck] || CHASSIS[CHASSIS_DEFAULT];
+        // The compound the time was set on, in the same pip the race tower
+        // uses. A qualifying sheet without it is a column of numbers you
+        // cannot compare: half a second is a lot between two drivers and
+        // nothing at all between a soft and a hard.
+        const ty = TYRES[r.tyre];
+        const tyrePip = (ty && r.lap !== null)
+            ? `<span class="tt-tyre" style="background:${ty.colour};" title="${ty.label}">${ty.short}</span>`
+            : '<span class="tt-tyre" style="opacity:0;">-</span>';
         return `<div class="tt-row${r.p && r.p.isPlayer ? ' me' : ''}">` +
                `<span class="tt-pos">${i + 1}</span>` +
                `<span class="tt-chip" style="background:${r.p ? r.p.color : '#888'};"></span>` +
                `<span class="tt-name"${r.lap === null ? ' style="opacity:.45;"' : ''}>${code}</span>` +
+               tyrePip +
                `<span class="tt-ch" style="background:${ch.accent};" title="${ch.label}">${ch.short}</span>` +
                `<span class="tt-gap">${gap}</span></div>`;
     }).join('');
@@ -1242,10 +2154,10 @@ function startQualifying(forceTrackType) {
 
     // The weekend's weather is decided here and reused for the race, so
     // qualifying and the race are never run in different conditions.
-    const forceWetRace = document.getElementById('wet-race-checkbox').checked;
-    isRaining = isChampionship ? nextChampionshipWeather()
-                               : (forceWetRace ? true : (Math.random() < 0.20));
-    pendingWeather = isRaining;
+    // Already decided, before the tyre screen. Committing again is a no-op:
+    // the point is that this line cannot come to a different answer than the
+    // banner the player has just read.
+    isRaining = commitWeather();
 
     let weatherIndicator = document.getElementById('weather-indicator');
     if (!weatherIndicator) {
@@ -1257,7 +2169,8 @@ function startQualifying(forceTrackType) {
         // not actually a child of the parent.
         (document.getElementById('hud-right') || hud).appendChild(weatherIndicator);
     }
-    weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
+    weatherIndicator.innerText = isRaining
+        ? (wetLevel === 'soaked' ? 'Soaked 🌧️' : 'Damp 🌦️') : 'Dry ☀️';
     renderTyreIndicator(null);
 
     // AFTER the weather is decided, not before. This used to sit above the
@@ -1265,11 +2178,12 @@ function startQualifying(forceTrackType) {
     // weather: puddles appeared in dry qualifying and were missing in wet.
     if (typeof track.makePuddles === 'function') {
         track.puddles = [];
-        if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
+        if (isRaining) track.makePuddles(puddleCountFor(wetLevel));
     }
 
     applyDifficultyRules(isChampionship ? championshipState.difficulty
                                        : document.getElementById('difficulty-select').value);
+    applySeasonRival();
     TOTAL_LAPS = 9999;              // the session ends on lap count, not the flag
     vscActive = false;
     vscEndsAt = null;
@@ -1331,11 +2245,12 @@ function startQualifying(forceTrackType) {
 
     RaceLog.start({
         mode: isChampionship ? 'Qualifying (championship round)' : 'Qualifying',
-        track: qualiTrackType,
+        track: trackLabel(qualiTrackType),
         laps: null,
         difficulty: isChampionship ? championshipState.difficulty
                                    : document.getElementById('difficulty-select').value,
-        weather: isRaining ? 'wet' : 'dry',
+        weather: isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry',
+        seed: isChampionship && championshipState ? championshipState.seed : null,
         grid: pendingField.map(p => p.driverName || p.color)
     });
 
@@ -1474,9 +2389,32 @@ function renderSplitHud(sortedCars) {
     }
 }
 
+// One line of character per compound, for the choice screen. The numbers above
+// it say how quick; this says what it will feel like.
+const TYRE_NOTE = {
+    soft:   'quickest early, gone by the flag',
+    medium: 'holds its shape',
+    hard:   'slowest, and still there at the end',
+    drift:  'the tail steps out on the throttle at any speed \u2014 lift and it pushes',
+    inter:  'the quick wet tyre \u2014 no answer to a puddle',
+    wet:    'slower, but it drives through standing water'
+};
+
 function tyreLapsText(key, laps) {
+    // Free practice: unlimited running and no wear to speak of.
+    if (!laps || !isFinite(laps)) return 'no wear in free practice';
     const t = TYRES[key];
-    const life = t.life * laps;
+    // Wear runs dryWear times faster on a road this tyre was not built for, so
+    // the number on the button has to depend on the weather. A full wet reads
+    // "lasts the distance" in the rain and "~1.5 of 5 laps" in the dry, which
+    // is the whole of what makes choosing it a decision.
+    // upcomingWeather(), not isRaining: the global is set when the session
+    // STARTS, and this runs on the screen before it, so it was reading the
+    // previous session's weather. Under a DAMP banner the intermediate read
+    // '~0.5 of 2 laps' - its life at the dry-road wear rate.
+    const dry = !upcomingWeather();
+    const rate = dry ? (t.dryWear || 1) : 1;
+    const life = t.life * laps / rate;
     return life >= laps ? 'lasts the distance'
                         : '~' + life.toFixed(1) + ' of ' + laps + ' laps';
 }
@@ -1487,7 +2425,89 @@ function seatTyre(index) {
     return (index === 2 ? playerTyre2 : playerTyre) || 'medium';
 }
 
+// ---------------------------------------------------------------------------
+//  THE WEATHER IS ONE DECISION, MADE ONCE
+// ---------------------------------------------------------------------------
+//  It used to be made inside startQualifying and startGame - which run AFTER
+//  the tyre screen. So the screen where you choose your tyres was reading
+//  `isRaining` left over from the previous session, and a wet round could ask
+//  for tyres under a large banner reading DRY. Worse for a single race: the
+//  20% roll had not happened yet, so no honest answer existed at that moment.
+//
+//  Now the decision is taken before the tyre screen and pinned in
+//  `pendingWeather`, and everything downstream reads that. Same shape as
+//  WET_GRIP: if two places have to agree about a fact, they read it from one
+//  place instead of each working it out.
+// A wet race is DAMP or SOAKED. Two thirds of them are damp: heavy rain should
+// still feel like an event when it turns up.
+const WET_KINDS = ['damp', 'damp', 'soaked'];
+function rollWetKind(rand) {
+    const r = rand || Math.random;
+    return WET_KINDS[Math.floor(r() * WET_KINDS.length)];
+}
+// How many puddles each kind puts down. Fitted (puddlefit.js) either side of
+// where the two rain tyres cross: measured, the full wet's advantage grows from
+// +0.30% at no puddles to +4.41% at twelve, so the two kinds have to sit far
+// enough apart to give different answers.
+function puddleCountFor(kind, rand) {
+    const r = rand || Math.random;
+    return kind === 'soaked' ? 8 + Math.floor(r() * 5)    // 8-12
+                             : 1 + Math.floor(r() * 3);   // 1-3
+}
+
+function decideWeather() {
+    if (pendingWeather !== null) return pendingWeather;   // a weekend already fixed it
+    if (isChampionship) return nextChampionshipWeather(); // pre-rolled with the calendar
+    // The checkbox is read here rather than passed in: it used to be a local
+    // const inside startQualifying and startGame, and moving the decision out
+    // of those functions left it out of scope. A single source for the toggle
+    // as well as for the answer.
+    const box = document.getElementById('wet-race-checkbox');
+    return (box && box.checked) ? true : (Math.random() < 0.20);
+}
+function commitWeather() {
+    pendingWeather = decideWeather();
+    // ...and WHICH KIND of wet, pinned at the same moment for the same reason.
+    // wetLevel is read by the physics and by the AI through wetGripNow(), so it
+    // has to be settled before either of them looks at it.
+    if (!pendingWeather) { pendingWetLevel = null; }
+    else if (pendingWetLevel === null) {
+        pendingWetLevel = isChampionship ? nextChampionshipWetKind() : rollWetKind();
+    }
+    wetLevel = pendingWetLevel;
+    return pendingWeather;
+}
+
+// The kind of wet the season rolled for this round, alongside the weather
+// itself so the two cannot disagree.
+function nextChampionshipWetKind() {
+    if (!championshipState || !championshipState.wetKind) return rollWetKind();
+    const k = championshipState.wetKind[championshipState.currentTrackIndex];
+    return k || rollWetKind();
+}
+
+// What to call it on screen and in the log.
+function weatherLabel() {
+    if (!pendingWeather && !isRaining) return 'Dry';
+    return wetLevel === 'soaked' ? 'Soaked' : (wetLevel === 'damp' ? 'Damp' : 'Wet');
+}
+// What the session you are about to start will be. Reading `isRaining` here is
+// the bug; reading the committed decision is the fix.
+function upcomingWeather() {
+    return pendingWeather !== null ? pendingWeather
+         : (typeof isRaining !== 'undefined' && isRaining);
+}
+
 function chooseTyres(title, subtitle, laps, done) {
+    // Before the screen is drawn, not after it is answered.
+    commitWeather();
+    // NOBODY TO ASK. In spectator mode the race still needs its weather decided
+    // - the AI has to know what it is driving on - but there is no player to
+    // put tyres on, and the screen came up anyway, over a race that had already
+    // started. chooseChassisForWeekend had this guard from the beginning and
+    // chooseTyres never got one; two sibling functions, one of them asking a
+    // question with no one in the room.
+    if (!anyoneDriving()) { done(); return; }
     if (!twoPlayerEnabled()) {
         showTyreChoice(title, subtitle, laps, done, 1);
         return;
@@ -1511,16 +2531,95 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
 
     tyreTitle.innerText = title;
     tyreSubtitle.innerText = subtitle;
-    tyreOptions.innerHTML = TYRE_KEYS.map(k => {
+
+    // THE WEATHER, IN A SIZE YOU CANNOT WALK PAST. It was already on the menu
+    // as a small icon, and that was not enough - picking slicks for a wet race
+    // is a 17% mistake with no way back, and it happened several times. It goes
+    // here rather than anywhere else because this is the screen where the
+    // decision is actually made.
+    const tw = document.getElementById('tyre-weather');
+    if (tw) {
+        const wet = upcomingWeather();
+        const soaked = wet && pendingWetLevel === 'soaked';
+        tw.className = 'tw ' + (wet ? 'tw-wet' : 'tw-dry');
+        tw.innerHTML = '<span class="tw-icon">' +
+            (wet ? (soaked ? '🌧️' : '🌦️') : '☀️') + '</span>' +
+            '<span class="tw-word">' +
+            (wet ? (soaked ? 'SOAKED' : 'DAMP') : 'DRY') + '</span>' +
+            // The consequence, and for a wet race that means WHICH rain tyre.
+            // The two kinds differ in standing water and in grip, and those are
+            // exactly what separates the intermediate from the full wet.
+            '<span class="tw-note">' + (!wet
+                ? 'slicks — rain tyres will destroy themselves'
+                : (soaked
+                    ? 'standing water everywhere — the full wet drives through it'
+                    : 'barely any standing water — the intermediate keeps more steering'))
+            + '</span>';
+    }
+    // In the rain the treaded compounds lead, in the dry the slicks do. Nothing
+    // is hidden either way - a slick in the wet is a legitimate gamble and a
+    // wet tyre in the dry is a legitimate mistake - but the list should not
+    // open with the wrong half of it.
+    const wetNow = upcomingWeather();   // the same answer the banner above gives
+    const order = wetNow ? RAIN_TYRE_KEYS.concat(DRY_TYRE_KEYS)
+                         : DRY_TYRE_KEYS.concat(RAIN_TYRE_KEYS);
+    // WHAT YOU DID HERE LAST TIME. The compound numbers on these buttons are
+    // the model's opinion; this is the stopwatch's. They disagree often enough
+    // to be worth reading together - the drift tyre is the standing example.
+    const pbTrack = upcomingTrackKey();
+    const book = pbBook(pbTrack);
+    const mine = wetNow ? book.wet : book.dry;      // the bucket for today
+    const myBest = pbBookBest(mine);
+    tyreOptions.innerHTML = order.map(k => {
         const t = TYRES[k];
-        const pace = ((t.grip - 1) * 100);
+        // The headline number used to be (grip - 1), and grip is the wrong
+        // number to put on a button: it is nearly free in the dry, because the
+        // binding cornering limit is the STEERING RATE. It also libelled the
+        // drift compound, which reads -30% on grip and is level with the medium
+        // on the stopwatch. What sets corner speed on a fresh set is grip x
+        // bite, so that is what the button says.
+        const pace = ((t.grip * (t.bite === undefined ? 1 : t.bite)) - 1) * 100;
+        // And in the rain grip x bite is the wrong headline too. On a wet road
+        // the lateral clamp really does bind - 0.13 of dry grip is low enough
+        // that it is the limit rather than the steering rate - so what decides
+        // corner speed is the tread, and that is what the button says.
+        // And `grip x bite` is only the whole story for a compound whose
+        // steering rate is the same in every corner. The drift tyre's is not:
+        // it is 22% down flat and bought back by `hook` below 320 px/s, so the
+        // single number would read -22% and libel a tyre that is 3% QUICKER
+        // where the lap is made of slow corners. Two numbers when there are
+        // two to give.
+        const hookPace = t.hook
+            ? ((t.grip * (t.bite === undefined ? 1 : t.bite) * (1 + t.hook)) - 1) * 100
+            : null;
+        const head = wetNow
+            ? 'wet grip ×' + (t.rainGrip || 1).toFixed(2)
+            : (hookPace !== null
+                ? pace.toFixed(0) + '% fast corners, ' +
+                  (hookPace >= 0 ? '+' : '') + hookPace.toFixed(0) + '% slow ones'
+                : (pace >= 0 ? '+' : '') + pace.toFixed(1) + '% pace');
+        const note = TYRE_NOTE[k] || '';
         return '<button class="tyre-opt" data-tyre="' + k + '">' +
             '<span class="tyre-dot" style="background:' + t.colour + ';"></span>' +
             '<span class="tyre-name">' + t.label + '</span>' +
-            '<span class="tyre-stat">' + (pace >= 0 ? '+' : '') + pace.toFixed(1) + '% pace</span>' +
+            '<span class="tyre-stat">' + head + '</span>' +
             '<span class="tyre-stat">' + tyreLapsText(k, laps) + '</span>' +
+            (note ? '<span class="tyre-stat">' + note + '</span>' : '') +
+            // and your own lap on this compound, in the weather you are about
+            // to drive in. On the button, because that is where the finger is.
+            '<span class="tyre-stat tyre-pb' + (k === myBest ? ' tyre-pb-best' : '') + '"' +
+            (mine[k] ? ' title="your best here on the ' + TYRES[k].label.toLowerCase() +
+                       ', ' + (wetNow ? 'in the wet' : 'in the dry') +
+                       (pbWhenText(mine[k].when) ? ' — set ' + pbWhenText(mine[k].when) : '') + '"'
+                     : ' title="you have never set a lap here on this compound in ' +
+                       (wetNow ? 'the wet' : 'the dry') + '"') + '>' +
+            (mine[k] ? 'you ' + fmtLapMs(mine[k].ms) : 'you &mdash;') +
+            '</span>' +
             '</button>';
     }).join('');
+    const recBox = document.getElementById('tyre-records');
+    if (recBox) recBox.innerHTML = pbBookHtml(book, wetNow, pbTrack);
+
     Array.prototype.forEach.call(tyreOptions.querySelectorAll('.tyre-opt'), (b) => {
         b.addEventListener('click', () => {
             const pick = b.getAttribute('data-tyre');
@@ -1538,30 +2637,73 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
 // GRAND PRIX PREVIEW (championship)
 // ===========================================================================
 
-// Corners from the racing line: signed heading change per node, grouped into
-// runs of consistent sign. In canvas coordinates y points down, so a positive
-// heading change is a RIGHT-hand corner.
-function countCorners(line) {
-    const N = line.count, nodes = line.nodes, ds = line.ds;
-    const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
-    let left = 0, right = 0;
-    let runSign = 0, runTurn = 0, gap = 0;
-    const close = () => {
-        // 0.35 rad ~ 20 degrees: kinks smaller than that are not corners
-        if (Math.abs(runTurn) > 0.35) { if (runSign > 0) right++; else left++; }
-        runSign = 0; runTurn = 0; gap = 0;
+// Corners, counted from the circuit's own SEGMENTS rather than from the racing
+// line. In canvas coordinates y points down, so a positive sweep is a RIGHT.
+//
+// The first version read the racing line and only counted a node as "curved
+// enough to matter" if its local radius was under 500px. That is a threshold on
+// the RACING LINE, and the racing line is precisely the thing that straightens
+// corners out: it brakes wide, clips the apex and exits wide, so on a broad
+// circuit a real 90-degree corner comes out with a radius well over 500 and was
+// not counted at all. Rectangle - four square corners, and nobody would argue -
+// was reported as having two, because two of its four had been relaxed past the
+// threshold and two had not. It was not off by a rounding, it was silently
+// dropping half the circuit.
+//
+// The segments have no such problem: they are the design. An arc is a corner. A
+// run of arcs bending the same way with nothing between them is ONE corner, the
+// way a double-apex is one corner; put a straight between them and they are
+// two. The only judgement left is how much bend counts, and how long a straight
+// has to be to separate two corners - and both of those are honest questions
+// about the shape rather than artefacts of the measurement.
+const CORNER_MIN_TURN = 0.35;   // ~20 degrees; less than that is a kink
+const CORNER_SPLIT_RUN = 25;    // px of straight that separates two corners
+
+function countCorners(track) {
+    const segs = (track && track.segments) || [];
+    if (!segs.length) return { left: 0, right: 0 };
+
+    // signed heading change of an arc, which is its sweep
+    const sweepOf = (g) => {
+        let d = g.end - g.start;
+        if (!g.ccw) { while (d <= 0) d += Math.PI * 2; while (d > Math.PI * 2) d -= Math.PI * 2; }
+        else { while (d >= 0) d -= Math.PI * 2; while (d < -Math.PI * 2) d += Math.PI * 2; }
+        return d;
     };
-    for (let i = 0; i < N; i++) {
-        const dh = wrap(nodes[(i + 1) % N].heading - nodes[i].heading);
-        const R = Math.abs(dh) > 1e-6 ? ds / Math.abs(dh) : Infinity;
-        const sign = Math.sign(dh);
-        if (R < 500 && sign !== 0) {           // curved enough to matter
-            if (runSign === 0) runSign = sign;
-            if (sign === runSign) { runTurn += dh; gap = 0; }
-            else { close(); runSign = sign; runTurn = dh; }
-        } else if (runSign !== 0 && ++gap > 4) {
-            close();
+
+    // Start the walk on a straight wherever there is one, so a corner is never
+    // cut in half by the seam. If the circuit is all arcs - Circle, Peanut -
+    // the seam is closed at the end instead.
+    let startAt = segs.findIndex(g => g.type === 'line' &&
+        Math.hypot(g.x2 - g.x1, g.y2 - g.y1) >= CORNER_SPLIT_RUN);
+    const allArcs = startAt < 0;
+    if (allArcs) startAt = 0;
+
+    let left = 0, right = 0, runTurn = 0, runSign = 0;
+    let firstTurn = 0, firstSign = 0, opened = false;
+    const close = () => {
+        if (Math.abs(runTurn) > CORNER_MIN_TURN) { if (runSign > 0) right++; else left++; }
+        runTurn = 0; runSign = 0;
+    };
+    for (let n = 0; n < segs.length; n++) {
+        const g = segs[(startAt + n) % segs.length];
+        if (g.type === 'line') {
+            if (Math.hypot(g.x2 - g.x1, g.y2 - g.y1) >= CORNER_SPLIT_RUN) close();
+            continue;
         }
+        const d = sweepOf(g);
+        const sign = Math.sign(d) || runSign;
+        if (runSign !== 0 && sign !== runSign) close();
+        if (runSign === 0) runSign = sign;
+        runTurn += d;
+        if (!opened) { opened = true; }
+        if (n === 0) { firstTurn = runTurn; firstSign = runSign; }
+    }
+    // On an all-arc circuit the walk starts inside a corner, so the run still
+    // open at the end is the same corner the walk began in - joining them, not
+    // counting them twice, is what makes Circle one corner and not two.
+    if (allArcs && runSign !== 0 && runSign === firstSign) {
+        // already accumulated together, since nothing closed the run
     }
     close();
     return { left, right };
@@ -1618,16 +2760,44 @@ function measureTrackStats(qTrack, raining) {
 }
 
 const TRACK_LABELS = {
+    anchor: 'Anchor', arrow: 'Arrow', pentagon: 'Lotus',
     oval: 'Oval', peanut: 'Peanut', f1: 'F1 Circuit', circomassimo: 'Circus Maximus',
-    // 'quadrato' is the internal key and stays put: it is written into saved
-    // championships and into every race log already on disk. Only the label
-    // changed - the circuit has been a rounded rectangle since the world went
-    // 16:9, and calling it Square was misleading.
+    // 'quadrato' and 'pentagon' are internal keys and stay put: they are
+    // written into saved championships and into every race log already on
+    // disk. Only the labels changed - the first has been a rounded rectangle
+    // since the world went 16:9, and calling it Square was misleading; the
+    // second is Nicola's rename, and the circuit is no longer a bare pentagon
+    // anyway now that every side carries a chicane.
     circle: 'Circle', serpent: 'Serpent', quadrato: 'Rectangle', triangle: 'Triangle',
     boomerang: 'Boomerang', zipper: 'Zipper', kettle: 'Kettle',
-    harbour: 'Harbour', crossover: 'Crossover', lombard: 'Lombard',
-    pettine: 'Comb', thunder: 'Thunder', crown: 'Crown'
+    harbour: 'Harbour', crossover: 'Crossover', kart: 'Kart',
+    pettine: 'Comb', thunder: 'Thunder', crown: 'Crown',
+    maratona: 'Marathon', colosso: 'Colossus'
 };
+
+// The three-letter code, written out rather than sliced off the label, for two
+// reasons. Slicing a KEY is how `quadrato` came to appear as QUA in a season
+// table whose every other column had been renamed years ago - the label had
+// moved on and the abbreviation was still reading the internal name. And
+// slicing the LABEL does not survive the circuits we have: Circle and Circus
+// Maximus both give CIR, Crown and Crossover both give CRO.
+const TRACK_CODES = {
+    anchor: 'ANC', arrow: 'ARW', pentagon: 'LOT',
+    oval: 'OVA', peanut: 'PEA', f1: 'F1C', circomassimo: 'CMX',
+    circle: 'CIR', serpent: 'SER', quadrato: 'REC', triangle: 'TRI',
+    boomerang: 'BOO', zipper: 'ZIP', kettle: 'KET',
+    harbour: 'HAR', crossover: 'CRS', kart: 'KAR',
+    pettine: 'COM', thunder: 'THU', crown: 'CRW',
+    maratona: 'MAR', colosso: 'COL'
+};
+
+// Every place a circuit is NAMED goes through these two. A raw key must never
+// reach the screen or the log: it is storage, and it is allowed to be stale.
+function trackLabel(key) { return TRACK_LABELS[key] || key || '?'; }
+function trackCode(key) {
+    if (TRACK_CODES[key]) return TRACK_CODES[key];
+    return trackLabel(key).replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
+}
 
 function showGpPreview(trackType) {
     menu.style.display = 'none';
@@ -1644,28 +2814,45 @@ function showGpPreview(trackType) {
 
     const pTrack = makeTrack(trackType);
     const line = pTrack.getRacingLine();
-    const corners = countCorners(line);
+    const corners = countCorners(pTrack);
     const stats = measureTrackStats(pTrack, wet);
+    // Free of charge: the false-start penalty needs exactly this number, and
+    // measuring it costs a simulated lap. See lapRefMs().
+    if (stats && stats.lap) _lapRefCache[trackType + (wet ? ':wet' : '')] = stats.lap;
 
     document.getElementById('gp-title').innerText =
-        `Round ${round}/${total} — ${TRACK_LABELS[trackType] || trackType}`;
-    document.getElementById('gp-weather').innerHTML = wet
-        ? '<span style="color:#64b5f6;">Wet 🌧️</span>' : 'Dry ☀️';
+        `Round ${round}/${total} — ${trackLabel(trackType)}`;
+    // Bigger than it was. The small version was walked past often enough to
+    // cost races, and this is the screen you look at before every round.
+    const gpKind = wet ? (championshipState && championshipState.wetKind
+                         ? championshipState.wetKind[championshipState.currentTrackIndex]
+                         : null) : null;
+    document.getElementById('gp-weather').innerHTML =
+        '<span class="gp-wx ' + (wet ? 'gp-wx-wet' : 'gp-wx-dry') + '">' +
+        (wet ? ((gpKind === 'soaked' ? 'SOAKED 🌧️' : 'DAMP 🌦️')) : 'DRY ☀️') + '</span>' +
+        // The seed sits with the round because this is the screen you look at
+        // every race: whatever else you forget, the name of the season you are
+        // in is in front of you, and it is what makes running it again possible.
+        (championshipState && championshipState.seed
+            ? ` <span class="gp-seed" title="Type this into Season seed to run this ` +
+              `exact calendar again">season ${championshipState.seed}</span>` : '');
 
     // Mini-map: the real track, drawn scaled onto a small canvas.
     const map = document.getElementById('gp-map');
     const mctx = map.getContext('2d');
-    // Only the arena, not the whole world: the left column is HUD, and a
+    // Only the arena, not the whole world: the left column is reserved, and a
     // mini-map with a 210px empty margin down one side is just a smaller map.
-    const aw = ARENA_X1 - ARENA_X0, ah = ARENA_Y1 - ARENA_Y0;
+    // The arena belongs to the circuit now, so a big world scales to fit.
+    const AX0 = ARENA_X0, AY0 = 0;
+    const aw = pTrack.worldW - AX0, ah = pTrack.worldH - AY0;
     const sc = Math.min(map.width / aw, map.height / ah);
     mctx.setTransform(1, 0, 0, 1, 0, 0);
     mctx.clearRect(0, 0, map.width, map.height);
     mctx.setTransform(sc, 0, 0, sc,
-        (map.width - aw * sc) / 2 - ARENA_X0 * sc,
-        (map.height - ah * sc) / 2 - ARENA_Y0 * sc);
+        (map.width - aw * sc) / 2 - AX0 * sc,
+        (map.height - ah * sc) / 2 - AY0 * sc);
     mctx.fillStyle = '#388E3C';
-    mctx.fillRect(ARENA_X0, ARENA_Y0, aw, ah);
+    mctx.fillRect(AX0, AY0, aw, ah);
     pTrack.draw(mctx);
 
     // 1 px = 1 m, the same fiction the speedometer already uses (0.5 factor).
@@ -1684,6 +2871,1872 @@ function showGpPreview(trackType) {
     document.getElementById('gp-start-btn').innerText =
         qualifyingEnabled() ? 'Start Qualifying' : 'Start Race';
     document.getElementById('gp-preview').style.display = 'block';
+}
+
+// ===========================================================================
+//  EXPLORE  -  two reference screens off the menu.
+//
+//  Everything on them is COMPUTED, never a table typed alongside the game and
+//  left to rot: the circuit numbers come from the circuit, the driver bars come
+//  from AI_DRIVER_STYLES, and the lap records are measured by running the
+//  game's own qualifying simulation when you open a card. A record that is
+//  measured cannot disagree with the build it is printed in.
+// ===========================================================================
+
+const EX_DRIVER_NAMES = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton',
+    'Max Verstappen', 'Fernando Alonso', 'Sebastian Vettel', 'Alain Prost',
+    'Jim Clark', 'Niki Lauda', 'Juan Manuel Fangio'];
+
+// A line of prose per driver. The numbers below it are the truth; this is what
+// the numbers add up to.
+//
+// These have been rewritten twice, and the second rewrite is the interesting
+// one. Written first from the comments in AI_DRIVER_STYLES, they were then
+// contradicted by the measurement - Senna slowest in the rain, Lauda quickest,
+// the exact reverse of every profile - so they were rewritten to match the
+// stopwatch. Then the cause turned up: ai.js was aiming at 0.20 of dry grip in
+// the wet while car.js delivered 0.13, so the AI drove every wet corner 24%
+// past the limit and the drivers who lean hardest on the car suffered most.
+// With the two numbers agreeing and the wet column refitted on top, the
+// original descriptions are true again, and these are them.
+const EX_DRIVER_BLURB = {
+    'Ayrton Senna': 'Blinding through the quick stuff and second to nobody but Schumacher in the rain. He gives it back on the straights, and he lives closer to the edge than anybody: by a distance the most mistakes on the grid.',
+    'Alain Prost': 'The Professor. Almost never errs and is superb with the road to himself — and genuinely poor in the wet, and the most reluctant on the grid to go wheel to wheel.',
+    'Michael Schumacher': 'A relentless metronome. Brutal on defence, brakes later than almost anyone, and the quickest of the ten when it rains. Nothing special once the road is clear, which is where the others take it back.',
+    'Max Verstappen': 'The latest braker on the grid and he never yields an inch. That commitment is not free: he makes real mistakes, and he is mid-field at best in the wet.',
+    'Lewis Hamilton': 'Thrives in a fight and reads the circuit further ahead than anyone else. Handy in the rain and the weakest of the ten with the road to himself: a racer rather than a time-triallist.',
+    'Fernando Alonso': 'Unbeatable wheel to wheel. He will sit closer to your gearbox than anyone, will not be moved off a line, and is one of the three quickest in the wet. Ordinary once the road is clear.',
+    'Sebastian Vettel': 'Devastating in clean air and down a straight. Give him the lead and he disappears; put him in traffic and he would rather wait than fight. The rain is not his weather.',
+    'Jim Clark': 'Famously smooth — the gentlest hands here — and almost mistake-free, which is why he is quick in the wet. Passive in a fight, and that is what it costs him.',
+    'Niki Lauda': 'The computer. Calculated risk, no heroics, no mistakes, and real speed down a straight. He has no pace at all in the rain, and he will not fight you for a place he can take later.',
+    'Juan Manuel Fangio': 'Wins at the slowest speed necessary. No weakness anywhere and no standout either, which over a long calendar is its own kind of weapon.'
+};
+
+// The bars. Each is a value from the style table turned into a 0..1 fill, with
+// the range chosen so the ten drivers actually spread across it - a bar where
+// everyone sits at 80% tells you nothing. `inv` means low is good.
+const EX_BARS = [
+    { k: 'corner',   label: 'Cornering',  lo: 0.980, hi: 1.035 },
+    { k: 'straight', label: 'Straights',  lo: 0.975, hi: 1.030 },
+    { k: 'brake',    label: 'Late braking', lo: 0.86, hi: 1.20 },
+    { k: 'cleanAir', label: 'Clean air',  lo: 0.995, hi: 1.016 },
+    { k: 'overtake', label: 'Attacking',  lo: 0.68, hi: 1.02 },
+    { k: 'defend',   label: 'Defending',  lo: 0.52, hi: 1.02 },
+    { k: 'gap',      label: 'Sits close', lo: 1.28, hi: 0.70 },   // inverted on purpose
+    { k: 'err',      label: 'Consistency', lo: 1.95, hi: 0.20 },  // inverted: fewer mistakes is better
+    { k: 'steerTau', label: 'Smooth hands', lo: 0.68, hi: 1.48 }
+];
+
+function exBarFrac(v, b) {
+    const f = (v - b.lo) / (b.hi - b.lo);
+    return Math.max(0, Math.min(1, f));
+}
+function exBarColour(f) {
+    // one hue ramp, so a long bar always reads as "more of this"
+    return f > 0.72 ? '#7fe08a' : (f > 0.38 ? '#c9d36a' : '#e0a76a');
+}
+
+// WET WEATHER IS MEASURED, not read off the table.
+//
+// There is a `wet` column in AI_DRIVER_STYLES and it would be the obvious thing
+// to put a bar on. It would also be wrong. That column is a CORRECTION, not an
+// ability: a wet race is corner-dominated, so the corner/straight split already
+// makes rain specialists on its own, and the column is only what lands the NET
+// order where it is meant to be - which is why a rain expert can carry a number
+// below 1. Ranking the drivers by it puts Prost near the top, and Prost is the
+// one the profile calls poor in the rain.
+//
+// So the screen runs the laps instead: a dry one and a wet one for every
+// driver, and ranks them on the wet time itself. See exWetFrac for why the
+// wet-to-dry RATIO, which is the obvious measure, is also the wrong one.
+//
+// FOUR circuits, and they are the same four the wet balance was fitted on
+// (wetfit.js). Two - Circle, one long corner, and Oval, mostly straight - were
+// enough to show the shape, but not to agree with the fit: Clark came out
+// fourth in the rain over four circuits and seventh over those two, because
+// which circuits you pick is itself a wet-weather bias. A screen that reports
+// a different order from the one the balance was set to is a screen arguing
+// with the game.
+const EX_WET_TRACKS = ['circle', 'oval', 'f1', 'serpent'];
+const exWet = { done: 0, total: EX_DRIVER_NAMES.length * EX_WET_TRACKS.length * 2, by: {} };
+
+// What the bar shows is ABSOLUTE pace in the rain, not the ratio of wet to dry.
+//
+// The ratio was the first thing tried and it is a trap: in the wet the corners
+// collapse and the straights do not, so whoever spends most of the lap flat out
+// keeps the highest fraction of their dry time. It ranked Lauda and Prost - the
+// two straight-line specialists, and the two the profiles call poor in the rain
+// - at the top, and Senna and Schumacher at the bottom. It was measuring how
+// much straight a driver's lap contains.
+//
+// Who is quickest when it rains is the question a driver card is being asked,
+// so that is what it answers: the wet lap time itself, over both circuits, as a
+// gap to whoever is fastest.
+// The gap is averaged PER CIRCUIT, not summed across them. Adding the two lap
+// times together weights whichever circuit is longer, and the two are chosen
+// precisely because they disagree - so the Oval, being the slower lap, would
+// have quietly decided the ranking on its own and the answer would have been
+// "who is quick on a straight" all over again.
+function exWetGap(name) {
+    const r = exWet.by[name];
+    if (!r) return null;
+    const gaps = [];
+    for (const tk of EX_WET_TRACKS) {
+        const mine = r[tk] && r[tk].wet;
+        if (!mine) return null;
+        const all = EX_DRIVER_NAMES.map(n => exWet.by[n] && exWet.by[n][tk] && exWet.by[n][tk].wet)
+            .filter(Boolean);
+        if (all.length < EX_DRIVER_NAMES.length) return null;
+        const best = Math.min(...all);
+        gaps.push((mine - best) / best);
+    }
+    return gaps.reduce((a, x) => a + x, 0) / gaps.length;
+}
+function exWetFrac(name) {
+    const mine = exWetGap(name);
+    if (mine === null) return null;
+    const all = EX_DRIVER_NAMES.map(exWetGap);
+    if (all.some(x => x === null)) return null;
+    const best = Math.min(...all), worst = Math.max(...all);
+    return { gap: mine, frac: worst > best ? (worst - mine) / (worst - best) : 0.5 };
+}
+
+function exMeasureWet(done) {
+    if (exWet.done >= exWet.total) { if (done) done(); return; }
+    const jobs = [];
+    for (const tk of EX_WET_TRACKS)
+        for (const wet of [false, true])
+            for (const name of EX_DRIVER_NAMES) jobs.push({ name, wet, tk });
+    const tracks = {};
+    for (const tk of EX_WET_TRACKS) { tracks[tk] = makeTrack(tk); tracks[tk].getRacingLine(); }
+    let i = 0;
+    const step = () => {
+        if (document.getElementById('explore-drivers').style.display === 'none') return;
+        const t0 = performance.now();
+        while (i < jobs.length && performance.now() - t0 < 45) {
+            const j = jobs[i++];
+            // pinned for the same reason as the records, on the middle
+            // compound because this is a comparison between drivers rather
+            // than a record attempt
+            const ms = exPinnedTyre('medium', () =>
+                simulateQualifyingLap(tracks[j.tk], j.name, 'alien', 1.1, j.wet, 'ridge'));
+            exWet.done++;
+            if (ms) {
+                const r = exWet.by[j.name] = exWet.by[j.name] || {};
+                (r[j.tk] = r[j.tk] || {})[j.wet ? 'wet' : 'dry'] = ms;
+            }
+        }
+        exRenderDrivers();
+        if (i < jobs.length) setTimeout(step, 0); else if (done) done();
+    };
+    setTimeout(step, 0);
+}
+
+// Strengths and weaknesses are not written down either: they are whatever this
+// driver is furthest from the field on, in each direction.
+function exDriverTags(name) {
+    const s = AI_DRIVER_STYLES[name];
+    if (!s) return { up: [], down: [] };
+    const scored = EX_BARS.map(b => {
+        const mine = exBarFrac(s[b.k], b);
+        const others = EX_DRIVER_NAMES.filter(n => n !== name)
+            .map(n => exBarFrac(AI_DRIVER_STYLES[n][b.k], b));
+        const avg = others.reduce((a, x) => a + x, 0) / others.length;
+        return { label: b.label, d: mine - avg };
+    });
+    // and the measured one, once it exists
+    const w = exWetFrac(name);
+    if (w) {
+        const all = EX_DRIVER_NAMES.map(exWetFrac).filter(Boolean).map(x => x.frac);
+        const avg = all.reduce((a, x) => a + x, 0) / all.length;
+        scored.push({ label: 'Wet weather', d: w.frac - avg });
+    }
+    scored.sort((a, b) => b.d - a.d);
+    return {
+        up: scored.filter(x => x.d > 0.16).slice(0, 3).map(x => x.label),
+        down: scored.filter(x => x.d < -0.16).slice(-3).map(x => x.label)
+    };
+}
+
+function exDriverCardHtml(name) {
+    const s = AI_DRIVER_STYLES[name];
+    const tags = exDriverTags(name);
+    const code = DRIVER_CODES[name] || name.slice(0, 3).toUpperCase();
+    const bars = EX_BARS.map(b => {
+        const f = exBarFrac(s[b.k], b);
+        return `<div class="ex-bar-row"><span class="lab">${b.label}</span>` +
+            `<span class="ex-bar"><i style="width:${(f * 100).toFixed(0)}%;` +
+            `background:${exBarColour(f)};"></i></span>` +
+            `<span class="num">${s[b.k].toFixed(b.hi > 1.1 || b.lo > 1.1 ? 2 : 3)}</span></div>`;
+    }).join('');
+    // the measured wet row sits with the others, marked as what it is
+    const w = exWetFrac(name);
+    const wetRow = w
+        ? `<div class="ex-bar-row"><span class="lab">Wet weather</span>` +
+          `<span class="ex-bar"><i style="width:${(w.frac * 100).toFixed(0)}%;` +
+          `background:#64b5f6;"></i></span>` +
+          `<span class="num">${w.gap < 0.0005 ? 'best' : '+' + (100 * w.gap).toFixed(1) + '%'}</span></div>`
+        : `<div class="ex-bar-row"><span class="lab">Wet weather</span>` +
+          `<span class="ex-bar"></span><span class="num" style="opacity:0.4;">&hellip;</span></div>`;
+    return `<div class="ex-driver" style="border-left-color:${exDriverHue(name)};">` +
+        `<div class="ex-code">${code}</div>` +
+        `<h3>${name}</h3>` +
+        `<div class="ex-blurb">${EX_DRIVER_BLURB[name] || ''}</div>` +
+        `<div class="ex-tags">` +
+        tags.up.map(t => `<span class="ex-tag up">${t}</span>`).join('') +
+        tags.down.map(t => `<span class="ex-tag down">${t}</span>`).join('') +
+        `</div>${bars}${wetRow}</div>`;
+}
+// A stable colour per driver, so a card is recognisable at a glance.
+function exDriverHue(name) {
+    const i = EX_DRIVER_NAMES.indexOf(name);
+    return `hsl(${(i * 36 + 12) % 360}, 62%, 58%)`;
+}
+
+function exRenderDrivers() {
+    const grid = document.getElementById('ex-driver-grid');
+    if (!grid) return;
+    const head = exWet.done < exWet.total
+        ? `<div style="grid-column:1/-1;font-size:11px;opacity:0.5;">` +
+          `running wet and dry laps to rank the rain &mdash; ${exWet.done} of ${exWet.total}</div>`
+        : '';
+    grid.innerHTML = head + EX_DRIVER_NAMES.map(exDriverCardHtml).join('');
+}
+
+function showExploreDrivers() {
+    menu.style.display = 'none';
+    document.getElementById('explore-drivers').style.display = 'block';
+    exRenderDrivers();
+    exMeasureWet();
+}
+
+// --- the circuits ----------------------------------------------------------
+
+// Draw a circuit into a canvas, scaled to the arena. Used by both the little
+// cards and the opened page.
+function exDrawTrack(canvas, track) {
+    const ctx = canvas.getContext('2d');
+    // this circuit's own arena: a big world simply scales smaller to fit
+    const AX0 = ARENA_X0, AY0 = 0;
+    const aw = track.worldW - AX0, ah = track.worldH - AY0;
+    const sc = Math.min(canvas.width / aw, canvas.height / ah);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(sc, 0, 0, sc,
+        (canvas.width - aw * sc) / 2 - AX0 * sc,
+        (canvas.height - ah * sc) / 2 - AY0 * sc);
+    ctx.fillStyle = '#2f6f36';
+    ctx.fillRect(AX0, AY0, aw, ah);
+    track._stands = [];        // no crowd on a thumbnail
+    track.puddles = [];
+    track.draw(ctx);
+}
+
+// ===========================================================================
+//  EXPLORE: THE RECORD BOOK
+// ===========================================================================
+//
+//  Every lap time on these screens is measured by this build, not typed in.
+//  It used to be measured LAZILY - open a circuit, watch thirty qualifying
+//  laps run - which is wrong twice over: you wait every time, and the numbers
+//  arrive piecemeal so two circuits are never comparable until both finish.
+//
+//  It is now one batch over every circuit, run once, and then kept. What the
+//  batch covers was decided by measuring rather than guessing (qbench.js, six
+//  circuits, ten drivers on each of the six compounds):
+//
+//    * in the DRY the soft sets the record on every circuit, all six of six.
+//      On a single flying lap the tyre is fresh, and fresh is exactly where
+//      `bite` puts the soft ahead of everything else - grip x bite 1.101
+//      against the drift compound's 1.048 and the medium's 1.000. So only the
+//      soft needs all ten drivers.
+//    * in the WET the two rain compounds split it 3-3 - full wet at Oval, F1
+//      and Circle, intermediate at Pettine, Harbour and Kart - because which
+//      one wins is a question about the circuit. Both need all ten drivers.
+//    * the other dry compounds never hold a record, but the ORDER they come in
+//      is worth knowing before you pick one, so they are run once each with a
+//      single driver. Same driver across all four, so the comparison is the
+//      compound and nothing else.
+//
+//  Each job runs EX_RUNS times and keeps the best, because the AI makes
+//  mistakes on purpose (`errorChance`) and one lap of a driver who erred is
+//  not that driver's pace.
+const EX_RUNS = 2;
+const EX_ORDER_DRIVER = 'Ayrton Senna';
+const exRecords = {};   // key -> { dry, wet, byTyre: {}, done, total }
+const exBuild = { jobs: null, i: 0, done: 0, total: 0, running: false, t0: 0 };
+
+// Records survive a reload where the browser allows it. Keyed by a fingerprint
+// of the physics that produced them: change a tyre, a wet constant or an AI
+// profile and the stored book is thrown away rather than quietly shown next to
+// numbers it no longer matches. That has to be automatic - a record book that
+// silently outlives the balance it measured is worse than no record book.
+// L'impronta e' DUE impronte, e la ragione e' pratica. La prima versione ne
+// aveva una sola, che sommava la fisica E la geometria di tutti i circuiti:
+// aggiungere una pista - o toglierne una, o spostarne un vertice - buttava via
+// il libro INTERO e faceva ricostruire milleduecento giri per diciotto
+// circuiti che non erano cambiati. Nicola se ne e' accorto dal fatto che il
+// libro si ricostruiva ogni volta che apriva "The Circuits", ed e' esattamente
+// quello che succedeva: in quei giorni ogni build cambiava la geometria.
+//
+// Ora: la fisica (gomme, bagnato, profili IA, caratteri, EX_RUNS) e' globale e
+// se cambia butta tutto, perche' un tempo misurato con altre gomme non e' un
+// tempo. La geometria e' PER CIRCUITO, e invalida solo il suo. Aggiungere un
+// diciannovesimo circuito ora costa i giri di quel circuito e basta.
+function exPhysHash() {
+    const bits = [JSON.stringify(TYRES), String(WET_GRIP),
+                  JSON.stringify(AI_PROFILES.alien || {}),
+                  JSON.stringify(AI_DRIVER_STYLES), String(EX_RUNS),
+                  // the racing line is part of the physics of a lap: a new
+                  // optimiser means new reference times
+                  'line' + (typeof RACING_LINE_VERSION !== 'undefined' ? RACING_LINE_VERSION : 1),
+                  // the yaw ceiling is physics: a lap driven under it is not
+                  // the same lap (see the note in car.js update())
+                  'yaw' + (typeof YAW_CAP !== 'undefined' ? YAW_CAP : 0)];
+    return exHash(bits.join('|'));
+}
+
+// Sommata dai SEGMENTI, non dalla linea ideale: la linea costa 5-25ms per
+// circuito a rilassarsi e questa gira a ogni salvataggio e a ogni caricamento,
+// che sarebbe quasi un secondo per scoprire che non e' cambiato niente.
+//
+// La geometria ci deve stare: un tempo sul giro e' un fatto su una forma. Il
+// pomeriggio in cui i tracciati sono stati scalati per entrare nell'arena,
+// Comb ha perso il 4.6% della sua lunghezza e ogni tempo salvato per lui e'
+// diventato il tempo di un circuito che non esisteva piu'.
+function exGeomHash(key) {
+    try {
+        const t = makeTrack(key);
+        if (typeof t.geomHash === 'function') return t.geomHash();
+        let geom = t.trackWidth * 7 + t.grassWidth * 3;
+        for (const s of t.segments)
+            geom += s.type === 'line' ? (s.x1 + s.y1 + s.x2 + s.y2)
+                                      : (s.cx + s.cy + s.r * 13);
+        return exHash(geom.toFixed(1));
+    } catch (e) { return 'x'; }
+}
+
+function exHash(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return h.toString(36);
+}
+
+function exFingerprint() {
+    // The GEOMETRY belongs in here too, and it was missing. A record book is
+    // lap times, and a lap time is a fact about a shape: the afternoon the
+    // layouts were scaled to fit the arena, Comb lost 4.6% of its length and
+    // every saved time for it became a time for a circuit that no longer
+    // existed - and the book would have gone on showing them. That change was
+    // reverted, but the hole it exposed was real.
+    //
+    // Summed from the SEGMENTS, not from the racing line: the racing line
+    // costs 5-25ms per circuit to relax and this runs on every save and load,
+    // which would be most of a second to notice that nothing has changed.
+    return exPhysHash();
+}
+// Namespaced per build: Apex Zoom's record book measures the new circuits
+// too, and the two builds saving into one slot would silently drop each
+// other's rows. (The ghost laps and personal bests below are NOT namespaced,
+// on purpose: geometry and physics are identical, so a lap you own in Apex 3
+// is a lap you own here.)
+const EX_STORE_KEY = 'apexzoom.explore.records';
+
+// ===========================================================================
+//  YOUR OWN BESTS, BY CIRCUIT AND BY COMPOUND
+// ===========================================================================
+//
+//  The one number nobody has ever measured about this game is how much a
+//  compound is worth IN THE PLAYER'S HANDS. Every tyre in the table was
+//  balanced against the AI, and the AI cannot use the drift compound at all -
+//  it drives a computed speed profile and never provokes the car, so the drift
+//  tyre measures 0.5 to 1.3% SLOW on all seventeen circuits when the AI holds
+//  it, and quick enough to win championships when a person does.
+//
+//  So the game keeps your own best lap per circuit per compound, and shows the
+//  gap. No special mode to run, no laps to set aside: play, and after a few
+//  sessions the comparison is simply there.
+// ---------------------------------------------------------------------------
+//  THE SEASON SURVIVES A RELOAD
+//  Personal bests, the record book and the season seed were already in
+//  localStorage; the championship itself was not - close the tab at round
+//  seven and the season was gone. championshipState is plain data end to end
+//  (the seeded rng is consumed at creation, never stored), so the whole
+//  thing serialises as it stands.
+//
+//  Saved at every checkpoint that changes it: when a round is entered (which
+//  covers creation and the chassis picks, both of which funnel through
+//  nextChampionshipRound) and when a race's points have been applied. The
+//  save is cleared when the final standings are shown - a finished season is
+//  a memory, not a resumable state - and simply overwritten when a new one
+//  starts.
+//
+//  Resuming re-arms the three globals a season needs (isChampionship,
+//  raceMode, the per-seat chassis) and walks in through the same door as
+//  every other round: nextChampionshipRound, so the GP preview, skip flow
+//  and standings all behave as if the tab had never closed. A save from a
+//  season abandoned mid-picking has seats without cars; those are asked
+//  again, with the same screen the season used the first time.
+// ---------------------------------------------------------------------------
+// Namespaced per build: a season saved here can visit Marathon and Colossus,
+// which Apex 3 cannot build - resuming it THERE would silently race the Oval
+// under a Marathon label. Separate slots, separate seasons.
+const CHAMP_STORE_KEY = 'apexzoom.championship';
+function saveChampionship() {
+    if (!championshipState) return;
+    ensureSeasonId(championshipState);
+    // The archive is written from here rather than from the final screen: this
+    // runs at season creation and at the top of every round, so a season is in
+    // the history from its first Grand Prix and stays there if it is abandoned.
+    try { archiveSeason(championshipState, false); } catch (e) { /* history is not load-bearing */ }
+    try {
+        window.localStorage.setItem(CHAMP_STORE_KEY,
+            JSON.stringify({ v: 1, state: championshipState }));
+    } catch (e) { /* storage full or blocked: the season just is not saved */ }
+    refreshChampResume();
+}
+function loadChampionshipSave() {
+    try {
+        const raw = window.localStorage.getItem(CHAMP_STORE_KEY);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        const s = data && data.v === 1 && data.state;
+        // enough shape-checking to refuse a save this build cannot drive
+        if (!s || !Array.isArray(s.tracks) || !Array.isArray(s.participants) ||
+            typeof s.currentTrackIndex !== 'number' || !s.points ||
+            s.currentTrackIndex >= s.tracks.length) return null;
+        // A calendar can name a circuit this build no longer has - Monaco was
+        // added and then taken out again in the same afternoon. makeTrack()
+        // would quietly hand back an Oval and the season table would print
+        // "undefined" for the round, so the save is refused instead: better a
+        // fresh season than one that lies about where it raced.
+        if (!s.tracks.every(t => SEASON_POOL.indexOf(t) !== -1)) return null;
+        return s;
+    } catch (e) {
+        // Storage blocked and malformed JSON are ordinary answers: there is no
+        // season to resume, and that is the whole story. A ReferenceError or a
+        // TypeError is not - it means this function is broken, and replying
+        // "no save" to that is exactly how a season in progress stayed hidden
+        // behind its own banner. It still returns null (a half-read save must
+        // never reach the game), but it says so out loud first.
+        if (e instanceof ReferenceError || e instanceof TypeError) {
+            console.error('loadChampionshipSave is broken, not empty:', e);
+        }
+        return null;
+    }
+}
+function clearChampionshipSave() {
+    try { window.localStorage.removeItem(CHAMP_STORE_KEY); } catch (e) { }
+    refreshChampResume();
+}
+// The saved season announces itself at the TOP of the menu, in its own
+// banner, on every tab. It used to be a button in the main row - which on
+// Nicola's window sat 736px down a scrollable menu, below the fold. He
+// never saw it, pressed Start Championship instead, and the season he was
+// running was replaced by a fresh one: same screens, same five rounds,
+// every score back to zero at round two. That is the bug he reported, and
+// the button's POSITION was half of it.
+function refreshChampResume() {
+    const bar = document.getElementById('champ-resume-banner');
+    const det = document.getElementById('crb-detail');
+    const s = loadChampionshipSave();
+    if (bar) bar.hidden = !s;
+    if (det && s) {
+        const leader = Object.keys(s.points || {})
+            .sort((a, b) => (s.points[b] || 0) - (s.points[a] || 0))[0];
+        const who = leader && s.participants
+            ? (s.participants.find(p => p.color === leader) || {})
+            : null;
+        // Before a wheel has turned everyone is on nought, and the sort hands
+        // back whichever colour happens to be first - which read "you lead on
+        // 0". No points, no leader: the standings have not said anything yet.
+        const top = leader ? (s.points[leader] || 0) : 0;
+        const next = TRACK_LABELS[s.tracks[s.currentTrackIndex]] ||
+                     s.tracks[s.currentTrackIndex];
+        det.textContent = 'Round ' + (s.currentTrackIndex + 1) + ' of ' +
+            s.tracks.length + (next ? ' · ' + next : '') + (top > 0
+                ? ' — ' + (who && who.isPlayer ? 'you lead' :
+                    ((who && who.driverName) || leader) + ' leads') +
+                  ' on ' + top
+                : '');
+    }
+    disarmChampWipe();
+}
+
+// Starting a new championship over a saved one is destructive, so it asks.
+// Not a browser dialog - the game has never used one - but the button
+// itself: the first press turns it into the warning, the second goes
+// through, and it disarms itself after a few seconds or if you touch
+// anything else.
+let champWipeArmed = 0;
+function disarmChampWipe() {
+    const btn = document.getElementById('champ-btn');
+    if (champWipeArmed) clearTimeout(champWipeArmed);
+    champWipeArmed = 0;
+    if (btn) {
+        btn.textContent = 'Start Championship';
+        btn.classList.remove('menu-danger');
+    }
+}
+function resumeChampionship() {
+    disarmChampWipe();
+    const s = loadChampionshipSave();
+    if (!s) { refreshChampResume(); return; }
+    championshipState = s;
+    ensureSeasonId(championshipState);   // saves written before the archive existed
+    isChampionship = true;
+    raceMode = 'championship';
+    pendingGrid = null;
+    pendingWeather = null; pendingWetLevel = null;
+    skipMode = false; skipPlayer = null; skipPlayers = [];
+    const ch = championshipState.chassis || (championshipState.chassis = {});
+    if (ch[1]) playerChassis = ch[1];
+    if (ch[2]) playerChassis2 = ch[2];
+    menu.style.display = 'none';
+    const unpicked = championshipState.participants
+        .some(p => p.isPlayer && !p.chassis);
+    if (unpicked) chooseChassisForSeason(() => nextChampionshipRound());
+    else nextChampionshipRound();
+}
+
+// ---------------------------------------------------------------------------
+//  THE SEASON ARCHIVE
+//
+//  Every championship ever run, kept. Not written at the final screen but at
+//  every round, because a season abandoned at round four is still four rounds
+//  of racing and "save them as they go" has to mean that a season you walked
+//  away from is still there. The in-progress save (CHAMP_STORE_KEY) is a
+//  different thing: that is ONE season, the one you can resume, and it is
+//  wiped when the season ends. This is the history, and nothing wipes it.
+// ---------------------------------------------------------------------------
+const SEASON_ARCHIVE_KEY = 'apexzoom.seasons';
+const SEASON_ARCHIVE_MAX = 40;
+
+// A season needs a name of its own the moment it exists: the seed is not one
+// (two seasons can share a seed - that is what a seed is FOR) and the start
+// time alone would collide on a fast retry.
+function seasonId() {
+    return 's' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+}
+function ensureSeasonId(state) {
+    if (!state) return null;
+    if (!state.id) state.id = seasonId();
+    if (!state.startedAt) state.startedAt = Date.now();
+    return state.id;
+}
+
+function seasonsLoad() {
+    try {
+        const raw = window.localStorage.getItem(SEASON_ARCHIVE_KEY);
+        if (!raw) return [];
+        const box = JSON.parse(raw);
+        const list = (box && Array.isArray(box.seasons)) ? box.seasons : [];
+        // shape-checked on the way in, because this list is also fed by files
+        // a player brings from somewhere else
+        return list.filter(seasonEntryOk);
+    } catch (e) { return []; }
+}
+
+function seasonEntryOk(e) {
+    return !!(e && typeof e.id === 'string' && Array.isArray(e.tracks) &&
+              Array.isArray(e.results) && e.points && typeof e.points === 'object');
+}
+
+function seasonsSave(list) {
+    // Newest first and capped: a ten-round season is a few kilobytes, and
+    // localStorage is a shelf, not a database. If the write still will not
+    // fit, the oldest go one at a time until it does rather than the whole
+    // archive being lost to one quota error.
+    let keep = list.slice()
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        .slice(0, SEASON_ARCHIVE_MAX);
+    while (keep.length) {
+        try {
+            window.localStorage.setItem(SEASON_ARCHIVE_KEY,
+                JSON.stringify({ v: 1, seasons: keep }));
+            return keep;
+        } catch (e) { keep = keep.slice(0, keep.length - 1); }
+    }
+    try { window.localStorage.removeItem(SEASON_ARCHIVE_KEY); } catch (e) { }
+    return [];
+}
+
+// A snapshot of the season as it stands now, replacing the previous snapshot
+// of the same season.
+function archiveSeason(state, complete) {
+    if (!state || !Array.isArray(state.tracks)) return;
+    ensureSeasonId(state);
+    const list = seasonsLoad();
+    const entry = {
+        id: state.id,
+        startedAt: state.startedAt || Date.now(),
+        updatedAt: Date.now(),
+        complete: !!complete,
+        seed: state.seed || null,
+        difficulty: state.difficulty || null,
+        // who was given the season's boost. Part of what that championship
+        // was, and the archive is the only place it can still be read once
+        // the season is over.
+        rival: (state.rival && state.rival.driver) || null,
+        rounds: state.tracks.length,
+        done: Math.max(0, Math.min(state.currentTrackIndex || 0, state.tracks.length)),
+        tracks: state.tracks.slice(),
+        weather: (state.weather || []).slice(),
+        // trimmed to what the archive shows: the live state carries AI
+        // modifiers and per-seat scratch that mean nothing once it is over
+        participants: (state.participants || []).map(p => ({
+            color: p.color, driverName: p.driverName || null,
+            isPlayer: !!p.isPlayer, chassis: p.chassis || null
+        })),
+        points: Object.assign({}, state.points),
+        bonusPoints: Object.assign({}, state.bonusPoints),
+        results: state.results || []
+    };
+    const i = list.findIndex(x => x.id === entry.id);
+    if (i >= 0) list[i] = entry; else list.push(entry);
+    seasonsSave(list);
+}
+
+// Merge, never replace: importing a file must not cost you the seasons you
+// already had. Same id wins by whichever snapshot is newer, which is also
+// what makes importing the same file twice a no-op.
+function seasonsMerge(incoming) {
+    const have = seasonsLoad();
+    const byId = {};
+    for (const e of have) byId[e.id] = e;
+    let added = 0, updated = 0, skipped = 0;
+    for (const e of (incoming || [])) {
+        if (!seasonEntryOk(e)) { skipped++; continue; }
+        const cur = byId[e.id];
+        if (!cur) { byId[e.id] = e; added++; }
+        else if ((e.updatedAt || 0) > (cur.updatedAt || 0)) { byId[e.id] = e; updated++; }
+    }
+    seasonsSave(Object.keys(byId).map(k => byId[k]));
+    return { added, updated, skipped };
+}
+
+// What each driver did across one season, counted from the race records
+// rather than stored: a total that is derived cannot drift from the races it
+// is supposed to summarise.
+function seasonTally(entry) {
+    const by = {};
+    const get = (c) => (by[c] || (by[c] = {
+        color: c, name: c, chassis: null, isPlayer: false,
+        races: 0, wins: 0, podiums: 0, poles: 0, fl: 0, chelem: 0,
+        dnf: 0, dns: 0, best: null, racePts: 0, extra: 0, total: 0
+    }));
+    for (const p of entry.participants || []) {
+        const d = get(p.color);
+        d.name = p.driverName || p.color;
+        d.isPlayer = !!p.isPlayer;
+        d.chassis = p.chassis || null;
+    }
+    for (const r of entry.results || []) {
+        if (r.pole) get(r.pole).poles++;
+        if (r.fastest) get(r.fastest).fl++;
+        if (r.chelem) get(r.chelem).chelem++;
+        for (const o of (r.order || [])) {
+            const d = get(o.color);
+            if (o.name) d.name = o.name;
+            if (o.dns) { d.dns++; continue; }
+            d.races++;
+            d.racePts += (o.pts || 0);
+            d.extra += (o.bonus || 0);
+            if (o.dnf) { d.dnf++; continue; }
+            if (o.pos === 1) d.wins++;
+            if (o.pos && o.pos <= 3) d.podiums++;
+            if (o.pos && (d.best === null || o.pos < d.best)) d.best = o.pos;
+        }
+    }
+    // The season's own points table is what the standings showed, so it is
+    // what the archive reports - the sum above is a cross-check, not a source.
+    for (const c of Object.keys(entry.points || {})) get(c).total = entry.points[c] || 0;
+    return Object.keys(by).map(k => by[k]).sort((a, b) => b.total - a.total);
+}
+
+// And across all of them.
+function careerTally(list) {
+    const out = {
+        seasons: list.length, complete: 0, titles: 0, runnerUp: 0,
+        races: 0, wins: 0, podiums: 0, poles: 0, fl: 0, chelem: 0,
+        dnf: 0, dns: 0, points: 0, bestFinish: null, wetRaces: 0,
+        circuits: {}, chassis: {}, rivals: {}
+    };
+    for (const e of list) {
+        if (e.complete) out.complete++;
+        const rows = seasonTally(e);
+        const me = rows.find(r => r.isPlayer);
+        if (me) {
+            const place = rows.indexOf(me) + 1;
+            if (e.complete && place === 1) out.titles++;
+            if (e.complete && place === 2) out.runnerUp++;
+            out.races += me.races; out.wins += me.wins; out.podiums += me.podiums;
+            out.poles += me.poles; out.fl += me.fl; out.chelem += me.chelem;
+            out.dnf += me.dnf; out.dns += me.dns; out.points += me.total;
+            if (me.best !== null && (out.bestFinish === null || me.best < out.bestFinish)) {
+                out.bestFinish = me.best;
+            }
+            if (me.chassis) out.chassis[me.chassis] = (out.chassis[me.chassis] || 0) + 1;
+        }
+        (e.results || []).forEach((r, i) => {
+            if (r.wet) out.wetRaces++;
+            const t = r.track || (e.tracks || [])[i];
+            if (!t) return;
+            const c = out.circuits[t] || (out.circuits[t] = { races: 0, wins: 0 });
+            c.races++;
+            const win = (r.order || []).find(o => o.pos === 1);
+            if (win && me && win.color === me.color) c.wins++;
+        });
+        // who kept beating you
+        const champ = rows[0];
+        if (e.complete && champ && !champ.isPlayer) {
+            out.rivals[champ.name] = (out.rivals[champ.name] || 0) + 1;
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+//  THE GHOST
+//  Practice used to be a lap with nobody to measure against until the tower
+//  updated; now your best lap DRIVES. In practice and qualifying the
+//  player's laps are recorded - position and heading each frame, stamped
+//  with lap time - and the best one is replayed as a pale silhouette that
+//  sets off every time you cross the line. Beat it and the new lap takes
+//  its place on the spot: the ghost you chase is always the fastest you
+//  have ever been on this circuit, in this weather.
+//
+//  Recorded by TIME, not by frame: a trace replayed frame-by-frame would
+//  run faster on a fast machine. Samples carry their lap-clock timestamp
+//  and are resampled to a fixed 30Hz grid on save (rounded to a tenth of a
+//  pixel), so a 25-second lap costs about 20KB and playback interpolates
+//  on the same clock the lap timer uses. Dry and wet are separate ghosts -
+//  a wet best is a different sport - and the race never shows one: the
+//  ghost is a training partner, not an eleventh car.
+// ---------------------------------------------------------------------------
+const GHOST_STORE_KEY = 'apex2.ghost.laps';
+const GHOST_HZ = 30;
+let ghostStore = null;    // lazy: { "track:dry": {v, ms, hz, g, data:[x,y,a...]} }
+let ghostS = null;        // per-session state
+// The orientation is part of the key: a trace recorded before a circuit
+// was mirrored would replay through the mirrored world like a wrong-way
+// driver. Times transfer (the circuit is congruent); coordinates do not.
+function ghostKeyFor(trackKey, wet) { return trackKey + ':' + (wet ? 'wet' : 'dry'); }
+function ghostTrackKey(t) { return trackKeyOf(t) + (t && t.mirrored ? '~acw' : ''); }
+
+// ---------------------------------------------------------------------------
+//  AND THE GEOMETRY IS PART OF IT TOO.
+//  A ghost is a list of COORDINATES. Keyed by name alone, a lap recorded on
+//  one layout replays on a circuit that has since been redrawn: the ghost
+//  drives through the scenery on a road that no longer exists. Marathon and
+//  Colossus were redrawn between the first Apex Zoom build and this one - to
+//  give them the corners a steering-rate car needs - and that is exactly what
+//  Nicola saw in qualifying.
+//
+//  So every lap saved from now on carries `g`, the circuit's geomHash() - the
+//  same fingerprint the racing line and the record book are keyed by. On the
+//  way back in, a stamp that does not match is not this circuit's lap.
+//
+//  Laps saved BEFORE this change carry no stamp. They are still honoured for
+//  the twenty circuits Apex 3 shipped, whose coordinates have not moved by a
+//  pixel - that is the premise of this whole build, so a ghost set over there
+//  still races you here. For the two that HAVE been redrawn there is no such
+//  guarantee, so an unstamped lap is dropped rather than driven through a wall.
+const GEOM_REDRAWN = ['maratona', 'colosso', 'pentagon'];
+function geomStampOf(t) {
+    return (t && typeof t.geomHash === 'function') ? t.geomHash() : null;
+}
+// Does a stored entry belong to the circuit as it is drawn NOW?
+function geomStampOk(stamp, trackKey, want) {
+    if (stamp !== undefined && stamp !== null) return stamp === want;
+    return GEOM_REDRAWN.indexOf(trackKey) < 0;      // unstamped: see above
+}
+function loadGhostStore() {
+    if (ghostStore) return ghostStore;
+    ghostStore = {};
+    try {
+        const raw = window.localStorage.getItem(GHOST_STORE_KEY);
+        if (raw) ghostStore = JSON.parse(raw) || {};
+    } catch (e) { }
+    return ghostStore;
+}
+// Takes the TRACK, not just its key: whether a stored lap is usable depends on
+// the geometry the circuit has right now.
+function ghostFor(t, wet) {
+    const g = loadGhostStore()[ghostKeyFor(ghostTrackKey(t), wet)];
+    if (!(g && g.v === 1 && Array.isArray(g.data) && g.data.length >= 6 &&
+          g.hz > 0 && g.ms > 1000)) return null;
+    return geomStampOk(g.g, trackKeyOf(t), geomStampOf(t)) ? g : null;
+}
+// timestamped [t,x,y,a, ...] -> fixed-rate [x,y,a, ...] on the 30Hz grid
+function ghostResample(samples, ms) {
+    const n = Math.max(2, Math.round(ms / 1000 * GHOST_HZ) + 1);
+    const out = new Array(n * 3);
+    let j = 0;
+    const S = samples.length;
+    for (let k = 0; k < n; k++) {
+        const t = Math.min(ms, k * 1000 / GHOST_HZ);
+        while (j + 4 < S - 4 && samples[j + 4] <= t) j += 4;
+        const t0 = samples[j], t1 = samples[j + 4] !== undefined ? samples[j + 4] : t0 + 1;
+        const f = Math.max(0, Math.min(1, (t - t0) / Math.max(1e-6, t1 - t0)));
+        const x = samples[j + 1] + (samples[j + 5] - samples[j + 1]) * f;
+        const y = samples[j + 2] + (samples[j + 6] - samples[j + 2]) * f;
+        let a0 = samples[j + 3], da = samples[j + 7] - a0;
+        while (da > Math.PI) da -= 2 * Math.PI;
+        while (da < -Math.PI) da += 2 * Math.PI;
+        out[k * 3]     = Math.round((x) * 10) / 10;
+        out[k * 3 + 1] = Math.round((y) * 10) / 10;
+        out[k * 3 + 2] = Math.round((a0 + da * f) * 100) / 100;
+    }
+    return out;
+}
+function saveGhostLap(t, wet, ms, samples) {
+    const store = loadGhostStore();
+    store[ghostKeyFor(ghostTrackKey(t), wet)] = {
+        v: 1, ms: Math.round(ms), hz: GHOST_HZ, g: geomStampOf(t),
+        data: ghostResample(samples, ms)
+    };
+    try { window.localStorage.setItem(GHOST_STORE_KEY, JSON.stringify(store)); }
+    catch (e) { /* storage full: this lap is simply not kept */ }
+}
+function ghostTick() {
+    const on = gameState === 'playing' &&
+        (raceMode === 'practice' || raceMode === 'qualifying') &&
+        playerCar && track;
+    if (!on) { ghostS = null; return; }
+    if (!ghostS || ghostS.track !== track) {
+        ghostS = { track: track, wet: !!isRaining, lastLap: playerCar.lap, rec: null,
+                   best: ghostFor(track, !!isRaining) };
+    }
+    if (playerCar.lap !== ghostS.lastLap) {
+        // the line was just crossed inside updatePhysics: the buffer holds
+        // the finished lap, playerCar.lastLapTime its official time
+        const r = ghostS.rec;
+        if (playerCar.lap === ghostS.lastLap + 1 && r && r.length >= 240 &&
+            r[0] < 120 && playerCar.lastLapTime && playerCar.lastLapTime > 3000 &&
+            (!ghostS.best || playerCar.lastLapTime < ghostS.best.ms)) {
+            saveGhostLap(track, ghostS.wet, playerCar.lastLapTime, r);
+            ghostS.best = ghostFor(track, ghostS.wet);
+        }
+        ghostS.rec = null;
+        ghostS.lastLap = playerCar.lap;
+    }
+    if (playerCar.isBroken) { ghostS.rec = null; return; }
+    const t = track.currentRaceTime - playerCar.lapStartTime;
+    if (t >= 0) {
+        if (!ghostS.rec) { if (t < 120) ghostS.rec = []; else return; }
+        ghostS.rec.push(t, playerCar.x, playerCar.y, playerCar.angle);
+    }
+}
+function drawGhostCar(g) {
+    if (!ghostS || !ghostS.best || !playerCar || playerCar.lap < 1) return;
+    const gb = ghostS.best;
+    const t = track.currentRaceTime - playerCar.lapStartTime;
+    const n = gb.data.length / 3;
+    if (!(t >= 0) || n < 2) return;
+    const tf = t / 1000 * gb.hz;
+    if (tf > n - 1) return;                    // its lap is done; yours is not
+    const k = Math.min(n - 2, Math.floor(tf)), f = Math.min(1, tf - k);
+    const i3 = k * 3, j3 = i3 + 3;
+    const x = gb.data[i3] + (gb.data[j3] - gb.data[i3]) * f;
+    const y = gb.data[i3 + 1] + (gb.data[j3 + 1] - gb.data[i3 + 1]) * f;
+    let da = gb.data[j3 + 2] - gb.data[i3 + 2];
+    while (da > Math.PI) da -= 2 * Math.PI;
+    while (da < -Math.PI) da += 2 * Math.PI;
+    const a = gb.data[i3 + 2] + da * f;
+    // A pale outline in the car's 24x14 box: unmistakably not a rival - no
+    // shadow, no tag, no collision, drawn under the real cars.
+    g.save();
+    g.translate(x, y);
+    g.rotate(a);
+    g.globalAlpha = 0.36;
+    g.fillStyle = '#eaf5ff';
+    g.beginPath(); g.roundRect(-12, -7, 24, 14, 4); g.fill();
+    g.fillStyle = '#8fb8d8';
+    g.fillRect(-12, -6, 4, 12);
+    g.fillRect(8, -5, 4, 10);
+    g.globalAlpha = 0.6;
+    g.lineWidth = 1.2;
+    g.strokeStyle = '#ffffff';
+    g.beginPath(); g.roundRect(-12, -7, 24, 14, 4); g.stroke();
+    g.restore();
+}
+
+const PB_STORE_KEY = 'apex2.player.bests';
+let playerBests = null;         // { trackKey: { tyreKey: { ms, when, wet } } }
+
+function pbLoad() {
+    if (playerBests) return playerBests;
+    playerBests = {};
+    try {
+        const raw = window.localStorage.getItem(PB_STORE_KEY);
+        if (raw) playerBests = JSON.parse(raw) || {};
+    } catch (e) { /* no storage: the table just lives for this session */ }
+    return playerBests;
+}
+function pbSave() {
+    try { window.localStorage.setItem(PB_STORE_KEY, JSON.stringify(playerBests || {})); }
+    catch (e) { /* as above */ }
+}
+
+// Called with a completed lap. Wet and dry are kept apart - a wet lap next to a
+// dry one in the same column would make the compound look like the cause of a
+// difference the weather made.
+// A personal best is a TIME, but it is a time on a particular layout: a lap of
+// the old Marathon is not a record on the new one. Same stamp as the ghost, and
+// the same rule for laps set before there was one - see GEOM_REDRAWN.
+function pbFor(trackKey, geom) {
+    const t = pbLoad()[trackKey] || {};
+    const out = {};
+    for (const slot of Object.keys(t)) {
+        if (t[slot] && t[slot].ms && geomStampOk(t[slot].g, trackKey, geom)) out[slot] = t[slot];
+    }
+    return out;
+}
+
+function pbRecord(trackKey, tyreKey, ms, wet, geom) {
+    if (!trackKey || !tyreKey || !ms || !isFinite(ms)) return;
+    const all = pbLoad();
+    const slot = wet ? tyreKey + ':wet' : tyreKey;
+    const t = all[trackKey] || (all[trackKey] = {});
+    // A record left over from a layout this circuit no longer has is not a
+    // record to beat: it is overwritten rather than compared against.
+    const cur = (t[slot] && geomStampOk(t[slot].g, trackKey, geom)) ? t[slot] : null;
+    if (!cur || ms < cur.ms) {
+        t[slot] = { ms: ms, when: Date.now(), wet: !!wet, g: geom || null };
+        pbSave();
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  THE RECORD BOOK, ON THE SCREEN WHERE THE TYRE IS CHOSEN
+//
+//  Everything below reads the table pbRecord() has been filling since the very
+//  first lap: your own best on this circuit, per compound, dry and wet kept
+//  apart. It was already there - it was just only readable from the pause
+//  panel, halfway through a session, which is after the decision it would
+//  have helped with.
+//
+//  Dry and wet are the only two buckets there are. The record book has never
+//  separated damp from soaked, and inventing that distinction now would mean
+//  either throwing away every wet lap already stored or pretending to know
+//  which kind of wet each one was. So a wet column is a wet column, and the
+//  note under the table says so out loud.
+// ---------------------------------------------------------------------------
+
+// The circuit ABOUT to be driven, which is not the one in `track`: the tyre
+// screen comes up before startQualifying() builds anything, so `track` still
+// holds the last circuit raced - or nothing at all in a fresh tab.
+function upcomingTrackKey() {
+    if (isChampionship && championshipState && Array.isArray(championshipState.tracks)) {
+        return championshipState.tracks[championshipState.currentTrackIndex] || null;
+    }
+    const el = document.getElementById('track-select');
+    return (el && el.value) || null;
+}
+
+// A record is a time on a LAYOUT, not just on a name - the same rule the ghost
+// follows. If the circuit is already built, ask it; otherwise build one purely
+// to hash it, which is a few hundred segments and no rendering at all.
+function upcomingGeomStamp(key) {
+    if (track && currentTrackKey === key) {
+        const s = geomStampOf(track);
+        if (s !== null && s !== undefined) return s;
+    }
+    return exGeomHash(key);
+}
+
+// { any, dry: { tyreKey: rec }, wet: { tyreKey: rec } }, laps from a redrawn
+// layout already filtered out by pbFor.
+function pbBook(trackKey) {
+    const out = { any: false, dry: {}, wet: {} };
+    if (!trackKey) return out;
+    const rec = pbFor(trackKey, upcomingGeomStamp(trackKey));
+    for (const slot of Object.keys(rec)) {
+        const isWet = slot.length > 4 && slot.slice(-4) === ':wet';
+        const key = isWet ? slot.slice(0, -4) : slot;
+        if (!TYRES[key]) continue;              // a compound this build no longer has
+        (isWet ? out.wet : out.dry)[key] = rec[slot];
+        out.any = true;
+    }
+    return out;
+}
+
+function pbBookBest(bucket) {
+    let best = null;
+    for (const k of Object.keys(bucket)) {
+        if (best === null || bucket[k].ms < bucket[best].ms) best = k;
+    }
+    return best;
+}
+
+// "today", "3 days ago" - for the cell's tooltip, because a time from months
+// back on a car you no longer drive is worth less than one from this morning.
+function pbWhenText(when) {
+    if (!when) return '';
+    const days = Math.floor((Date.now() - when) / 86400000);
+    if (days <= 0) return 'today';
+    if (days === 1) return 'yesterday';
+    if (days < 30) return days + ' days ago';
+    const months = Math.round(days / 30);
+    return months <= 1 ? 'a month ago' : months + ' months ago';
+}
+
+// The table under the tyres. Rows only for compounds you have actually used
+// here: six rows of dashes would be a table about nothing.
+function pbBookHtml(book, wetNow, trackKey) {
+    const where = TRACK_LABELS[trackKey] || trackKey || 'this circuit';
+    if (!book.any) {
+        return '<div class="pbk pbk-empty">No laps of your own at <b>' + where +
+               '</b> yet — whatever you set today becomes the time to beat.</div>';
+    }
+    const rows = TYRE_KEYS.filter(k => book.dry[k] || book.wet[k]);
+    const bestDry = pbBookBest(book.dry), bestWet = pbBookBest(book.wet);
+    const cell = (rec, isBest, on) => {
+        if (!rec) return '<td class="pbk-none' + (on ? ' pbk-on' : '') + '">&mdash;</td>';
+        const when = pbWhenText(rec.when);
+        return '<td class="' + (on ? 'pbk-on' : '') + (isBest ? ' pbk-best' : '') + '"' +
+               (when ? ' title="set ' + when + '"' : '') + '>' + fmtLapMs(rec.ms) + '</td>';
+    };
+    return '<div class="pbk">' +
+        '<div class="pbk-head">Your best laps at <b>' + where + '</b></div>' +
+        '<table class="pbk-tab"><thead><tr><th></th>' +
+        '<th class="' + (wetNow ? '' : 'pbk-on') + '">\u2600\ufe0f Dry</th>' +
+        '<th class="' + (wetNow ? 'pbk-on' : '') + '">\ud83c\udf27\ufe0f Wet</th></tr></thead><tbody>' +
+        rows.map(k => '<tr><td class="pbk-tyre">' +
+            '<span class="tyre-pip" style="background:' + TYRES[k].colour + ';"></span>' +
+            TYRES[k].label + '</td>' +
+            cell(book.dry[k], k === bestDry, !wetNow) +
+            cell(book.wet[k], k === bestWet, wetNow) +
+            '</tr>').join('') +
+        '</tbody></table>' +
+        '<div class="pbk-note">Your best lap on this layout, wherever it was set — ' +
+        'practice, qualifying or race. Damp and soaked share one column.</div></div>';
+}
+
+function exSaveRecords() {
+    try {
+        const out = {};
+        for (const k of Object.keys(exRecords)) {
+            const r = exRecords[k];
+            if (r.done >= r.total && (r.dry || r.wet))
+                out[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre, g: exGeomHash(k) };
+        }
+        window.localStorage.setItem(EX_STORE_KEY,
+            JSON.stringify({ v: exPhysHash(), tracks: out }));
+    } catch (e) { /* file:// origins, private mode, quota - all fine, just slower */ }
+}
+function exLoadRecords() {
+    try {
+        const raw = window.localStorage.getItem(EX_STORE_KEY);
+        if (!raw) return false;
+        const box = JSON.parse(raw);
+        if (!box || box.v !== exPhysHash()) return false;   // altra fisica: si butta tutto
+        let n = 0;
+        for (const k of Object.keys(box.tracks || {})) {
+            if (SEASON_POOL.indexOf(k) === -1) continue;    // circuito non piu' nel gioco
+            const r = box.tracks[k];
+            if (!r || r.g !== exGeomHash(k)) continue;      // quel tracciato e' cambiato
+            exRecords[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre || {},
+                             done: 1, total: 1 };
+            n++;
+        }
+        return n > 0;
+    } catch (e) { return false; }
+}
+
+// Every lap this build needs to run, for every circuit, in one list.
+function exBuildJobs(keys) {
+    const jobs = [];
+    for (const key of (keys && keys.length ? keys : SEASON_POOL)) {
+        for (let run = 0; run < EX_RUNS; run++) {
+            for (const name of EX_DRIVER_NAMES)
+                jobs.push({ key, name, wet: false, tyre: 'soft', rec: true });
+            for (const tyre of RAIN_TYRE_KEYS)
+                for (const name of EX_DRIVER_NAMES)
+                    jobs.push({ key, name, wet: true, tyre, rec: true });
+            for (const tyre of DRY_TYRE_KEYS)
+                jobs.push({ key, name: EX_ORDER_DRIVER, wet: false, tyre, rec: false });
+        }
+    }
+    return jobs;
+}
+
+function exStartBuild() {
+    if (exBuild.running) return;
+    // Solo i circuiti che mancano davvero: quelli caricati dal libro salvato
+    // restano dove sono. Un circuito nuovo costa i suoi giri, non quelli di
+    // tutti e diciotto.
+    const missing = SEASON_POOL.filter(k => {
+        const r = exRecords[k];
+        return !r || r.done < r.total || (!r.dry && !r.wet);
+    });
+    if (!missing.length) return;
+    exBuild.jobs = exBuildJobs(missing);
+    exBuild.i = 0; exBuild.done = 0; exBuild.total = exBuild.jobs.length;
+    exBuild.running = true; exBuild.t0 = performance.now();
+    for (const key of missing)
+        exRecords[key] = { dry: null, wet: null, byTyre: {}, done: 0, total: 0 };
+    for (const j of exBuild.jobs) exRecords[j.key].total++;
+    exStep();
+}
+
+// Time-sliced so the page stays alive: this is over a thousand qualifying laps
+// and it runs while you read the cards, not instead of it. 12 ms rather than
+// the 45 the lazy version used - it is background work now, so it should give
+// way to the interface rather than compete with it.
+function exStep() {
+    if (!exBuild.running) return;
+    const t0 = performance.now();
+    const tracks = {};
+    while (exBuild.i < exBuild.jobs.length && performance.now() - t0 < 12) {
+        const j = exBuild.jobs[exBuild.i++];
+        const qt = tracks[j.key] || (tracks[j.key] = (() => {
+            const t = makeTrack(j.key); t.getRacingLine(); return t;
+        })());
+        const ms = exPinnedTyre(j.tyre, () =>
+            simulateQualifyingLap(qt, j.name, 'alien', 1.1, j.wet, 'ridge'));
+        const rec = exRecords[j.key];
+        rec.done++; exBuild.done++;
+        if (!ms) continue;
+        if (j.rec) {
+            const slot = j.wet ? 'wet' : 'dry';
+            if (!rec[slot] || ms < rec[slot].ms)
+                rec[slot] = { ms, who: j.name, tyre: j.tyre };
+        }
+        if (!rec.byTyre[j.tyre] || ms < rec.byTyre[j.tyre]) rec.byTyre[j.tyre] = ms;
+    }
+    exRenderBuildProgress();
+    if (document.getElementById('ex-rec')) exRenderRecords(exOpenKey);
+    if (exBuild.i < exBuild.jobs.length) { setTimeout(exStep, 0); return; }
+    exBuild.running = false;
+    exSaveRecords();
+    exRenderBuildProgress();
+    if (document.getElementById('ex-rec')) exRenderRecords(exOpenKey);
+}
+
+function exRenderBuildProgress() {
+    const el = document.getElementById('ex-tracks-sub');
+    if (!el) return;
+    if (!exBuild.running) {
+        el.innerHTML = SEASON_POOL.length + ' of them. Pick one.' +
+            (exBuild.total ? ' <span style="opacity:0.55;">Record book built from ' +
+                exBuild.total.toLocaleString() + ' qualifying laps.</span>' : '');
+        return;
+    }
+    const f = exBuild.done / Math.max(1, exBuild.total);
+    el.innerHTML = SEASON_POOL.length + ' of them. Pick one. ' +
+        '<span style="opacity:0.6;">Running the record book &mdash; ' +
+        exBuild.done + ' of ' + exBuild.total + ' qualifying laps' +
+        '</span><span class="ex-build-bar"><i style="width:' +
+        (f * 100).toFixed(1) + '%"></i></span>';
+}
+
+// Run something with every driver on the same rubber. Both measurements on
+// these screens compare drivers with each other, and chooseTyre is random by
+// design, so without this the comparison is partly a coin toss.
+function exPinnedTyre(key, fn) {
+    const real = AI.chooseTyre;
+    AI.chooseTyre = () => key;
+    try { return fn(); } finally { AI.chooseTyre = real; }
+}
+
+function exTrackStats(track) {
+    const line = track.getRacingLine();
+    const corners = countCorners(track);
+    return { line, corners };
+}
+
+function exShowTrackList() {
+    const grid = document.getElementById('ex-track-grid');
+    const detail = document.getElementById('ex-track-detail');
+    if (detail) detail.style.display = 'none';
+    if (!grid) return;
+    grid.style.display = 'grid';
+    grid.innerHTML = '';
+    for (const key of SEASON_POOL) {
+        const btn = document.createElement('button');
+        btn.className = 'ex-card';
+        const cv = document.createElement('canvas');
+        cv.width = 200; cv.height = 140;
+        btn.appendChild(cv);
+        const t = makeTrack(key);
+        exDrawTrack(cv, t);
+        const line = t.getRacingLine();
+        const name = document.createElement('div');
+        name.className = 'ex-name';
+        name.innerText = trackLabel(key);
+        const meta = document.createElement('div');
+        meta.className = 'ex-meta';
+        meta.innerText = (line.length / 1000).toFixed(2) + ' km';
+        btn.appendChild(name);
+        btn.appendChild(meta);
+        btn.addEventListener('click', () => exOpenTrack(key));
+        grid.appendChild(btn);
+    }
+}
+
+let exOpenKey = null;      // which circuit's card is on screen, for live updates
+
+function exOpenTrack(key) {
+    const grid = document.getElementById('ex-track-grid');
+    const detail = document.getElementById('ex-track-detail');
+    if (!detail) return;
+    exOpenKey = key;
+    grid.style.display = 'none';
+    detail.style.display = 'block';
+
+    const track = makeTrack(key);
+    const { line, corners } = exTrackStats(track);
+    const dry = measureTrackStats(track, false);
+    const wet = measureTrackStats(track, true);
+    // Kept so the record box can put a number on the difference between race
+    // pace and a record lap, on this circuit, rather than leaving the reader to
+    // wonder why the two figures disagree. It is not a constant: Circle, which
+    // is nothing but corners, is +28%, while Kart is +9%.
+    if (exRecords[key]) exRecords[key].pace = dry.lap;
+
+    // "Est. lap" was the wrong name and it showed: the figure reads several
+    // seconds slower than the lap record below it, and nothing said why. They
+    // are not the same measurement and neither is wrong. RACE PACE is what a
+    // hard-difficulty car does on mediums with a stint's worth of fuel in the
+    // tyre; the RECORD is an alien on a fresh soft with nothing to save. The
+    // gap between them is the difference between driving a race and setting a
+    // time, which is a real thing, so both are shown and both are labelled.
+    const cells = [
+        ['Length', (line.length / 1000).toFixed(2) + ' km'],
+        ['Corners', String(corners.left + corners.right)],
+        ['Left / Right', corners.left + ' L / ' + corners.right + ' R'],
+        ['Road width', Math.round(track.trackWidth * 2) + ' m'],
+        ['Top speed', Math.round(dry.vmax * 0.5) + ' km/h'],
+        ['Race pace, dry', dry.lap ? (dry.lap / 1000).toFixed(1) + 's' : '—'],
+        ['Race pace, wet', wet.lap ? (wet.lap / 1000).toFixed(1) + 's' : '—'],
+        ['Wet penalty', (dry.lap && wet.lap)
+            ? '+' + (100 * (wet.lap - dry.lap) / dry.lap).toFixed(0) + '%' : '—'],
+        ['Tightest corner', Math.round(exTightest(track)) + ' m']
+    ];
+
+    detail.innerHTML =
+        `<div class="ex-d-head"><h2>${trackLabel(key)}</h2>` +
+        `<button id="ex-track-list-btn" style="width:auto;margin:0;padding:6px 14px;` +
+        `font-size:12px;background:#37474f;color:#cfd8dc;">All circuits</button></div>` +
+        `<div class="ex-d-body">` +
+        `<canvas id="ex-d-map" width="380" height="266"></canvas>` +
+        `<div class="ex-d-side">` +
+        `<div class="ex-grid">` +
+        cells.map(c => `<div class="ex-cell"><div class="ex-k">${c[0]}</div>` +
+            `<div class="ex-v">${c[1]}</div></div>`).join('') +
+        `</div>` +
+        `<div class="ex-note">Race pace is a hard-difficulty car on mediums, ` +
+        `driving a stint. The records below are one flying lap on fresh softs ` +
+        `at alien pace &mdash; a different thing, and quicker by 10 to 30% ` +
+        `depending on the circuit.</div>` +
+        `<div class="ex-rec" id="ex-rec"></div>` +
+        `</div></div>`;
+
+    exDrawTrack(document.getElementById('ex-d-map'), track);
+    document.getElementById('ex-track-list-btn')
+        .addEventListener('click', exShowTrackList);
+    exRenderRecords(key);
+}
+
+// The tightest corner on the circuit, as a radius. Read off the racing line,
+// because that is the radius a car actually has to take.
+function exTightest(track) {
+    const line = track.getRacingLine();
+    let r = Infinity;
+    for (let i = 0; i < line.count; i++) {
+        const v = line.nodes[i].radius;
+        if (v < r) r = v;
+    }
+    return Math.min(r, 9999);
+}
+
+function exRenderRecords(key) {
+    const box = document.getElementById('ex-rec');
+    if (!box) return;
+    const rec = exRecords[key];
+    const row = (cls, label, r) => {
+        if (!r || !r.ms) return `<div class="ex-rec-row ${cls}"><span class="who">${label}</span>` +
+            `<span class="t">—</span></div>`;
+        const t = TYRES[r.tyre];
+        const dot = t ? `<span class="ex-rec-tyre" style="background:${t.colour};" ` +
+            `title="${t.label}"></span>` : '';
+        return `<div class="ex-rec-row ${cls}"><span class="who">${label} &mdash; ` +
+            `${r.who}${dot}</span><span class="t">${(r.ms / 1000).toFixed(3)}</span></div>`;
+    };
+    let html = `<div class="ex-rec-h">Lap record</div>` +
+        row('ex-rec-dry', 'Dry', rec && rec.dry) +
+        row('ex-rec-wet', 'Wet', rec && rec.wet);
+    if (rec && rec.pace && rec.dry && rec.dry.ms) {
+        const gap = 100 * (rec.pace - rec.dry.ms) / rec.dry.ms;
+        html += `<div class="ex-rec-gap">Race pace above is +${gap.toFixed(0)}% ` +
+            `on this circuit &mdash; different car, different tyre, different day.</div>`;
+    }
+
+    // The order the compounds come in on THIS circuit, one driver on each so
+    // the only thing varying is the rubber. The soft holds every dry record in
+    // the game, but by how much is a circuit question, and the drift compound's
+    // place in the order moves about more than anything else.
+    const bt = (rec && rec.byTyre) || {};
+    const have = DRY_TYRE_KEYS.filter(k => bt[k]);
+    if (have.length > 1) {
+        const best = Math.min(...have.map(k => bt[k]));
+        html += `<div class="ex-rec-h" style="margin-top:12px;">One lap, by compound</div>`;
+        html += have.sort((a, b) => bt[a] - bt[b]).map(k => {
+            const d = 100 * (bt[k] - best) / best;
+            return `<div class="ex-tyre-row">` +
+                `<span class="ex-rec-tyre" style="background:${TYRES[k].colour};"></span>` +
+                `<span class="n">${TYRES[k].label}</span>` +
+                `<span class="t">${(bt[k] / 1000).toFixed(3)}</span>` +
+                `<span class="d">${d < 0.001 ? '&mdash;' : '+' + d.toFixed(1) + '%'}</span>` +
+                `</div>`;
+        }).join('');
+    }
+
+    // ---- and the same table for YOU -------------------------------------
+    // The point of the whole exercise. The AI's ordering above says what the
+    // compounds are worth to a driver that never provokes the car; this one
+    // says what they are worth to you, which is a different question and the
+    // one the balance actually has to answer.
+    const pb = pbFor(key, exGeomHash(key));
+    const mine = Object.keys(pb).filter(s => pb[s] && pb[s].ms);
+    if (mine.length) {
+        const bestMine = Math.min(...mine.map(s => pb[s].ms));
+        html += `<div class="ex-rec-h" style="margin-top:12px;">Your best, by compound</div>`;
+        html += mine.sort((a, b) => pb[a].ms - pb[b].ms).map(slot => {
+            const wet = slot.indexOf(':wet') > 0;
+            const k = wet ? slot.slice(0, -4) : slot;
+            const t = TYRES[k];
+            if (!t) return '';
+            const d = 100 * (pb[slot].ms - bestMine) / bestMine;
+            return `<div class="ex-tyre-row">` +
+                `<span class="ex-rec-tyre" style="background:${t.colour};"></span>` +
+                `<span class="n">${t.label}${wet ? ' <i style="opacity:0.6;">wet</i>' : ''}</span>` +
+                `<span class="t">${(pb[slot].ms / 1000).toFixed(3)}</span>` +
+                `<span class="d">${d < 0.001 ? '&mdash;' : '+' + d.toFixed(1) + '%'}</span>` +
+                `</div>`;
+        }).join('');
+        if (mine.length < 2)
+            html += `<div class="ex-rec-foot">one compound so far &mdash; ` +
+                `drive a lap on another and the comparison appears here</div>`;
+    }
+
+    if (exBuild.running) {
+        const f = exBuild.done / Math.max(1, exBuild.total);
+        html += `<div class="ex-progress"><i style="width:${(f * 100).toFixed(1)}%"></i></div>` +
+            `<div class="ex-rec-foot">building the record book &mdash; ` +
+            `${exBuild.done} of ${exBuild.total} qualifying laps, all ` +
+            `${SEASON_POOL.length} circuits at once</div>`;
+    } else {
+        html += `<div class="ex-rec-foot">` +
+            `every driver, ${EX_RUNS} laps each, best kept &mdash; soft in the dry, ` +
+            `both rain compounds in the wet</div>`;
+    }
+    box.innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+//  THE SEASONS SCREEN
+//  Three layers, one screen: what you have done in all of them, the list of
+//  them, and one of them opened up. Everything on it is COUNTED from the race
+//  records rather than stored alongside them - a total that is derived cannot
+//  drift away from the races it summarises.
+// ---------------------------------------------------------------------------
+const exSeasonsScreen = () => document.getElementById('explore-seasons');
+
+function exDate(ts) {
+    if (!ts) return '—';
+    try { return new Date(ts).toLocaleDateString(undefined,
+        { year: 'numeric', month: 'short', day: 'numeric' }); }
+    catch (e) { return '—'; }
+}
+function exCell(k, v, title) {
+    return '<div class="ex-cell"' + (title ? ' title="' + title + '"' : '') + '>' +
+           '<div class="ex-k">' + k + '</div><div class="ex-v">' + v + '</div></div>';
+}
+
+function showExploreSeasons() {
+    menu.style.display = 'none';
+    document.getElementById('ex-season-detail').style.display = 'none';
+    document.getElementById('ex-season-list').style.display = '';
+    document.getElementById('ex-career').style.display = '';
+    exRenderSeasons();
+    exSeasonsScreen().style.display = 'block';
+}
+
+function exRenderSeasons() {
+    const list = seasonsLoad().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const sub = document.getElementById('ex-seasons-sub');
+    const career = document.getElementById('ex-career');
+    const host = document.getElementById('ex-season-list');
+    if (!host) return;
+
+    if (!list.length) {
+        if (sub) sub.textContent = 'Nothing here yet.';
+        if (career) career.innerHTML = '';
+        host.innerHTML = '<div class="ex-empty">No seasons on record. Every championship you ' +
+            'start is filed here from its first Grand Prix &mdash; including the ones you walk ' +
+            'away from. If you have a season file from somewhere else, load it below.</div>';
+        return;
+    }
+
+    const c = careerTally(list);
+    if (sub) {
+        sub.textContent = list.length + (list.length === 1 ? ' season' : ' seasons') +
+            ' on record, ' + c.complete + ' run to the end. Pick one to open it.';
+    }
+    if (career) {
+        const rate = c.races ? (100 * c.wins / c.races) : 0;
+        const fav = Object.keys(c.circuits)
+            .sort((a, b) => (c.circuits[b].wins - c.circuits[a].wins) ||
+                            (c.circuits[b].races - c.circuits[a].races))[0];
+        const car = Object.keys(c.chassis).sort((a, b) => c.chassis[b] - c.chassis[a])[0];
+        const nemesis = Object.keys(c.rivals).sort((a, b) => c.rivals[b] - c.rivals[a])[0];
+        career.innerHTML = '<div class="ex-rec-h">Your career</div>' +
+            '<div class="ex-grid ex-career-grid">' +
+            exCell('Titles', c.titles + (c.runnerUp ? '<span class="ex-sml"> · ' + c.runnerUp + ' 2nd</span>' : '')) +
+            exCell('Races', c.races) +
+            exCell('Wins', c.wins + '<span class="ex-sml"> · ' + rate.toFixed(0) + '%</span>') +
+            exCell('Podiums', c.podiums) +
+            exCell('Poles', c.poles) +
+            exCell('Fastest laps', c.fl) +
+            exCell('Grand Chelems', c.chelem) +
+            exCell('Retirements', c.dnf) +
+            exCell('Points', c.points) +
+            exCell('Best finish', c.bestFinish === null ? '—' : 'P' + c.bestFinish) +
+            exCell('Wet races', c.wetRaces) +
+            exCell('Best circuit', fav ? (TRACK_LABELS[fav] || fav) : '—',
+                   fav ? (c.circuits[fav].wins + ' win(s) from ' + c.circuits[fav].races) : '') +
+            exCell('Usual car', car ? (CHASSIS[car] ? CHASSIS[car].label : car) : '—') +
+            exCell('Beaten by', nemesis || '—',
+                   nemesis ? (c.rivals[nemesis] + ' title(s)') : 'nobody has taken a title off you') +
+            '</div>';
+    }
+
+    host.innerHTML = '<table class="ex-seasons"><thead><tr>' +
+        '<th>Season</th><th>Started</th><th>Rounds</th><th>Champion</th>' +
+        '<th>You</th><th></th></tr></thead><tbody>' +
+        list.map(e => {
+            const rows = seasonTally(e);
+            const me = rows.find(r => r.isPlayer);
+            const champ = rows[0];
+            const place = me ? rows.indexOf(me) + 1 : null;
+            const cls = e.complete ? (place === 1 ? 'sr-win' : (place && place <= 3 ? 'sr-pod' : '')) : '';
+            return '<tr class="ex-season-row" data-id="' + e.id + '">' +
+                '<td class="ex-seed">' + (e.seed || '—') + '</td>' +
+                '<td>' + exDate(e.startedAt) + '</td>' +
+                '<td>' + e.done + ' / ' + e.rounds + '</td>' +
+                '<td>' + (champ ? '<span class="tt-chip" style="background:' + champ.color +
+                    ';"></span> ' + champ.name : '—') + '</td>' +
+                '<td class="' + cls + '">' + (place ? 'P' + place : '—') + '</td>' +
+                '<td class="ex-state">' + (e.fromLog
+                    ? '<span class="ex-fromlog" title="rebuilt from a downloaded race log: ' +
+                      'the drivers\u2019 colours and the length of the calendar were never ' +
+                      'written into one">from a log</span>'
+                    : (e.complete ? 'finished'
+                        : (e.done >= e.rounds ? 'finished' : 'left at round ' + (e.done + 1)))) + '</td>' +
+                '</tr>';
+        }).join('') + '</tbody></table>';
+
+    Array.prototype.forEach.call(host.querySelectorAll('.ex-season-row'), (tr) => {
+        tr.addEventListener('click', () => exShowSeason(tr.getAttribute('data-id')));
+    });
+}
+
+function exShowSeason(id) {
+    const entry = seasonsLoad().find(e => e.id === id);
+    const host = document.getElementById('ex-season-detail');
+    if (!entry || !host) return;
+    const rows = seasonTally(entry);
+    const me = rows.find(r => r.isPlayer);
+    const wet = (entry.results || []).filter(r => r.wet).length;
+
+    let html = '<div class="ex-d-head"><h2>Season ' + (entry.seed || '') + '</h2>' +
+        '<span class="ex-sml">' + exDate(entry.startedAt) + ' &nbsp;·&nbsp; ' +
+        (entry.fromLog ? 'rebuilt from a race log'
+                       : (entry.complete ? 'finished' : 'left after round ' + entry.done)) +
+        '</span></div>';
+    if (entry.fromLog) {
+        html += '<div class="ex-note">Read back out of a downloaded race log rather than saved by ' +
+            'the game. Everything here was counted from the classifications in that file &mdash; ' +
+            'but a log has never carried the drivers&rsquo; <b>colours</b> (those are assigned in ' +
+            'grid order) nor how long the calendar was <b>meant</b> to be, so &ldquo;' +
+            entry.rounds + ' rounds&rdquo; means that many are in the file.</div>';
+    }
+
+    html += '<div class="ex-grid ex-career-grid">' +
+        exCell('Rounds', entry.done + ' / ' + entry.rounds) +
+        exCell('AI', entry.difficulty || '—') +
+        exCell('Your car', me && me.chassis ? (CHASSIS[me.chassis] ? CHASSIS[me.chassis].label : me.chassis) : '—') +
+        exCell('Wet rounds', wet) +
+        exCell('Champion', rows[0] ? rows[0].name : '—') +
+        exCell('You', me ? 'P' + (rows.indexOf(me) + 1) : 'spectator') +
+        exCell('Season rival', entry.rival || '—',
+               'one opponent runs the whole season with a little more') +
+        '</div>';
+
+    // in its own scroller: fourteen columns do not fit a narrow window, and a
+    // table that widens the panel pushes the whole screen sideways
+    html += '<div class="ex-scroll"><table class="ex-seasons ex-standings"><thead><tr>' +
+        '<th>Pos</th><th>Driver</th><th title="races started">Starts</th>' +
+        '<th>Wins</th><th>Podiums</th><th title="pole positions">Poles</th>' +
+        '<th title="fastest laps">FL</th><th title="Grand Chelems">★</th>' +
+        '<th title="retirements">DNF</th><th title="Grands Prix skipped">DNS</th>' +
+        '<th title="best finishing position">Best</th>' +
+        '<th title="points for finishing position">Race</th>' +
+        '<th title="places gained and fastest laps">Extra</th><th>Total</th>' +
+        '</tr></thead><tbody>' +
+        rows.map((d, i) => '<tr' + (d.isPlayer ? ' class="ex-me"' : '') + '>' +
+            '<td>' + (i + 1) + '</td>' +
+            '<td style="text-align:left;white-space:nowrap;">' +
+            '<span class="tt-chip" style="background:' + d.color + ';"></span> ' + d.name +
+            (d.chassis && CHASSIS[d.chassis]
+                ? ' <span class="ch-pip" style="background:' + CHASSIS[d.chassis].accent + ';">' +
+                  CHASSIS[d.chassis].short + '</span>' : '') +
+            (entry.rival && d.name === entry.rival ? ' <span class="ex-rival">rival</span>' : '') +
+            '</td>' +
+            '<td>' + d.races + '</td><td>' + d.wins + '</td><td>' + d.podiums + '</td>' +
+            '<td>' + d.poles + '</td><td>' + d.fl + '</td><td>' + (d.chelem || '') + '</td>' +
+            '<td>' + d.dnf + '</td><td>' + (d.dns || '') + '</td>' +
+            '<td>' + (d.best === null ? '—' : 'P' + d.best) + '</td>' +
+            '<td>' + (d.total - d.extra) + '</td>' +
+            '<td class="pts-bonus">' + (d.extra ? '+' + d.extra : '—') + '</td>' +
+            '<td><b>' + d.total + '</b></td></tr>').join('') +
+        '</tbody></table></div>';
+
+    html += '<div id="ex-season-grid"></div>';
+    host.innerHTML = html;
+    // the same grid the end-of-season screen draws, from the archived season
+    renderSeasonRecap(entry, document.getElementById('ex-season-grid'), 'Round by round');
+
+    // The career strip belongs to the list: with a season open it is 150px of
+    // numbers about something else, pushing the season down the screen.
+    document.getElementById('ex-career').style.display = 'none';
+    document.getElementById('ex-season-list').style.display = 'none';
+    host.style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------
+//  ONE FILE, OUT AND BACK
+//  The .txt the Race Log writes is a report meant to be read. It now carries
+//  the seasons and the record book in a block at the end as well, so the same
+//  file is also the save: download it on one machine, load it on another, and
+//  the history goes with you. Reading prose back would have been the other
+//  way to do this, and prose is not a data format.
+// ---------------------------------------------------------------------------
+function dataPayload() {
+    return {
+        v: 1,
+        game: 'APEX 3',
+        exported: new Date().toISOString(),
+        seasons: seasonsLoad(),
+        bests: pbLoad()
+    };
+}
+
+// Merges rather than replaces, and reports what it did in numbers a person
+// can check against what they expected.
+function importDataPayload(box) {
+    if (!box || typeof box !== 'object') return null;
+    const out = { seasons: { added: 0, updated: 0, skipped: 0 }, bests: 0 };
+    if (Array.isArray(box.seasons)) {
+        const r = seasonsMerge(box.seasons);
+        out.seasons = r;
+    }
+    // Personal bests merge on the stopwatch: the quicker lap wins, whichever
+    // machine it was set on. A slower imported time never overwrites yours.
+    if (box.bests && typeof box.bests === 'object') {
+        const mine = pbLoad();
+        for (const trackKey of Object.keys(box.bests)) {
+            const theirs = box.bests[trackKey];
+            if (!theirs || typeof theirs !== 'object') continue;
+            const t = mine[trackKey] || (mine[trackKey] = {});
+            for (const slot of Object.keys(theirs)) {
+                const rec = theirs[slot];
+                if (!rec || typeof rec.ms !== 'number' || !isFinite(rec.ms)) continue;
+                if (!t[slot] || rec.ms < t[slot].ms) { t[slot] = rec; out.bests++; }
+            }
+        }
+        pbSave();
+    }
+    return out;
+}
+
+// Read from RaceLog rather than repeated here: see RaceLog.dataMark.
+function dataMark() {
+    return (typeof RaceLog !== 'undefined' && RaceLog.dataMark) ||
+           '=== APEX 3 DATA \u2014 do not edit below this line ===';
+}
+
+function extractPayload(text) {
+    if (!text) return null;
+    // A whole file that is just JSON works too: someone will paste one.
+    const trimmed = text.replace(/^﻿/, '').trim();
+    if (trimmed.charAt(0) === '{') {
+        try { return JSON.parse(trimmed); } catch (e) { /* fall through */ }
+    }
+    const mark = dataMark();
+    const i = text.indexOf(mark);
+    if (i < 0) return null;
+    const after = text.slice(i + mark.length);
+    const start = after.indexOf('{');
+    if (start < 0) return null;
+    try { return JSON.parse(after.slice(start)); } catch (e) { return null; }
+}
+
+// ---------------------------------------------------------------------------
+//  READING A LOG THAT PREDATES THE DATA BLOCK
+//
+//  Nicola brought a .txt written before any of this existed and the importer
+//  turned it away, correctly and uselessly: there is no data block in it. But
+//  everything a season is made of IS in that file, in the report - the
+//  calendar, the classifications, the poles, the fastest laps, the bonuses.
+//  So when there is no block to read, the text itself is read.
+//
+//  This is a parser of prose and it knows it. It is deliberately narrow: it
+//  only recognises what THIS game writes, it drops anything it cannot read
+//  rather than guessing, and what it produces is marked as reconstructed so
+//  that a season recovered from a report is never mistaken for one the game
+//  saved itself.
+//
+//  Two things a log has never carried, and no parser can invent:
+//    - the drivers' COLOURS. Names only. Colours are assigned in grid order
+//      from the game's own list, so an imported season is internally
+//      consistent and stable, but they are not the colours you raced.
+//    - how long the calendar was MEANT to be. What is counted is the rounds
+//      the log actually contains.
+// ---------------------------------------------------------------------------
+const LOG_COLOURS = ['red', 'blue', 'yellow', 'purple', 'orange', 'white',
+                     'green', 'cyan', 'pink', 'lime', 'gray'];
+const LOG_F1_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+
+// dd/mm/yyyy or mm/dd/yyyy? The log wrote whatever the browser's locale does,
+// so the browser is asked: format a date whose day cannot be a month and see
+// which number comes first.
+function localeDayFirst() {
+    try {
+        const probe = new Date(2026, 0, 31).toLocaleDateString();
+        const first = (probe.match(/\d+/) || [])[0];
+        return first === '31';
+    } catch (e) { return true; }
+}
+function parseLogDate(str) {
+    if (!str) return null;
+    const n = (str.match(/\d+/g) || []).map(Number);
+    if (n.length < 3) return null;
+    let d, m, y;
+    if (n[0] > 31) { y = n[0]; m = n[1]; d = n[2]; }            // yyyy-mm-dd
+    else if (n[0] > 12) { d = n[0]; m = n[1]; y = n[2]; }
+    else if (n[1] > 12) { m = n[0]; d = n[1]; y = n[2]; }
+    else if (localeDayFirst()) { d = n[0]; m = n[1]; y = n[2]; }
+    else { m = n[0]; d = n[1]; y = n[2]; }
+    const t = new Date(y, m - 1, d, n[3] || 0, n[4] || 0, n[5] || 0).getTime();
+    return isFinite(t) ? t : null;
+}
+
+// A short stable id from the season's own words, so importing the same log
+// twice lands on the same season instead of a second copy of it.
+function logSeasonId(seed, firstDate, tracks) {
+    let h = 0;
+    const s = 'log|' + (seed || '') + '|' + (firstDate || '') + '|' + tracks.join(',');
+    for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
+    return 'log' + (h >>> 0).toString(36);
+}
+
+function trackKeyFromLabel(label) {
+    if (!label) return null;
+    const want = String(label).trim().toLowerCase();
+    for (const k of Object.keys(TRACK_LABELS)) {
+        if (TRACK_LABELS[k].toLowerCase() === want) return k;
+    }
+    return null;
+}
+
+function parseLogSeasons(text) {
+    if (!text || text.indexOf('SESSION') < 0) return [];
+    const blocks = text.split(/^={10,}$/m);
+    const seasons = [];        // one per (seed, calendar) run
+    let pending = null;        // the pole from the qualifying session just read
+
+    for (const block of blocks) {
+        const head = block.match(/^SESSION\s+\d+\s+(.*)$/m);
+        const modeLine = block.match(/^\s*mode\s+(.+)$/m);
+        if (!head || !modeLine) continue;
+        const bits = modeLine[1].split('|').map(x => x.trim());
+        const mode = bits[0];
+        const get = (re) => { for (const b of bits) { const m = b.match(re); if (m) return m[1].trim(); } return null; };
+        const seed = get(/^season\s+(.+)$/);
+        const trackKey = trackKeyFromLabel(get(/^track\s+(.+)$/));
+        const weatherWord = bits.find(b => /^(dry|damp|soaked|wet)$/i.test(b)) || 'dry';
+        const wet = !/^dry$/i.test(weatherWord);
+
+        if (/^Qualifying/.test(mode)) {
+            const pole = block.match(/QUALI\s+session ended — pole:\s+(.+?)\s+[\d.]+\s*$/m);
+            pending = { seed: seed, track: trackKey, pole: pole ? pole[1].trim() : null };
+            continue;
+        }
+        if (mode !== 'Championship round' || !seed || !trackKey) { pending = null; continue; }
+
+        // ---- the classification --------------------------------------
+        const order = [];
+        const re = /^\s*P\s*(\d+)\s{2}(.+?)\s{2,}laps\s+(\S+)\s+time\s+(\S+)/gm;
+        let m;
+        while ((m = re.exec(block)) !== null) {
+            const pos = parseInt(m[1], 10);
+            const name = m[2].trim();
+            const dnf = /DNF/i.test(m[4]);
+            order.push({ name: name, pos: pos, dnf: dnf });
+        }
+        if (order.length < 2) { pending = null; continue; }
+
+        const fl = block.match(/FASTLAP\s+(.+?)\s+—/);
+        const ch = block.match(/CHELEM\s+(.+?)\s+—/);
+        const bonus = {};
+        const bre = /BONUS\s+(.+?)\s+—\s+\+(\d+)\s/g;
+        let b;
+        while ((b = bre.exec(block)) !== null) bonus[b[1].trim()] = parseInt(b[2], 10);
+
+        const race = {
+            track: trackKey, wet: wet,
+            pole: (pending && pending.seed === seed && pending.track === trackKey)
+                  ? pending.pole : null,
+            fastest: fl ? fl[1].trim() : null,
+            chelem: ch ? ch[1].trim() : null,
+            order: order.map(o => ({
+                name: o.name, pos: o.pos, dnf: o.dnf,
+                pts: o.dnf ? 0 : (LOG_F1_POINTS[o.pos - 1] || 0),
+                bonus: bonus[o.name] || 0
+            })),
+            you: get(/^you on\s+(.+)$/),
+            when: parseLogDate(head[1])
+        };
+        pending = null;
+
+        // A season never visits the same circuit twice, so a repeat means this
+        // is a DIFFERENT season that happens to share a seed - two attempts at
+        // the same calendar, which is exactly what a seed is for.
+        let season = null;
+        for (let i = seasons.length - 1; i >= 0; i--) {
+            if (seasons[i].seed === seed) {
+                if (seasons[i].races.some(r => r.track === trackKey)) break;
+                season = seasons[i];
+                break;
+            }
+        }
+        if (!season) { season = { seed: seed, races: [] }; seasons.push(season); }
+        season.races.push(race);
+    }
+
+    // ---- into archive entries -----------------------------------------
+    return seasons.filter(s => s.races.length).map(s => {
+        // colours in the order the drivers first appear, the player first
+        const names = [];
+        for (const r of s.races) for (const o of r.order) {
+            if (names.indexOf(o.name) < 0) names.push(o.name);
+        }
+        const playerName = names.find(n => /^you$/i.test(n)) || null;
+        const ordered = playerName
+            ? [playerName].concat(names.filter(n => n !== playerName)) : names;
+        const colourOf = {};
+        ordered.forEach((n, i) => { colourOf[n] = LOG_COLOURS[i % LOG_COLOURS.length]; });
+
+        const chassisWord = (s.races.find(r => r.you) || {}).you || '';
+        const chMatch = chassisWord.match(/\(([^)]+)\)/);
+        let chassisKey = null;
+        if (chMatch) {
+            const want = chMatch[1].trim().toLowerCase();
+            for (const k of Object.keys(CHASSIS)) {
+                if (CHASSIS[k].label.toLowerCase() === want) { chassisKey = k; break; }
+            }
+        }
+
+        const points = {}, bonusPoints = {};
+        for (const n of ordered) { points[colourOf[n]] = 0; bonusPoints[colourOf[n]] = 0; }
+        const results = s.races.map(r => {
+            for (const o of r.order) {
+                points[colourOf[o.name]] += (o.pts || 0) + (o.bonus || 0);
+                bonusPoints[colourOf[o.name]] += (o.bonus || 0);
+            }
+            return {
+                track: r.track, wet: r.wet,
+                pole: r.pole && colourOf[r.pole] ? colourOf[r.pole] : null,
+                fastest: r.fastest && colourOf[r.fastest] ? colourOf[r.fastest] : null,
+                chelem: r.chelem && colourOf[r.chelem] ? colourOf[r.chelem] : null,
+                order: r.order.map(o => ({
+                    color: colourOf[o.name], name: o.name, pos: o.pos,
+                    pts: o.pts, bonus: o.bonus, dnf: o.dnf
+                }))
+            };
+        });
+        const first = s.races[0].when || null;
+        return {
+            id: logSeasonId(s.seed, first, s.races.map(r => r.track)),
+            startedAt: first || Date.now(),
+            updatedAt: s.races[s.races.length - 1].when || first || Date.now(),
+            // What the log holds is what was played, so it is reported as a
+            // finished season - with fromLog set, because "ten rounds" here
+            // means ten rounds ARE IN THE FILE, not that the calendar was ten.
+            complete: true,
+            fromLog: true,
+            seed: s.seed,
+            difficulty: null,
+            rival: null,
+            rounds: s.races.length,
+            done: s.races.length,
+            tracks: s.races.map(r => r.track),
+            weather: s.races.map(r => r.wet),
+            participants: ordered.map(n => ({
+                color: colourOf[n],
+                driverName: /^you$/i.test(n) ? 'You' : n,
+                isPlayer: /^you$/i.test(n),
+                chassis: /^you$/i.test(n) ? chassisKey : null
+            })),
+            points: points, bonusPoints: bonusPoints, results: results
+        };
+    });
+}
+
+function importDataText(text) {
+    const box = extractPayload(text);
+    if (!box) {
+        // No data block: an older log, or one written by a build before the
+        // block existed. The report is the data then - see parseLogSeasons.
+        let recovered = [];
+        try { recovered = parseLogSeasons(text); } catch (e) { recovered = []; }
+        if (!recovered.length) {
+            return { ok: false, why: 'no Apex data and no championship rounds in that file' };
+        }
+        const r = seasonsMerge(recovered);
+        const bits = [];
+        if (r.added) bits.push(r.added + ' season' + (r.added > 1 ? 's' : '') + ' rebuilt from the report');
+        if (r.updated) bits.push(r.updated + ' updated');
+        if (!bits.length) bits.push('those seasons were already here');
+        return { ok: true, fromLog: true,
+                 why: bits.join(', ') + ' — colours and calendar length were never in a log, ' +
+                      'so they are reconstructed',
+                 report: { seasons: r, bests: 0 } };
+    }
+    const r = importDataPayload(box);
+    if (!r) return { ok: false, why: 'that file was not readable' };
+    const bits = [];
+    if (r.seasons.added) bits.push(r.seasons.added + ' season' + (r.seasons.added > 1 ? 's' : '') + ' added');
+    if (r.seasons.updated) bits.push(r.seasons.updated + ' updated');
+    if (r.bests) bits.push(r.bests + ' lap record' + (r.bests > 1 ? 's' : '') + ' improved');
+    if (r.seasons.skipped) bits.push(r.seasons.skipped + ' entry rejected');
+    return { ok: true, why: bits.length ? bits.join(', ') : 'nothing new in that file', report: r };
+}
+
+function showExploreTracks() {
+    // Try the stored book first; if it is missing or was measured by a
+    // different balance, build it - once, for every circuit, in the background
+    // while you read. Opening a card never starts a simulation any more.
+    if (!Object.keys(exRecords).length) exLoadRecords();
+    exShowTrackList();
+    menu.style.display = 'none';
+    document.getElementById('explore-tracks').style.display = 'block';
+    exStartBuild();
+    exRenderBuildProgress();
 }
 
 // You sit this one out. The race still happens: the AI field runs the full
@@ -1745,13 +4798,19 @@ function endQualifying() {
         const gap = r.lap === null ? '&ndash;'
                   : (i === 0 ? 'POLE' : '+' + ((r.lap - pole) / 1000).toFixed(3));
         const cls = (r.p && r.p.isPlayer ? ' q-me' : '') + (i === 0 ? ' q-pole' : '');
+        // The compound beside the time, in the time's own column: it is part
+        // of what the time MEANS, not a separate fact about the driver.
+        const ty = TYRES[r.tyre];
+        const tyreTag = (ty && r.lap !== null)
+            ? `<span class="q-tyre" style="background:${ty.colour};" title="${ty.label}">${ty.short}</span>`
+            : '';
         return `<tr class="${cls.trim()}">` +
                `<td class="q-pos">${i + 1}</td>` +
                `<td class="q-driver">` +
                `<span class="tt-chip" style="background:${r.p ? r.p.color : '#888'};` +
                `display:inline-block;vertical-align:middle;margin-right:8px;"></span>` +
                `<span style="color:${r.p ? r.p.color : '#888'};">${name}</span></td>` +
-               `<td>${time}</td>` +
+               `<td class="q-time">${tyreTag}${time}</td>` +
                `<td class="q-gap">${gap}</td></tr>`;
     }).join('');
 
@@ -1760,6 +4819,7 @@ function endQualifying() {
         laps: 1,
         time: r.lap === null ? '--.---' : (r.lap / 1000).toFixed(3),
         best: r.lap === null ? '' : (r.lap / 1000).toFixed(3),
+        tyre: (TYRES[r.tyre] && TYRES[r.tyre].short) || '',
         note: r.lap === null ? 'no time' : (pole && r.lap === pole ? 'POLE' : '')
     })));
 
@@ -1787,18 +4847,13 @@ function startGame(forceTrackType = null) {
     
     document.getElementById('dnf-timer').style.visibility = 'hidden';
     
-    const forceWetRace = document.getElementById('wet-race-checkbox').checked;
     // If a qualifying session has just run, the weekend's weather was decided
     // there and the race has to inherit it - you cannot qualify in the wet and
     // then race in the dry. Otherwise: championship uses the pre-rolled season
-    // weather, a single race uses the toggle or a 20% chance.
-    if (pendingWeather !== null) {
-        isRaining = pendingWeather;
-    } else if (isChampionship) {
-        isRaining = nextChampionshipWeather();
-    } else {
-        isRaining = forceWetRace ? true : (Math.random() < 0.20);
-    }
+    // weather, a single race uses the toggle or a 20% chance. All of that is
+    // decideWeather's job now, and it has already been asked once before the
+    // tyre screen, so this line only reads the answer back.
+    isRaining = commitWeather();
 
     // UI for weather.
     // A normal flex child of the HUD, not an absolutely positioned overlay:
@@ -1814,7 +4869,8 @@ function startGame(forceTrackType = null) {
         // not actually a child of the parent.
         (document.getElementById('hud-right') || hud).appendChild(weatherIndicator);
     }
-    weatherIndicator.innerText = isRaining ? "Wet 🌧️" : "Dry ☀️";
+    weatherIndicator.innerText = isRaining
+        ? (wetLevel === 'soaked' ? 'Soaked 🌧️' : 'Damp 🌦️') : 'Dry ☀️';
     
     // updateHUD only runs while playing, so anything left in these readouts
     // survives into the countdown: after qualifying the speedometer sat on
@@ -1844,6 +4900,7 @@ function startGame(forceTrackType = null) {
     const color = document.getElementById('color-select').value;
     const difficulty = document.getElementById('difficulty-select').value;
     applyDifficultyRules(isChampionship ? championshipState.difficulty : difficulty);
+    applySeasonRival();
 
     track = makeTrack(trackType);
 
@@ -1854,7 +4911,7 @@ function startGame(forceTrackType = null) {
     // Standing water, only when it is raining. Fresh every race.
     if (typeof track.makePuddles === 'function') {
         track.puddles = [];
-        if (isRaining) track.makePuddles(4 + Math.floor(Math.random() * 3));
+        if (isRaining) track.makePuddles(puddleCountFor(wetLevel));
     }
 
     cars = [];
@@ -1984,7 +5041,7 @@ function startGame(forceTrackType = null) {
 
     // Consumed: the next race builds its own grid unless it too is qualified for.
     pendingGrid = null;
-    pendingWeather = null;
+    pendingWeather = null; pendingWetLevel = null;
 
     racePoleColor = currentParticipants.length ? currentParticipants[0].color : null;
     lapLeaders = [];
@@ -2018,7 +5075,7 @@ function startGame(forceTrackType = null) {
         // so the grid is a mix rather than ten cars on the same rubber.
         car._lapPixels = track.getRacingLine ? track.getRacingLine('standard').length : 3000;
         const tKey = p.isPlayer ? seatTyre(car.playerIndex)
-                                : AI.chooseTyre(p.driverName, TOTAL_LAPS, isRaining);
+                                : AI.chooseTyre(p.driverName, TOTAL_LAPS, isRaining, track);
         car.tyre = TYRES[tKey] || TYRES.medium;
         car.tyreWear = 0;
         car._tyreRaceLaps = TOTAL_LAPS;
@@ -2048,6 +5105,11 @@ function startGame(forceTrackType = null) {
     // Assign correct initial waypoint and jump start states
     cars.forEach(car => {
         car.jumpStartPenalty = false;
+        // and the amount with the flag: a car is built fresh every race, but
+        // leaving these to chance is how the last race's penalty would follow
+        // a driver into the next one.
+        car.jumpStartPenalties = 0;
+        car.jumpPenaltyMs = 0;
         
         // AI random jump start chance (5%)
         if (!car.isPlayer) {
@@ -2093,17 +5155,59 @@ function startGame(forceTrackType = null) {
     // ---- open the log for this session ----------------------------------
     RaceLog.start({
         mode: isPractice ? 'Free Practice' : (isChampionship ? 'Championship round' : 'Single race'),
-        track: trackType,
+        track: trackLabel(trackType),
         laps: isPractice ? null : TOTAL_LAPS,
         difficulty: isPractice ? null : (isChampionship ? championshipState.difficulty : difficulty),
-        weather: isRaining ? 'wet' : 'dry',
+        weather: isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry',
+        seed: isChampionship && championshipState ? championshipState.seed : null,
+        playerTyre: (() => {
+            const p = cars.find(c => c.isPlayer);
+            return p && p.tyre ? p.tyre.label : null;
+        })(),
+        playerChassis: (() => {
+            const p = cars.find(c => c.isPlayer);
+            return p && p.chassis ? p.chassis.label : null;
+        })(),
+        tyres: cars.map(c => (c.driverName || c.color) + ' ' +
+            ((c.tyre && c.tyre.short) || '?')),
         grid: cars.map(c => c.driverName || c.color)
     });
+
+    // What a false start costs at THIS circuit over THIS distance. Worked out
+    // here, once, rather than at the moment somebody jumps: the reference lap
+    // has to be simulated the first time a circuit comes up, and the middle of
+    // a start sequence is not where that 100ms belongs. Not in free practice -
+    // that has no start procedure at all, so it would be 100ms spent on a rule
+    // that cannot fire.
+    racePenaltyS = isPractice ? JUMP_MIN_S
+        : jumpPenaltySeconds(lapRefMs(track, currentTrackKey, isRaining), TOTAL_LAPS);
 
     gameState = 'countdown';
     countdownTimer = 0;
     lightState = 0;
-    goDelay = 2.5 + 0.1 + Math.random() * 3.9; // Wait between 0.1 and 4 seconds before GO
+    goDelay = rollGoDelay();
+
+    // ---- FREE PRACTICE HAS NO START PROCEDURE ---------------------------
+    // It used to run the full one: five red lights, a random hold, and the
+    // jumped-start rule armed. Alone on an empty circuit that rule has nothing
+    // to police - there is no grid to reset and nobody to gain a place over -
+    // and it did real harm: hold the throttle waiting for green, as anyone
+    // does, and the car is caught before the lights ever go out. The grid
+    // "resets" (one car, to where it already was), the penalty is recorded,
+    // and the countdown starts again from zero - with the throttle still held,
+    // so it happens again. Measured: five penalties in six seconds and the
+    // session never starting. You cannot practise the circuit at all.
+    //
+    // So practice does what qualifying already does and simply GOES. The
+    // countdown branch of the frame loop is where the jumped-start rule lives,
+    // so skipping straight past it is what disarms it.
+    if (raceMode === 'practice') {
+        gameState = 'playing';
+        countdownTimer = goDelay;      // past the gantry, so it is never drawn
+        lightState = 6;
+        raceStartTime = performance.now();
+        ais.forEach(ai => ai.startRace());
+    }
     leaderFinished = false;
     finishCounter = 0;
     dnfWindowMs = 20000;
@@ -2184,14 +5288,36 @@ function updatePhysics(dt) {
     // Update all cars
     cars.forEach(car => car.update(dt, track));
 
+    // A car that has been classified stops counting - see raceCmp.
+    freezeClassified();
+
     // --- log: completed laps ------------------------------------------
     cars.forEach(c => {
         if (c.lap > c._prevLap) {
             if (!c.lapTimes) c.lapTimes = [];
             if (c.lastLapTime) c.lapTimes.push(c.lastLapTime);
             const isBest = c.lastLapTime && c.lastLapTime === c.bestLapTime;
+            // your own best, and the flag when you take it: the two moments
+            // of a session worth a noise of their own
+            if (c.isPlayer && isBest && c.lap > 1 && typeof sfxBest === 'function') sfxBest();
+            if (c.isPlayer && c.finished && typeof sfxChequered === 'function') sfxChequered();
             RaceLog.event('LAP', `${c.driverName || c.color} lap ${c.lap}` +
                 (c.lastLapTime ? ` — ${RaceLog.fmt(c.lastLapTime)}${isBest ? '  (best)' : ''}` : ' (out lap)'));
+            // Only the human's laps carry telemetry into the log and into the
+            // personal-best table. The AI's would be noise: it never provokes
+            // the car, so its oversteer numbers are the same on every compound.
+            if (c.isPlayer && c.lastLapTime) {
+                pbRecord(currentTrackKey, (c.tyre && c.tyre.key) || 'medium',
+                         c.lastLapTime, isRaining, geomStampOf(track));
+                const te = c.lastLapTele;
+                if (te) RaceLog.event('TELE',
+                    `${humanLabel(c)} lap ${c.lap} on ${te.tyre} — ` +
+                    `${(100 * te.slowShare).toFixed(0)}% of it under 160 px/s, ` +
+                    `oversteer ${te.osMean.toFixed(2)} there ` +
+                    `(pinned ${(100 * te.osPinned).toFixed(0)}% of that time), ` +
+                    `sideways ${te.slidePct.toFixed(1)}% of the distance, ` +
+                    `mean ${te.vMean.toFixed(0)} px/s`);
+            }
         }
     });
     
@@ -2306,7 +5432,6 @@ function updatePhysics(dt) {
     
     // --- Wrecks, Virtual Safety Car and recovery --------------------------
     updateRecovery(dt);
-    applyCraneCollisions();
     applyVscHold();
 
     // --- Blue flags -------------------------------------------------------
@@ -2380,9 +5505,15 @@ function updatePhysics(dt) {
         for (let j = i + 1; j < cars.length; j++) {
             const c1 = cars[i];
             const c2 = cars[j];
-            // A wreck is being craned away, or already is off the circuit: it
-            // must not act as a barrier in the middle of the racing line.
-            if (c1.isBroken || c2.isBroken) continue;
+            // A wreck is DEBRIS: it sits where it stopped and you have to go
+            // round it. It stops being an obstacle only once it is off the
+            // ground - on the hook (liftAmount) or parked behind the
+            // barriers (recovered) - because then it genuinely is not there
+            // any more. It used to vanish the instant it broke, so a car
+            // that had just been destroyed in front of you was something you
+            // drove straight through.
+            const gone = (c) => c.recovered || (c.liftAmount || 0) > 0.05;
+            if ((c1.isBroken && gone(c1)) || (c2.isBroken && gone(c2))) continue;
             // On a circuit with a bridge, two cars can share a pixel and be
             // ten metres apart vertically.
             if (track.sameLevel && !track.sameLevel(c1, c2)) continue;
@@ -2398,10 +5529,15 @@ function updatePhysics(dt) {
                 const ny = dy / dist;
                 const pushX = nx * overlap * 0.5;
                 const pushY = ny * overlap * 0.5;
-                c1.x -= pushX;
-                c1.y -= pushY;
-                c2.x += pushX;
-                c2.y += pushY;
+                // Dead weight: a wreck does not spring out of the way, so the
+                // running car takes the whole displacement and the debris
+                // stays put. Two live cars share it, exactly as before.
+                const w1 = c1.isBroken ? 0 : 1, w2 = c2.isBroken ? 0 : 1;
+                const tot = (w1 + w2) || 1;
+                c1.x -= pushX * 2 * w1 / tot;
+                c1.y -= pushY * 2 * w1 / tot;
+                c2.x += pushX * 2 * w2 / tot;
+                c2.y += pushY * 2 * w2 / tot;
 
                 // Bounce velocities along the normal
                 const relVx = c2.velocity.x - c1.velocity.x;
@@ -2642,253 +5778,88 @@ function applyVscHold() {
     }
 }
 
-// --- grandstand geometry -------------------------------------------------
-// Shared by the wreck's drop point AND the crane's route. The drop point has
-// always avoided the crowd; the crane did not, so it drove through the stands
-// on its way in and out.
-function pointOnStand(track, px, py, pad) {
-    const stands = (typeof track.getStands === 'function') ? track.getStands() : [];
-    const p = pad === undefined ? 18 : pad;
-    for (const st of stands) {
-        const dx = px - st.x, dy = py - st.y;
-        const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
-        const u = dx * ca - dy * sa;
-        const v = dx * sa + dy * ca;
-        if (Math.abs(u) < st.len / 2 + p && Math.abs(v) < st.depth / 2 + p) return true;
-    }
-    return false;
-}
-
-// How much of a straight route lies inside a grandstand, sampled.
-function segmentStandHits(track, x1, y1, x2, y2, pad) {
-    let hits = 0;
-    const STEPS = 16;
-    for (let i = 0; i <= STEPS; i++) {
-        const k = i / STEPS;
-        if (pointOnStand(track, x1 + (x2 - x1) * k, y1 + (y2 - y1) * k, pad)) hits++;
-    }
-    return hits;
-}
-
-// Last line of defence: shove a point to the nearest edge of any grandstand it
-// is inside. Route scoring gets the crane most of the way there, but on a
-// layout ringed with stands there is not always a clear line, and a search
-// cannot promise "never". This can, because it is applied every frame to the
-// position actually drawn.
-function nudgeOffStand(track, p, pad) {
-    const stands = (typeof track.getStands === 'function') ? track.getStands() : [];
-    const m = pad === undefined ? 14 : pad;
-    // Three passes cleared it on the old, smaller circuits. On the wider ones
-    // the stands are denser and a crane pushed out of one can land in its
-    // neighbour, so keep going until it is clear of all of them.
-    for (let iter = 0; iter < 12; iter++) {
-        let moved = false;
-        for (const st of stands) {
-            const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
-            const dx = p.x - st.x, dy = p.y - st.y;
-            const u = dx * ca - dy * sa;              // into the stand's own frame
-            const v = dx * sa + dy * ca;
-            const hu = st.len / 2 + m, hv = st.depth / 2 + m;
-            if (Math.abs(u) >= hu || Math.abs(v) >= hv) continue;
-
-            // push out of the nearer face
-            const outU = hu - Math.abs(u);
-            const outV = hv - Math.abs(v);
-            let nu = u, nv = v;
-            if (outU < outV) nu = (u >= 0 ? hu : -hu);
-            else nv = (v >= 0 ? hv : -hv);
-
-            // back to world coordinates
-            const cb = Math.cos(st.angle), sb = Math.sin(st.angle);
-            p.x = st.x + (nu * cb - nv * sb);
-            p.y = st.y + (nu * sb + nv * cb);
-            moved = true;
-        }
-        if (!moved) break;
-    }
-
-    // Last resort. Pushing out of one stand can drop the point into the next,
-    // and on a circuit ringed with them the two can trade it back and forth
-    // for ever. If it is still inside one, shove it clear of that stand's
-    // bounding circle in one move: a bigger jump than the face-push, but it
-    // always ends outside, which is the thing that matters.
-    for (const st of stands) {
-        const ca = Math.cos(-st.angle), sa = Math.sin(-st.angle);
-        const dx = p.x - st.x, dy = p.y - st.y;
-        const u = dx * ca - dy * sa, v = dx * sa + dy * ca;
-        if (Math.abs(u) >= st.len / 2 + m || Math.abs(v) >= st.depth / 2 + m) continue;
-        const R = Math.hypot(st.len / 2, st.depth / 2) + m + 2;
-        const d = Math.hypot(dx, dy);
-        const nx = d > 0.001 ? dx / d : 1, ny = d > 0.001 ? dy / d : 0;
-        p.x = st.x + nx * R;
-        p.y = st.y + ny * R;
-    }
-    return p;
-}
+// =========================================================================
+//  LA GRU
+// =========================================================================
+//
+//  COS'ERA PRIMA, e perche' non c'e' piu'. Un carro attrezzi cingolato che
+//  entrava dal prato, agganciava il rottame e lo trascinava via. Era un
+//  oggetto SOLIDO: le auto ci rimbalzavano contro, l'IA aveva una regola per
+//  scansarlo, e ci voleva una pagina di ricerca per trovargli una strada che
+//  non attraversasse le tribune. Nicola aveva chiesto delle gru e intendeva
+//  quelle da cantiere: un braccio che entra SOPRA il circuito, cala un gancio,
+//  solleva l'auto e la porta fuori. Niente sulla strada. Quindi:
+//
+//    * la torre sta fuori dal bordo dell'immagine, dal lato piu' vicino al
+//      rottame. Non si vede mai: si vede solo il braccio;
+//    * il braccio ruota fino alla direzione del rottame mentre il carrello
+//      corre in fuori lungo di esso;
+//    * il gancio cala, l'auto viene sollevata (car.js la disegna piu' grande
+//      e le lascia l'ombra a terra: e' l'unica cosa che in vista dall'alto
+//      dice "questa e' in aria");
+//    * il carrello rientra e il braccio ruota indietro, e l'auto se ne va con
+//      lui, oltre il bordo del mondo.
+//
+//  Non c'e' piu' un punto dove posare il rottame, perche' il rottame non viene
+//  posato: viene portato via. E non c'e' piu' collisione, ne' regola d'IA, ne'
+//  ricerca di percorso, perche' tutta la macchina e' quindici metri in aria.
+const JIB_SWING = 1.9;      // s, il braccio entra
+const JIB_HOOK  = 1.2;      // s, gancio giu' e sollevamento
+const JIB_HAUL  = 2.8;      // s, lo porta fuori
+const JIB_PARK  = 26;       // px, distanza del carrello a riposo
+const JIB_OUT   = 74;       // px di quanto la torre sta fuori dall'arena
 
 function startRecovery(car) {
-    // Where to drag it to: out past the barrier, into somewhere that is
-    // genuinely off the circuit.
-    //
-    // Pushing blindly along the outward normal is not enough: where two parts
-    // of the layout run close together (Circus Maximus, the Comb) that vector
-    // can cross the run-off, clear the far barrier and drop the wreck back on
-    // the racing surface. So candidates are scored and the first one that is
-    // clear of *every* segment wins.
-    const proj = track.getClosestPoint(car.x, car.y);
-    let nx = car.x - proj.projX;
-    let ny = car.y - proj.projY;
-    let len = Math.hypot(nx, ny);
+    // Da che parte entra: il bordo piu' vicino. Da quella scelta sola discende
+    // tutto il resto - dove sta la torre, quanto e' lungo il braccio, di
+    // quanto deve ruotare.
+    // The arena is this circuit's own world now (see track.js): the crane
+    // still comes in over the nearest edge, however big that world is.
+    const AX0 = ARENA_X0, AX1 = curWorldW(), AY0 = 0, AY1 = curWorldH();
+    const dLeft = car.x - AX0, dRight = AX1 - car.x;
+    const dTop = car.y - AY0, dBottom = AY1 - car.y;
+    const near = Math.min(dLeft, dRight, dTop, dBottom);
+    let pivot, alongX = 0, alongY = 1;
+    if (near === dRight)      { pivot = { x: AX1 + JIB_OUT, y: car.y }; }
+    // A sinistra la torre va fuori dal MONDO, non fuori dall'arena: fra i due
+    // c'e' la fascia riservata dal layout, e una gru piazzata li' resterebbe
+    // in vista a posare l'auto in mezzo al prato invece di portarsela fuori.
+    else if (near === dLeft)  { pivot = { x: -JIB_OUT, y: car.y }; }
+    else if (near === dTop)   { pivot = { x: car.x, y: AY0 - JIB_OUT }; alongX = 1; alongY = 0; }
+    else                      { pivot = { x: car.x, y: AY1 + JIB_OUT }; alongX = 1; alongY = 0; }
 
-    if (len < 1e-3) {
-        // The car died sitting exactly on the centre line - the single most
-        // likely place to be destroyed - and "away from the track" has no
-        // direction there. Fall back to the track's own normal at the nearest
-        // racing-line node. Without this the wreck was simply never moved.
-        let bn = null, bd = Infinity;
-        if (typeof track.getRacingLine === 'function') {
-            const line = track.getRacingLine('standard');
-            for (const nd of line.nodes) {
-                const d = (car.x - nd.cx) ** 2 + (car.y - nd.cy) ** 2;
-                if (d < bd) { bd = d; bn = nd; }
-            }
-        }
-        if (bn) { nx = bn.nx; ny = bn.ny; }
-        else { nx = 1; ny = 0; }
-        len = 1;
-    }
-    nx /= len; ny /= len;
-
-    const clearance = track.grassWidth + 30;
-    const onStand = (px, py, pad) => pointOnStand(track, px, py, pad);
-    // Score every candidate rather than taking the first that passes: on an
-    // enclosed layout (the Comb, Thunder) there may be no perfect spot, and
-    // "first acceptable or else give up" dumped the wreck back on the racing
-    // surface. Best-available always beats a bad fallback.
-    let tx = null, ty = null, bestScore = -Infinity;
-
-    for (let a = 0; a < 24; a++) {
-        const spin = (a % 2 === 0 ? 1 : -1) * Math.floor(a / 2) * (Math.PI / 12);
-        const ca = Math.cos(spin), sa = Math.sin(spin);
-        const vx = nx * ca - ny * sa;
-        const vy = nx * sa + ny * ca;
-
-        for (const dist of [track.grassWidth + 42, track.grassWidth + 60,
-                            track.grassWidth + 82, track.grassWidth + 110]) {
-            const px = proj.projX + vx * dist;
-            const py = proj.projY + vy * dist;
-            if (px < ARENA_X0 + 22 || px > ARENA_X1 - 22 ||
-                py < ARENA_Y0 + 22 || py > ARENA_Y1 - 22) continue;
-
-            const clear = track.getClosestPoint(px, py).dist;
-            // how far past the barrier we are, capped so absurdly remote spots
-            // are not preferred over a tidy one just behind the wall
-            let score = Math.min(clear - track.grassWidth, 70);
-            if (onStand(px, py)) score -= 260;            // never into the crowd
-            score -= Math.abs(spin) * 6;                  // prefer straight out
-            score -= dist * 0.05;                         // prefer the short tow
-
-            // The crane LEADS the wreck, so during the haul it sits a tow
-            // length further out than this spot and finishes there. Scoring
-            // only the wreck's resting place left the crane itself parked in
-            // the crowd on the tracks that are ringed with stands.
-            const ex = px + vx * 34, ey = py + vy * 34;
-            if (onStand(ex, ey, 14)) score -= 240;
-            score -= segmentStandHits(track, car.x, car.y, ex, ey, 12) * 18;
-
-            if (score > bestScore) { bestScore = score; tx = px; ty = py; }
-        }
+    // Due rottami dallo stesso lato metterebbero due torri sullo stesso pixel:
+    // la seconda scivola lungo il suo bordo.
+    for (const o of recoveries) {
+        if (o.phase === 'done' || !o.pivot) continue;
+        if (Math.hypot(o.pivot.x - pivot.x, o.pivot.y - pivot.y) > 110) continue;
+        pivot.x += alongX * 130;
+        pivot.y += alongY * 130;
     }
 
-    if (tx === null) {           // literally nowhere on canvas: clamp and accept
-        tx = Math.max(ARENA_X0 + 22, Math.min(ARENA_X1 - 22,
-                                              proj.projX + nx * (track.grassWidth + 42)));
-        ty = Math.max(ARENA_Y0 + 22, Math.min(ARENA_Y1 - 22,
-                                              proj.projY + ny * (track.grassWidth + 42)));
-    }
+    const aim = Math.atan2(car.y - pivot.y, car.x - pivot.x);
+    const dist = Math.hypot(car.x - pivot.x, car.y - pivot.y);
 
-    // Geometry of the recovery. The crane always keeps a tow length between
-    // itself and the wreck - it must never end up drawn on the same pixel,
-    // or all you see is a car sliding along on its own.
-    const ux = (tx - car.x), uy = (ty - car.y);
-    const ul = Math.hypot(ux, uy) || 1;
-    const dirx = ux / ul, diry = uy / ul;
+    // A riposo il braccio sta quasi disteso lungo il bordo, non puntato sulla
+    // strada: e' l'entrare in rotazione che lo fa leggere come una gru e non
+    // come una freccia che sta li'.
+    const inward = Math.atan2((AY0 + AY1) / 2 - pivot.y,
+                              (AX0 + AX1) / 2 - pivot.x);
+    let off = aim - inward;
+    while (off > Math.PI) off -= 2 * Math.PI;
+    while (off < -Math.PI) off += 2 * Math.PI;
+    const park = inward + (off >= 0 ? -1 : 1) * (Math.PI / 2.3);
 
-    const TOW = 34;                               // crane-to-hook distance
-    const pick = { x: car.x + dirx * TOW, y: car.y + diry * TOW };
-
-    // Where the crane waits, and therefore the route it drives in and out on.
-    // This used to be a fixed 90px further out along the same line, with no
-    // check at all - so on a track ringed with grandstands the crane parked in
-    // the crowd and drove straight through it. Search for a spot that is clear
-    // itself AND whose straight run to the car does not cross a stand.
-    // Where the crane finishes the haul, and therefore where it withdraws from.
-    const haulEnd = { x: tx + dirx * TOW, y: ty + diry * TOW };
-
-    // Candidate parking spots: fanned out behind the drop point, plus a set
-    // running ALONG the run-off strip either side of it. That strip is
-    // stand-free by construction - getStands() rejects any stand that overlaps
-    // the circuit - so on a layout boxed in by grandstands there is always a
-    // clear way in even when every outward direction is blocked.
-    const cand = [];
-    for (let a = 0; a < 24; a++) {
-        const spin = (a % 2 === 0 ? 1 : -1) * Math.floor(a / 2) * (Math.PI / 8);
-        const ca = Math.cos(spin), sa = Math.sin(spin);
-        const vx = dirx * ca - diry * sa;
-        const vy = dirx * sa + diry * ca;
-        for (const back of [55, 70, 90, 115, 145]) {
-            cand.push({ x: tx + vx * back, y: ty + vy * back, spin: Math.abs(spin), back: back });
-        }
-    }
-    const tgx = -diry, tgy = dirx;                       // along the track
-    for (const side of [1, -1]) {
-        for (const along of [60, 95, 135, 180]) {
-            for (const out of [track.grassWidth + 26, track.grassWidth + 48]) {
-                cand.push({
-                    x: proj.projX + nx * out + tgx * side * along,
-                    y: proj.projY + ny * out + tgy * side * along,
-                    spin: 0.9, back: along
-                });
-            }
-        }
-    }
-
-    let hx = null, hy = null, bestHome = -Infinity;
-    {
-        for (const c of cand) {
-            const px = c.x, py = c.y;
-            const spin = c.spin, back = c.back;
-            if (px < ARENA_X0 + 16 || px > ARENA_X1 - 16 ||
-                py < ARENA_Y0 + 16 || py > ARENA_Y1 - 16) continue;
-
-            let score = 0;
-            if (pointOnStand(track, px, py, 22)) score -= 400;       // parked in the crowd
-            // both legs it actually drives: in to the wreck, and back out again
-            score -= segmentStandHits(track, px, py, pick.x, pick.y, 12) * 40;
-            score -= segmentStandHits(track, haulEnd.x, haulEnd.y, px, py, 12) * 40;
-            score -= Math.abs(spin) * 6;                             // prefer straight out
-            score -= back * 0.06;                                    // prefer close by
-            // and it must not be sitting on the racing surface either
-            if (track.getClosestPoint(px, py).dist < track.grassWidth) score -= 200;
-
-            if (score > bestHome) { bestHome = score; hx = px; hy = py; }
-        }
-    }
-    if (hx === null) { hx = tx + dirx * 90; hy = ty + diry * 90; }
-
-    const rec = {
+    recoveries.push({
         car: car,
-        phase: 'approach',
+        phase: 'swing',
         t: 0,
-        from: { x: car.x, y: car.y },
-        to: { x: tx, y: ty },
-        tow: TOW,
-        // where the crane comes from, and where it stands to pick the car up:
-        home: { x: hx, y: hy },
-        pick: pick,
-        crane: { x: hx, y: hy }
-    };
-    recoveries.push(rec);
+        pivot: pivot,
+        jib: dist + 80,                 // il braccio e' piu' lungo del necessario
+        aim: aim, park: park, dist: dist,
+        ang: park, reach: JIB_PARK,
+        hook: { x: pivot.x, y: pivot.y }
+    });
 
     car.recovering = true;
     car.velocity.x = 0;
@@ -2917,100 +5888,39 @@ function updateRecovery(dt) {
         r.t += dt;
 
         const smooth = (k) => k * k * (3 - 2 * k);
+        const lerpAng = (a, b, e) => {
+            let d = b - a;
+            while (d > Math.PI) d -= 2 * Math.PI;
+            while (d < -Math.PI) d += 2 * Math.PI;
+            return a + d * e;
+        };
 
-        if (r.phase === 'approach') {
-            // crane drives in from off the circuit and pulls up alongside
-            const e = smooth(Math.min(1, r.t / 2.6));
-            r.crane.x = r.home.x + (r.pick.x - r.home.x) * e;
-            r.crane.y = r.home.y + (r.pick.y - r.home.y) * e;
-            if (r.t >= 2.6) { r.phase = 'lift'; r.t = 0; }
+        if (r.phase === 'swing') {
+            // il braccio ruota dentro e il carrello corre in fuori: il gancio
+            // arriva sul rottame esattamente alla fine dei due movimenti
+            const e = smooth(Math.min(1, r.t / JIB_SWING));
+            r.ang = lerpAng(r.park, r.aim, e);
+            r.reach = JIB_PARK + (r.dist - JIB_PARK) * e;
+            if (r.t >= JIB_SWING) { r.phase = 'hook'; r.t = 0; r.ang = r.aim; r.reach = r.dist; }
 
-        } else if (r.phase === 'lift') {
-            // hooks on and lifts; crane stationary, cable clearly visible
-            r.car.liftAmount = Math.min(1, r.t / 1.6);
-            if (r.t >= 1.6) { r.phase = 'haul'; r.t = 0; }
+        } else if (r.phase === 'hook') {
+            // gancio giu', l'auto si stacca da terra
+            r.car.liftAmount = Math.min(1, r.t / JIB_HOOK);
+            if (r.t >= JIB_HOOK) { r.phase = 'haul'; r.t = 0; }
 
         } else if (r.phase === 'haul') {
-            // crane leads, wreck trails one tow length behind it
-            const e = smooth(Math.min(1, r.t / 3.4));
-            const cx = r.pick.x + (r.to.x + (r.pick.x - r.from.x) - r.pick.x) * e;
-            const cy = r.pick.y + (r.to.y + (r.pick.y - r.from.y) - r.pick.y) * e;
-            r.crane.x = cx;
-            r.crane.y = cy;
-            r.car.x = r.from.x + (r.to.x - r.from.x) * e;
-            r.car.y = r.from.y + (r.to.y - r.from.y) * e;
-            if (r.t >= 3.4) { r.phase = 'drop'; r.t = 0; }
-
-        } else if (r.phase === 'drop') {
-            r.car.liftAmount = Math.max(0, 1 - r.t / 1.2);
-            if (r.t >= 1.2) { r.phase = 'clear'; r.t = 0; }
-
-        } else if (r.phase === 'clear') {
-            // crane withdraws; the VSC stays out until it is gone
-            const e = smooth(Math.min(1, r.t / 1.8));
-            const from = { x: r.crane.x, y: r.crane.y };
-            if (!r.clearFrom) r.clearFrom = from;
-            r.crane.x = r.clearFrom.x + (r.home.x - r.clearFrom.x) * e;
-            r.crane.y = r.clearFrom.y + (r.home.y - r.clearFrom.y) * e;
-            if (r.t >= 1.8) { r.phase = 'done'; r.t = 0; }
-
+            // il carrello rientra, il braccio torna indietro, e l'auto appesa
+            // al gancio esce dall'inquadratura con lui
+            const e = smooth(Math.min(1, r.t / JIB_HAUL));
+            r.ang = lerpAng(r.aim, r.park, e);
+            r.reach = r.dist + (JIB_PARK - r.dist) * e;
+            r.car.x = r.pivot.x + Math.cos(r.ang) * r.reach;
+            r.car.y = r.pivot.y + Math.sin(r.ang) * r.reach;
+            if (r.t >= JIB_HAUL) { r.phase = 'done'; r.t = 0; }
         }
 
-        // Whatever the route worked out, the crane is never drawn inside a
-        // grandstand - nor off the visible part of the canvas. The circuits
-        // now run right to the edge, so "just outside the barrier" can be off
-        // the screen entirely, and the top and bottom bands belong to the HUD.
-        if (r.phase !== 'done') {
-            nudgeOffStand(track, r.crane, 14);
-            r.crane.x = Math.max(ARENA_X0 + 18, Math.min(ARENA_X1 - 18, r.crane.x));
-            r.crane.y = Math.max(ARENA_Y0 + 18, Math.min(ARENA_Y1 - 18, r.crane.y));
-        }
-
-        // ...nor inside another crane. Two wrecks close together used to send
-        // two cranes to overlapping spots and they were drawn one on top of
-        // the other, which read as one very confused machine.
-        if (r.phase !== 'done') {
-            // Two passes: pushing a crane clear of its neighbour can put it on
-            // a grandstand, and pushing it back off the stand can put it near
-            // the neighbour again. Twice round settles it.
-            for (let pass = 0; pass < 2; pass++) {
-                for (let k = 0; k < recoveries.length; k++) {
-                    if (k === i) continue;
-                    const o = recoveries[k];
-                    if (!o || o.phase === 'done') continue;
-                    let dx = r.crane.x - o.crane.x, dy = r.crane.y - o.crane.y;
-                    let d = Math.hypot(dx, dy);
-                    if (d >= CRANE_CLEARANCE) continue;
-                    if (d < 0.001) { dx = 1; dy = 0; d = 1; }   // exactly co-located
-                    // Push them apart evenly, then keep both off the stands:
-                    // the separation must not be bought by parking in the crowd.
-                    const push = (CRANE_CLEARANCE - d) / 2;
-                    r.crane.x += (dx / d) * push;
-                    r.crane.y += (dy / d) * push;
-                    o.crane.x -= (dx / d) * push;
-                    o.crane.y -= (dy / d) * push;
-                    nudgeOffStand(track, r.crane, 14);
-                    nudgeOffStand(track, o.crane, 14);
-                }
-            }
-            // Separation gets the last word. Being pushed off a stand can put
-            // two cranes back on top of each other, and now that a crane is a
-            // solid obstacle two of them in the same place is the worse fault
-            // of the two - one is a drawing overlap, the other is a wall in a
-            // place the drivers cannot read.
-            for (let k = 0; k < recoveries.length; k++) {
-                if (k === i) continue;
-                const o = recoveries[k];
-                if (!o || o.phase === 'done') continue;
-                let dx = r.crane.x - o.crane.x, dy = r.crane.y - o.crane.y;
-                let d = Math.hypot(dx, dy);
-                if (d >= CRANE_CLEARANCE) continue;
-                if (d < 0.001) { dx = 1; dy = 0; d = 1; }
-                const push = (CRANE_CLEARANCE - d) / 2;
-                r.crane.x += (dx / d) * push; r.crane.y += (dy / d) * push;
-                o.crane.x -= (dx / d) * push; o.crane.y -= (dy / d) * push;
-            }
-        }
+        r.hook.x = r.pivot.x + Math.cos(r.ang) * r.reach;
+        r.hook.y = r.pivot.y + Math.sin(r.ang) * r.reach;
 
         if (r.phase === 'done') {
             r.car.recovering = false;
@@ -3039,8 +5949,9 @@ function updateRecovery(dt) {
             vscActive = true;
             vscPowerFactor = VSC_POWER;
             showVscBanner(true);
+            if (typeof sfxVsc === 'function') sfxVsc(true);
             renderVscCountdown(null);
-            RaceLog.event('VSC', `deployed — engine power limited to ${Math.round(VSC_POWER * 100)}%`);
+            RaceLog.event('VSC', `deployed — speed limited to ${VSC_SPEED} px/s for everyone`);
         }
     } else if (vscActive) {
         if (vscEndsAt === null) {
@@ -3053,6 +5964,7 @@ function updateRecovery(dt) {
             vscEndsAt = null;
             vscPowerFactor = 1;
             showVscBanner(false);
+            if (typeof sfxVsc === 'function') sfxVsc(false);
             renderVscCountdown(null);
             RaceLog.event('VSC', 'withdrawn — track clear, full power');
         } else {
@@ -3086,151 +5998,93 @@ function renderVscCountdown(leftMs) {
     }
 }
 
-// --- cranes are solid ----------------------------------------------------
-// A recovery vehicle sitting on the edge of the circuit is a hazard, not
-// scenery. A car that runs into one is stopped by it and damaged, exactly as
-// by a barrier: leaning on it costs little, spearing it costs a lot.
-function applyCraneCollisions() {
-    if (!recoveries.length) return;
-    for (const c of cars) {
-        if (c.finished || c.isBroken) continue;
-        for (const r of recoveries) {
-            if (r.phase === 'done') continue;
-            const dx = c.x - r.crane.x, dy = c.y - r.crane.y;
-            const d = Math.hypot(dx, dy);
-            const minD = CRANE_RADIUS + 12;          // 12 = the car's own radius
-            if (d >= minD || d < 0.001) continue;
-
-            const nx = dx / d, ny = dy / d;
-            // push clear
-            c.x = r.crane.x + nx * minD;
-            c.y = r.crane.y + ny * minD;
-
-            // kill the component of velocity going INTO the crane, and take
-            // the damage from it. Same shape as the barrier rule, so brushing
-            // one is survivable and driving into it head-on is not.
-            const into = -(c.velocity.x * nx + c.velocity.y * ny);
-            if (into > 0) {
-                c.velocity.x += nx * into * 1.35;     // stop, plus a little bounce
-                c.velocity.y += ny * into * 1.35;
-                const hit = Math.max(0, into - 30) * 0.10;
-                if (hit > 0 && typeof c.takeDamage === 'function') {
-                    c.takeDamage(hit * hit * 0.5);
-                    if (!c._craneLogged || raceNow() - c._craneLogged > 2000) {
-                        c._craneLogged = raceNow();
-                        RaceLog.event('CONTACT', `${c.driverName || c.color} hit a recovery ` +
-                            `vehicle (closing ${into.toFixed(0)} px/s)`);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Where the AI should not go. ai.js reads this through the global.
-function craneObstacles() {
-    const out = [];
-    for (const r of recoveries) {
-        if (r.phase === 'done') continue;
-        out.push({ x: r.crane.x, y: r.crane.y, r: CRANE_RADIUS });
-    }
-    return out;
-}
-
 function drawCranes(ctx) {
     for (const r of recoveries) {
-        const c = r.crane;
+        if (r.phase === 'done') continue;
         const on = Math.floor(Date.now() / 200) % 2 === 0;
-
-        // --- cable to the wreck, drawn first so the crane sits on top ----
-        if (r.phase === 'lift' || r.phase === 'haul' || r.phase === 'drop') {
-            ctx.strokeStyle = '#111';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(c.x, c.y);
-            ctx.lineTo(r.car.x, r.car.y);
-            ctx.stroke();
-
-            // hook
-            ctx.fillStyle = '#eceff1';
-            ctx.beginPath();
-            ctx.arc(r.car.x, r.car.y, 3.5, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        const ca = Math.cos(r.ang), sa = Math.sin(r.ang);
+        const trX = r.pivot.x + ca * r.reach, trY = r.pivot.y + sa * r.reach;
 
         ctx.save();
-        ctx.translate(c.x, c.y);
+        ctx.translate(r.pivot.x, r.pivot.y);
+        ctx.rotate(r.ang);
 
-        // While towing, the crane leads and the wreck trails, so it faces its
-        // direction of travel with the boom out the back - not backwards at
-        // the car, which read as the recovery truck reversing up the circuit.
-        const towing = (r.phase === 'haul' || r.phase === 'drop');
-        const toCar = Math.atan2(r.car.y - c.y, r.car.x - c.x);
-        const ang = towing ? toCar + Math.PI : toCar;
-        ctx.rotate(isFinite(ang) ? ang : 0);
-        const boom = towing ? -1 : 1;
-
-        // amber warning glow
-        if (on) {
-            ctx.fillStyle = 'rgba(255,214,0,0.22)';
-            ctx.beginPath();
-            ctx.arc(0, 0, 34, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
-        // --- jib (the arm reaching towards the car) ---------------------
-        ctx.strokeStyle = '#ef6c00';
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.moveTo(boom * 4, 0);
-        ctx.lineTo(boom * 32, 0);
-        ctx.stroke();
-        ctx.strokeStyle = '#ffb74d';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(boom * 6, 0);
-        ctx.lineTo(boom * 30, 0);
-        ctx.stroke();
-        // pulley at the tip
+        // --- controbraccio e contrappeso, dall'altra parte della torre ----
+        ctx.strokeStyle = '#37474f';
+        ctx.lineWidth = 7;
+        ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(-66, 0); ctx.stroke();
         ctx.fillStyle = '#37474f';
+        ctx.fillRect(-80, -12, 18, 24);
+
+        // --- il braccio: due correnti e un traliccio a zig-zag fra loro ----
+        // Rastremato: 7px alla torre, 3 alla punta. E' quello che lo fa
+        // leggere come una struttura e non come una barra.
+        const J = r.jib;
+        const wAt = (s) => 7 - 4 * Math.min(1, s / J);
+        ctx.strokeStyle = '#e65100';
+        ctx.lineWidth = 1.7;
         ctx.beginPath();
-        ctx.arc(boom * 32, 0, 4, 0, Math.PI * 2);
-        ctx.fill();
+        for (let s = 0; s + 26 <= J; s += 26) {
+            ctx.moveTo(s, -wAt(s)); ctx.lineTo(s + 13, wAt(s + 13));
+            ctx.moveTo(s + 13, wAt(s + 13)); ctx.lineTo(s + 26, -wAt(s + 26));
+            ctx.moveTo(s, -wAt(s)); ctx.lineTo(s, wAt(s));
+        }
+        ctx.stroke();
+        ctx.strokeStyle = '#f9a825';
+        ctx.lineWidth = 3.2;
+        ctx.beginPath();
+        ctx.moveTo(0, -7); ctx.lineTo(J, -3);
+        ctx.moveTo(0, 7); ctx.lineTo(J, 3);
+        ctx.stroke();
+        // punta
+        ctx.fillStyle = '#37474f';
+        ctx.beginPath(); ctx.arc(J, 0, 4, 0, Math.PI * 2); ctx.fill();
 
-        // --- body -------------------------------------------------------
-        ctx.fillStyle = '#455a64';
-        ctx.fillRect(-19, -13, 38, 26);              // chassis shadow
-        ctx.fillStyle = '#f9a825';
-        ctx.fillRect(-17, -11, 34, 22);              // yellow body
-        ctx.fillStyle = '#e65100';
-        ctx.fillRect(-17, -11, 34, 4);               // stripe
-        ctx.fillRect(-17, 7, 34, 4);
+        // --- la torre, vista dall'alto: un traliccio quadrato -------------
+        ctx.fillStyle = '#455a64'; ctx.fillRect(-14, -14, 28, 28);
+        ctx.fillStyle = '#f9a825'; ctx.fillRect(-11, -11, 22, 22);
+        ctx.strokeStyle = '#e65100'; ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(-11, -11); ctx.lineTo(11, 11);
+        ctx.moveTo(11, -11); ctx.lineTo(-11, 11);
+        ctx.stroke();
 
-        // tracks / wheels
-        ctx.fillStyle = '#212121';
-        ctx.fillRect(-19, -15, 38, 4);
-        ctx.fillRect(-19, 11, 38, 4);
-
-        // cab
-        ctx.fillStyle = '#263238';
-        ctx.fillRect(-9, -7, 13, 14);
-        ctx.fillStyle = '#90a4ae';
-        ctx.fillRect(-7, -5, 9, 10);
-
-        // roof beacon
+        // --- il carrello, sul braccio -------------------------------------
+        ctx.save();
+        ctx.translate(r.reach, 0);
+        if (on) {
+            ctx.fillStyle = 'rgba(255,214,0,0.20)';
+            ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = '#263238'; ctx.fillRect(-9, -9, 18, 18);
+        ctx.fillStyle = '#ffb300'; ctx.fillRect(-7, -7, 14, 14);
         ctx.fillStyle = on ? '#fff176' : '#8d6e00';
-        ctx.fillRect(-3, -17, 6, 5);
-
+        ctx.fillRect(-2.5, -12, 5, 4);
+        ctx.restore();
         ctx.restore();
 
-        // --- label ------------------------------------------------------
+        // --- il cavo e il gancio ------------------------------------------
+        // In pianta cavo e gancio cadono sullo stesso punto del carrello, e
+        // un cavo lungo zero non si vede: il gancio si disegna come due anelli
+        // concentrici sotto il carrello, che e' il modo in cui una vista
+        // dall'alto puo' dire "qui pende qualcosa".
+        const lift = r.car ? (r.car.liftAmount || 0) : 0;
+        if (r.phase === 'hook' || r.phase === 'haul') {
+            ctx.strokeStyle = 'rgba(20,20,20,0.85)';
+            ctx.lineWidth = 1.6;
+            ctx.beginPath(); ctx.arc(trX, trY, 7 + 3 * lift, 0, Math.PI * 2); ctx.stroke();
+            ctx.lineWidth = 2.4;
+            ctx.beginPath(); ctx.arc(trX, trY, 3.4, 0, Math.PI * 2); ctx.stroke();
+        }
+
+        // --- etichetta -----------------------------------------------------
         ctx.font = 'bold 10px Arial';
         ctx.textAlign = 'center';
         ctx.fillStyle = on ? '#ffd600' : '#c8a600';
         ctx.strokeStyle = 'rgba(0,0,0,0.85)';
         ctx.lineWidth = 3;
-        ctx.strokeText('RECOVERY', c.x, c.y - 24);
-        ctx.fillText('RECOVERY', c.x, c.y - 24);
+        ctx.strokeText('RECOVERY', trX, trY - 22);
+        ctx.fillText('RECOVERY', trX, trY - 22);
         ctx.textAlign = 'left';
     }
 }
@@ -3341,22 +6195,28 @@ function updateHUD() {
     }
 
     // Lap
-    if (playerCar && !twoPlayer) {
-        renderTyreIndicator(playerCar);
+    //
+    // The car this panel is ABOUT. Normally yours; when you are spectating it
+    // is whichever car you picked out of the timing tower, or the leader if
+    // you have not picked one. The whole block used to be gated on playerCar,
+    // so a spectator got two lines - leader's lap and name - and nothing else.
+    const hc = hudCar();
+    if (hc && !twoPlayer) {
+        renderTyreIndicator(hc);
         if (raceMode === 'practice') {
-            lapCounter.innerText = `Practice — lap ${playerCar.lap + 1}`;
+            lapCounter.innerText = `Practice — lap ${hc.lap + 1}`;
         } else if (raceMode === 'qualifying') {
-            lapCounter.innerText = playerCar.lap === 0
+            lapCounter.innerText = hc.lap === 0
                 ? 'Qualifying — warm-up lap'
-                : `Qualifying — flying lap ${playerCar.lap}/${QUALI_LAPS - 1}`;
+                : `Qualifying — flying lap ${hc.lap}/${QUALI_LAPS - 1}`;
         } else {
-            let currentLap = playerCar.lap + 1;
+            let currentLap = hc.lap + 1;
             if (currentLap > TOTAL_LAPS) currentLap = TOTAL_LAPS;
             lapCounter.innerText = `Lap: ${currentLap}/${TOTAL_LAPS}`;
         }
         
         // Speed
-        const speed = Math.sqrt(playerCar.velocity.x**2 + playerCar.velocity.y**2);
+        const speed = Math.sqrt(hc.velocity.x**2 + hc.velocity.y**2);
         // Convert to arbitrary km/h (1 unit = ~0.5 km/h for nice numbers)
         speedometer.innerText = `${Math.floor(speed * 0.5)} km/h`;
 
@@ -3371,16 +6231,16 @@ function updateHUD() {
                 return (ms / 1000).toFixed(3);
             };
             const nowMs = typeof track.currentRaceTime === 'number' ? track.currentRaceTime : 0;
-            const current = playerCar.finished ? (playerCar.lastLapTime || 0) : Math.max(0, nowMs - playerCar.lapStartTime);
+            const current = hc.finished ? (hc.lastLapTime || 0) : Math.max(0, nowMs - hc.lapStartTime);
 
             // Green while we are up on our best, red once we have lost it.
             let colour = '#fff';
-            if (playerCar.bestLapTime) {
-                colour = current > playerCar.bestLapTime ? '#ff8a80' : '#69f0ae';
+            if (hc.bestLapTime) {
+                colour = current > hc.bestLapTime ? '#ff8a80' : '#69f0ae';
             }
 
-            const lastStr = playerCar.lastLapTime
-                ? `${fmt(playerCar.lastLapTime)}${playerCar.lastLapTime === playerCar.bestLapTime ? ' ★' : ''}`
+            const lastStr = hc.lastLapTime
+                ? `${fmt(hc.lastLapTime)}${hc.lastLapTime === hc.bestLapTime ? ' ★' : ''}`
                 : '--.---';
 
             // The live lap big, last and best beside it: the bar is one row,
@@ -3388,7 +6248,7 @@ function updateHUD() {
             lapTimerDiv.innerHTML =
                 `<span class="lt-cur" style="color:${colour};">${fmt(current)}</span>` +
                 `<span class="lt-sub">L ${lastStr}</span>` +
-                `<span class="lt-sub lt-best">B ${fmt(playerCar.bestLapTime)}</span>`;
+                `<span class="lt-sub lt-best">B ${fmt(hc.bestLapTime)}</span>`;
         }
     }
     
@@ -3401,7 +6261,8 @@ function updateHUD() {
             c.finishIndex = finishCounter++;
             RaceLog.event('FINISH', `P${c.finishIndex + 1} ${c.driverName || c.color} — ` +
                 `${RaceLog.fmt(c.raceTime)} after ${c.lap} laps` +
-                (c.jumpStartPenalty ? ' (incl. 5s jump-start penalty)' : ''));
+                (c.jumpStartPenalty
+                    ? ` (incl. ${((c.jumpPenaltyMs || 0) / 1000).toFixed(1)}s jump-start penalty)` : ''));
         }
     });
 
@@ -3434,8 +6295,12 @@ function updateHUD() {
             const ia = vscOrder.indexOf(a.uid), ib = vscOrder.indexOf(b.uid);
             if (ia !== -1 && ib !== -1 && ia !== ib) return ia - ib;
         }
-        const pa = a.trackProgress || 0, pb = b.trackProgress || 0;
-        if (pa !== pb) return pb - pa;
+        // The same comparator the tower settles towards - see raceCmp. These
+        // used to be two functions with two different answers for a finished
+        // car, so the live order and the results sheet could disagree about
+        // who came where.
+        const k = raceCmp(a, b);
+        if (k !== 0) return k;
         return (a.gridIndex || 0) - (b.gridIndex || 0);   // stable at lights-out
     });
 
@@ -3480,12 +6345,17 @@ function updateHUD() {
             } else if (i === 0) {
                 gap = c.finished ? 'FIN' : 'LEADER';
             } else {
-                const ahead = shown[i - 1];
-                const behind = Math.max(0, (ahead.trackProgress || 0) - (c.trackProgress || 0));
-                const lapsDown = Math.floor(behind / lapLen);
+                // Lapped cars say so, every one of them, and against the
+                // LEADER rather than against whoever happens to be on the
+                // row above - which is what used to turn a car a lap down
+                // into "+0.0". An interval is shown only between cars that
+                // are actually racing each other, i.e. on the same lap.
+                const lapsDown = lapsDownFrom(shown[0], c);
                 if (lapsDown >= 1) {
                     gap = `+${lapsDown} LAP${lapsDown > 1 ? 'S' : ''}`;
                 } else {
+                    const ahead = shown[i - 1];
+                    const behind = Math.max(0, (ahead.trackProgress || 0) - (c.trackProgress || 0));
                     const pace = Math.max(60, c._paceAvg || 60);
                     gap = `+${(behind / pace).toFixed(1)}`;
                 }
@@ -3505,8 +6375,29 @@ function updateHUD() {
             const chPip = `<span class="tt-ch" style="background:${ch.accent};" ` +
                 `title="${ch.label}">${ch.short}</span>`;
             // One cell per car, laid left to right along the top.
+            // Spectating: the row is a button that follows that car. It is
+            // an onclick attribute rather than a listener because the tower is
+            // rebuilt from innerHTML every frame - a listener attached here
+            // would be thrown away before it could ever fire.
+            const idx = cars.indexOf(c);
+            const spect = !playerCar && !twoPlayer;
+            // The lead-lap group is marked once, at its edge: everything
+            // below that rule is a lap or more down and is not racing the
+            // cars above it. Half the confusion was never the numbers, it
+            // was that the tower looked like one continuous queue.
+            const down = (gameState === 'countdown' || c.finished ||
+                          (c.isBroken && !c.finished)) ? 0 : lapsDownFrom(shown[0], c);
+            const prev = i > 0 ? shown[i - 1] : null;
+            const prevDown = (prev && gameState !== 'countdown' && !prev.finished &&
+                              !(prev.isBroken && !prev.finished))
+                ? lapsDownFrom(shown[0], prev) : 0;
+            const lapClass = (down >= 1 ? ' tt-lapped' : '') +
+                             (down >= 1 && prevDown < down ? ' tt-lapline' : '');
             rows.push(
-                `<div class="tt-row${c.isPlayer ? ' me' : ''}" ` +
+                `<div class="tt-row${c.isPlayer ? ' me' : ''}${lapClass}` +
+                `${spect ? ' tt-click' : ''}${spectateCar === c ? ' tt-watch' : ''}" ` +
+                (spect ? `onclick="spectateFollow(${idx})" ` +
+                         `title="Follow ${c.driverName || c.color}" ` : '') +
                 `style="border-left-color:${c.color};">` +
                 `<div class="tt-top">` +
                 `<span class="tt-pos">${i + 1}</span>` +
@@ -3531,16 +6422,17 @@ function updateHUD() {
         } else {
             posCounter.innerText = `Pos: ${pos}/${cars.length}`;
         }
-    } else if (!playerCar && (raceMode === 'race' || raceMode === 'championship')) {
-        // Spectating: there is no car of yours to report, so the HUD follows
-        // the race instead - which lap the leader is on, and who it is.
-        // Two-player is NOT this case - both drivers have their own card.
-        const ldr = sortedCars[0];
-        if (ldr) {
-            renderTyreIndicator(ldr);
-            const lap = Math.min(ldr.lap + (ldr.finished ? 0 : 1), TOTAL_LAPS);
-            lapCounter.innerText = `Lap: ${lap}/${TOTAL_LAPS}`;
-            posCounter.innerText = `Leader: ${driverCode(ldr)}`;
+    } else if (!playerCar && !twoPlayer &&
+               (raceMode === 'race' || raceMode === 'championship')) {
+        // Spectating. The lap, speed, tyre and live lap time were all filled in
+        // above for whichever car is being followed; only the position line is
+        // different, because "Pos" for a spectator has to say WHOSE position.
+        const hc2 = hudCar();
+        if (hc2) {
+            const p2 = sortedCars.indexOf(hc2) + 1;
+            posCounter.innerText =
+                (spectateCar === hc2 ? '▶ ' : 'Leader: ') +
+                `${driverCode(hc2)}  P${p2}/${cars.length}`;
         }
     }
 
@@ -3561,9 +6453,11 @@ function updateHUD() {
             || 13000;
         dnfWindowMs = Math.max(8000, Math.min(45000, refLap * 2.0));
 
-        // Show temporary winner announcement
+        // Show temporary winner announcement. It lives at the very top of
+        // the arena now - see the CSS - because in the middle of the screen
+        // it covered the road at the one moment somebody is still driving
+        // the last corners of their own race.
         winnerAnnouncement.style.display = 'block';
-        winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
         if (firstFinisher.isPlayer) {
             winnerText.innerHTML = twoPlayer
                 ? `${humanLabel(firstFinisher)} Finished First!` : 'You Finished First!';
@@ -3584,7 +6478,6 @@ function updateHUD() {
             (raceMode === 'race' || raceMode === 'championship')) {
             hc.notifiedBroken = true;
             winnerAnnouncement.style.display = 'block';
-            winnerAnnouncement.style.backgroundColor = 'rgba(0,0,0,0.8)';
             winnerText.innerHTML = twoPlayer
                 ? `${humanLabel(hc)} — Car Destroyed!` : 'Car Destroyed!';
             winnerText.style.color = "#F44336";
@@ -3625,6 +6518,12 @@ function updateHUD() {
     // already crossed the line.
     const shouldEndRace = timeIsUp || allFinished;
 
+    // A session with nobody in `cars` - a spectator qualifying, where the AI
+    // laps are simulated rather than driven - satisfies "everyone finished"
+    // vacuously, and the block below then names sortedCars[0]. There is no
+    // sortedCars[0]: it threw, which on file:// reads as "Script error, line
+    // 0" and freezes the game with no way of telling what happened.
+    if (shouldEndRace && !raceFinished && !sortedCars.length) raceFinished = true;
     if (shouldEndRace && !raceFinished) {
         raceFinished = true;
         gameState = 'gameover';
@@ -3704,6 +6603,7 @@ function updateHUD() {
             laps: `${Math.min(c.lap, TOTAL_LAPS)}/${TOTAL_LAPS}`,
             time: (c.isBroken && !c.finished) ? 'DNF' : RaceLog.fmt(c.raceTime),
             best: RaceLog.fmt(c.bestLapTime),
+            tyre: (c.tyre && c.tyre.label) || '',
             note: (c.isBroken && !c.finished) ? (c.status || 'retired') : ''
         })));
 
@@ -3758,8 +6658,13 @@ function updateHUD() {
                     const gained = Math.max(0, (c.startGridPos || (index + 1)) - (index + 1));
                     bon = Math.min(PLACES_BONUS_CAP, gained * PLACES_BONUS_PER);
                 }
+                const fl = fastestLapPointFor(c === fastestCar, index, c.finished);
                 c._ptsEarned = pts;
                 c._bonusEarned = bon;
+                // kept apart from the places bonus even though both end up in
+                // the same column: the log line for one says "3 places gained"
+                // and would be a lie if the other were folded into it.
+                c._flEarned = fl;
             });
         }
 
@@ -3778,7 +6683,7 @@ function updateHUD() {
                     name: c.driverName || c.color,
                     pos: i + 1,
                     pts: c.finished ? (f1Points[i] || 0) : 0,
-                    bonus: c._bonusEarned || 0,
+                    bonus: (c._bonusEarned || 0) + (c._flEarned || 0),
                     tyre: c.tyre ? c.tyre.key : null,
                     dnf: c.isBroken && !c.finished
                 })).concat(skipMode ? skipPlayers.map(sp => ({
@@ -3803,8 +6708,20 @@ function updateHUD() {
             // much as a quiet run in the top ten. That is the point.
             const ptsEarned = c._ptsEarned || 0;
             const bonusEarned = c._bonusEarned || 0;
+            const flEarned = c._flEarned || 0;
+            const extraEarned = bonusEarned + flEarned;
             if (isChampionship && c.finished) {
                 championshipState.points[c.color] += ptsEarned;
+                if (flEarned > 0) {
+                    // bonusPoints is "everything that is not a finishing
+                    // position", which is how the standings split Race pts
+                    // from Extra pts. The fastest lap belongs in there.
+                    championshipState.bonusPoints[c.color] =
+                        (championshipState.bonusPoints[c.color] || 0) + flEarned;
+                    championshipState.points[c.color] += flEarned;
+                    RaceLog.event('FLPOINT', `${c.driverName || c.color} — +${flEarned} for the ` +
+                        `fastest lap (P${index + 1})`);
+                }
                 if (bonusEarned > 0) {
                     championshipState.bonusPoints[c.color] =
                         (championshipState.bonusPoints[c.color] || 0) + bonusEarned;
@@ -3876,9 +6793,14 @@ function updateHUD() {
                 <td${dim}>${timeStr}</td>
                 <td style="color: ${isFastest ? '#ce93d8' : '#4CAF50'}; font-weight: ${isFastest ? 'bold' : 'normal'};">${bestLapStr}</td>
                 <td>${gapStr}</td>
-                <td style="color: ${isQuickest ? '#ffd54f' : '#cfd8dc'}; font-weight: ${isQuickest ? 'bold' : 'normal'};"${c.jumpStartPenalty ? ' title="jump start — penalty applied"' : (isQuickest ? ' title="quickest away from the lights"' : '')}>${reactStr}${c.jumpStartPenalty ? ' &#9888;' : ''}</td>
+                <td style="color: ${isQuickest ? '#ffd54f' : '#cfd8dc'}; font-weight: ${isQuickest ? 'bold' : 'normal'};"${c.jumpStartPenalty ? ` title="jump start — +${((c.jumpPenaltyMs || 0) / 1000).toFixed(1)}s added to the race time"` : (isQuickest ? ' title="quickest away from the lights"' : '')}>${reactStr}${c.jumpStartPenalty ? ' &#9888;' : ''}</td>
                 <td>${isChampionship ? (ptsEarned || 0) : '-'}</td>
-                <td class="pts-bonus"${bonusEarned > 0 ? ` title="${Math.max(0, (c.startGridPos || (index + 1)) - (index + 1))} places gained: P${c.startGridPos} to P${index + 1}"` : ''}>${isChampionship && bonusEarned > 0 ? '+' + bonusEarned : (isChampionship ? '&mdash;' : '-')}</td>
+                <td class="pts-bonus"${extraEarned > 0 ? ` title="${[
+                    bonusEarned > 0 ? `${Math.max(0, (c.startGridPos || (index + 1)) - (index + 1))} places gained (P${c.startGridPos} to P${index + 1}): +${bonusEarned}` : '',
+                    flEarned > 0 ? `fastest lap: +${flEarned}` : ''
+                ].filter(Boolean).join(' · ')}"` : ''}>${isChampionship && extraEarned > 0
+                    ? '+' + extraEarned + (flEarned > 0 ? '<sup class="sr-fl">F</sup>' : '')
+                    : (isChampionship ? '&mdash;' : '-')}</td>
             `;
             statsBody.appendChild(tr);
         });
@@ -3890,14 +6812,20 @@ function updateHUD() {
                 const tr = document.createElement('tr');
                 tr.style.opacity = '0.6';
                 const who = twoPlayer ? (sp.driverName || 'Player') : 'You';
+                // Eleven cells, because the header has eleven. It had nine -
+                // left over from before the chassis and reaction columns went
+                // in - so the whole row printed shifted two columns left and a
+                // DNS sat under "Laps".
                 tr.innerHTML = `
                     <td>&ndash;</td>
                     <td style="color: ${sp.color}; font-weight: bold;">${who} (${sp.color})</td>
                     <td>-</td>
-                    <td>0</td>
-                    <td>DNS</td>
                     <td>-</td>
                     <td>DNS</td>
+                    <td>DNS</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td>&mdash;</td>
                     <td>0</td>
                     <td class="pts-bonus">&mdash;</td>
                 `;
@@ -3907,7 +6835,22 @@ function updateHUD() {
 
         if (isChampionship) {
             championshipState.currentTrackIndex++;
+            saveChampionship();      // points, results and the new round, all in
             champRecapSection.style.display = 'block';
+            // currentTrackIndex has just been advanced, so it is now the number
+            // of rounds COMPLETED - which is exactly the round you have just
+            // driven. When it reaches the end of the calendar there is nothing
+            // left to be current about, so the table says so.
+            const done = championshipState.currentTrackIndex;
+            const total = championshipState.tracks.length;
+            const recapTitle = document.getElementById('champ-recap-title');
+            if (recapTitle) {
+                recapTitle.innerHTML = done >= total
+                    ? 'Final Standings <span class="recap-round">after all ' +
+                      total + ' rounds</span>'
+                    : 'Current Standings <span class="recap-round">after round ' +
+                      done + ' of ' + total + '</span>';
+            }
             champRecapBody.innerHTML = '';
             
             // Sort by current points
@@ -3919,6 +6862,9 @@ function updateHUD() {
                 else if (idx === 2) tr.style.color = '#cd7f32';
                 
                 const participant = championshipState.participants.find(p => p.color === col);
+                // Nessun contrassegno per il rivale della stagione: chi e' lo
+                // dicono i risultati. La riga nel log resta - quello e' il
+                // registro della stagione, non un avviso in anticipo.
                 const nameDisplay = participant && participant.driverName ? `${participant.driverName} (${col})` : col;
                 
                 const b = (championshipState.bonusPoints || {})[col] || 0;
@@ -3938,11 +6884,61 @@ function updateHUD() {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+//  WHAT THE RACE SOUNDS LIKE
+//  car.js publishes what each car is doing and calls onCarImpact when one is
+//  hit; this is where the game decides which of that is worth hearing. The
+//  continuous sounds - kerbs, grass, the tyres letting go - belong to the car
+//  the CAMERA is following, because those come from under you. An impact is
+//  audible wherever it happens, quieter with distance from the middle of the
+//  screen and panned to the side it happened on, so a shunt behind you is a
+//  shunt you hear.
+// ---------------------------------------------------------------------------
+const IMPACT_FULL = 26;        // damage worth a flat-out bang
+const IMPACT_FLOOR = 0.8;      // below this it is a brush, and silent
+let _impactsThisFrame = 0;
+
+function onCarImpact(car, amount) {
+    if (!car || amount < IMPACT_FLOOR) return;
+    if (typeof sfxImpact !== 'function') return;
+    // A first-lap pile-up can raise a dozen of these in one frame; three is
+    // already a crash, and past that they only add mud.
+    if (_impactsThisFrame >= 3) return;
+    _impactsThisFrame++;
+    const z = (camera && camera.zoom) || 1.85;
+    const dx = (car.x - camera.x) * z, dy = (car.y - camera.y) * z;
+    // 0 at the middle of the window, 1 at its corner and beyond
+    const dist = Math.min(1, Math.hypot(dx, dy) / 900);
+    sfxImpact(amount / IMPACT_FULL, Math.max(-1, Math.min(1, dx / 620)), dist);
+}
+
+function updateRaceSound() {
+    if (typeof updateSurfaceSound !== 'function') return;
+    if (gameState !== 'playing' && gameState !== 'countdown') {
+        if (typeof silenceSurfaceSound === 'function') silenceSurfaceSound();
+        return;
+    }
+    let surface = 'road', slide = 0, speed = 0;
+    for (const c of cameraTargets()) {
+        if (!c || c.isBroken) continue;
+        // two players on one keyboard: whoever is having the worse time of it
+        if (c.surfaceNow === 'grass') surface = 'grass';
+        else if (c.surfaceNow === 'kerb' && surface !== 'grass') surface = 'kerb';
+        slide = Math.max(slide, c.slideNow || 0);
+        speed = Math.max(speed, Math.hypot(c.velocity.x, c.velocity.y));
+    }
+    updateSurfaceSound(surface, slide, speed);
+}
+
 function drawLights(ctx) {
+    // Screen space now: the gantry hangs from the top of the WINDOW, centred
+    // over the part of it the HUD column does not cover, wherever in the
+    // world the camera happens to be looking.
     const boxW = 250;
     const boxH = 50;
-    const boxX = 400 - boxW / 2;
-    const boxY = 10; // Top center, fits perfectly on the upper dark grass area
+    const boxX = CAM_AX - boxW / 2;
+    const boxY = 10;
     
     ctx.fillStyle = '#111';
     ctx.fillRect(boxX, boxY, boxW, boxH);
@@ -3974,15 +6970,17 @@ function drawLights(ctx) {
 function drawRain(ctx) {
     if (!isRaining) return;
     ctx.fillStyle = 'rgba(100, 120, 150, 0.1)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
     
-    // Fast rain streaks
+    // Fast rain streaks. World units, not canvas.width: the backing store is
+    // RES times the world now, and streaks rolled across it would land off
+    // screen - it rains harder on retina, which is not a weather model.
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     for (let i = 0; i < 50; i++) {
-        const x = Math.random() * canvas.width;
-        const y = Math.random() * canvas.height;
+        const x = Math.random() * WORLD_W;
+        const y = Math.random() * WORLD_H;
         ctx.moveTo(x, y);
         ctx.lineTo(x - 5, y + 25);
     }
@@ -3991,8 +6989,10 @@ function drawRain(ctx) {
 
 function gameLoop(timestamp) {
     if (gameState === 'menu') {
+        // quitting mid-session can leave the context in world space
+        applyScreenTransform(ctx);
         ctx.fillStyle = '#222';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, WORLD_W, WORLD_H);
         return;
     }
 
@@ -4072,6 +7072,10 @@ function gameLoop(timestamp) {
     }
 
     if (gameState === 'countdown') {
+        // Declared out here, not inside the branch below: the beep is played
+        // AFTER that branch closes, and during a grid reset the branch is
+        // skipped - which left this undefined and threw on every frame.
+        const wasLit = lightState;
         if (!isFalseStartResetting) {
             countdownTimer += dt;
             
@@ -4086,11 +7090,16 @@ function gameLoop(timestamp) {
                 gameState = 'playing';
                 raceStartTime = performance.now();
                 
+                if (typeof sfxLightsOut === 'function') sfxLightsOut();
                 // Notify AI that race has started
                 ais.forEach(ai => ai.startRace());
             }
         }
         
+        // one beep per light as it comes on, and a different one at green
+        if (lightState !== wasLit && lightState > 0 && lightState < 6 &&
+            typeof sfxLight === 'function') sfxLight();
+
         // False start check & physics update for jumping cars
         applyHumanInputs();
 
@@ -4117,9 +7126,14 @@ function gameLoop(timestamp) {
             if ((car.inputs.up || hasMoved) && lightState < 6 && !isFalseStartResetting) {
                 car.jumpStartPenalties = (car.jumpStartPenalties || 0) + 1;
                 car.jumpStartPenalty = true;
+                // Each offence costs the same again. The total is carried on
+                // the car rather than recomputed at the flag, so a penalty is
+                // always the one that was shown on the banner.
+                car.jumpPenaltyMs = (car.jumpPenaltyMs || 0) + racePenaltyS * 1000;
                 isFalseStartResetting = true;
                 RaceLog.event('PENALTY', `${car.driverName || car.color} jumped the start ` +
-                    `(offence #${car.jumpStartPenalties}) — +${car.jumpStartPenalties * 5}s total, grid reset`);
+                    `(offence #${car.jumpStartPenalties}) — +${(car.jumpPenaltyMs / 1000).toFixed(1)}s ` +
+                    `total (${racePenaltyS.toFixed(1)}s each), grid reset`);
                 // Show banner.
                 // Always dark background + white body text; the offender's name
                 // is the only coloured element and carries a dark outline, so
@@ -4143,8 +7157,12 @@ function gameLoop(timestamp) {
                                                   1px -1px 0 #000, -1px 1px 0 #000;">${whoName}</span>${whoCar}
                     </div>
                     <div style="font-size: 19px; color: #ffd54f; font-weight: bold;">
-                        +${car.jumpStartPenalties * 5} second penalty${car.jumpStartPenalties > 1
-                            ? ` &nbsp;(offence #${car.jumpStartPenalties})` : ''}
+                        +${racePenaltyS.toFixed(1)} second penalty${car.jumpStartPenalties > 1
+                            ? ` &nbsp;(offence #${car.jumpStartPenalties}, ` +
+                              `${(car.jumpPenaltyMs / 1000).toFixed(1)}s in all)` : ''}
+                    </div>
+                    <div style="font-size: 13px; color: #8d99a6; margin-top: 6px;">
+                        5% of a lap here, over ${TOTAL_LAPS} lap${TOTAL_LAPS === 1 ? '' : 's'}
                     </div>
                     <div style="font-size: 15px; color: #bbb; margin-top: 8px;">
                         Cars back to the grid &mdash; restarting&hellip;
@@ -4157,8 +7175,8 @@ function gameLoop(timestamp) {
                     isFalseStartResetting = false;
                     countdownTimer = 0;
                     lightState = 0;
-                    // shorter build-up on a restart than on the first start
-                    goDelay = 2.5 + 0.1 + Math.random() * 1.6;
+                    // The same window as the first start - see rollGoDelay()
+                    goDelay = rollGoDelay();
                     
                     cars.forEach(c => {
                         c.x = c.startX;
@@ -4231,21 +7249,23 @@ function gameLoop(timestamp) {
         // Nothing in it depends on the race having started - the cars simply
         // have not moved yet.
         updateHUD();
+        updateCamera(dt);
+        updateRaceSound();
+        _impactsThisFrame = 0;
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#388E3C';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        track.draw(ctx);
+        drawTrackFrame(ctx);           // leaves the context in world space
         cars.forEach(car => car.draw(ctx));
         if (typeof track.drawBridge === 'function') track.drawBridge(ctx);
         drawCranes(ctx);
 
+        applyScreenTransform(ctx);     // rain, lights and minimap are window furniture
         drawRain(ctx); // Draw rain during countdown
 
         if (gameState !== 'gameover') {
             drawLights(ctx);
         }
-        
+        drawMinimap(ctx);
+
         // One engine per driver at the keyboard, each following its own car.
         if (typeof updateEngineSound === 'function') {
             humanCars().forEach((c, i) => {
@@ -4317,16 +7337,19 @@ function gameLoop(timestamp) {
         }
 
         updatePhysics(dt);
-        
-        // If spectator, we don't need to update a camera because it's a fixed-screen game
-        
+        ghostTick();
+
+        // The camera follows the physics and precedes the paint: everything
+        // drawn this frame is drawn through where it decided to look.
+        updateCamera(dt);
+
         updateHUD();
-        
-        // Draw Track
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#388E3C';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        track.draw(ctx);
+        updateRaceSound();
+        _impactsThisFrame = 0;
+
+        // Draw Track - the pre-rendered layer, one visible-slice drawImage.
+        // The context comes back in WORLD space.
+        drawTrackFrame(ctx);
         
         // --- Draw Skid Marks ---
         for (let i = globalSkidMarks.length - 1; i >= 0; i--) {
@@ -4350,6 +7373,9 @@ function gameLoop(timestamp) {
             ctx.restore();
         }
         
+        // The ghost first, under everything alive
+        drawGhostCar(ctx);
+
         // Draw Cars
         // Draw broken/finished cars first so active ones draw on top
         const renderSorted = [...cars].sort((a, b) => {
@@ -4407,17 +7433,24 @@ function gameLoop(timestamp) {
             ctx.restore();
         }
         
-        // --- Draw Rain overlay ---
+        // --- Window furniture: rain overlay, lights, minimap -------------
+        applyScreenTransform(ctx);
         drawRain(ctx);
-        
+
         // Hide lights after 1.5s of GO. Qualifying has no start procedure at
         // all - you roll out of the pits - so it must not draw the gantry:
         // countdownTimer starts at 0 there and the test passed, leaving a box
         // of five dead lights sitting over the track for the whole session.
-        if (raceMode !== 'qualifying' && countdownTimer < goDelay + 1.5) {
+        // Neither qualifying nor practice has a start procedure - you simply
+        // go - so neither must draw the gantry. Without practice in this test
+        // a box of five dead lights hung over the circuit for the first second
+        // and a half of every session.
+        if (raceMode !== 'qualifying' && raceMode !== 'practice' &&
+            countdownTimer < goDelay + 1.5) {
             drawLights(ctx);
         }
-        
+        drawMinimap(ctx);
+
         // One engine per driver at the keyboard, each following its own car.
         if (typeof updateEngineSound === 'function') {
             humanCars().forEach((c, i) => {
@@ -4431,13 +7464,18 @@ function gameLoop(timestamp) {
 }
 
 // Initial draw for menu background
+applyScreenTransform(ctx);
 ctx.fillStyle = '#222';
-ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.fillRect(0, 0, WORLD_W, WORLD_H);
 
 // Put the HUD stage over the canvas straight away, and again once the browser
 // has settled the layout - getBoundingClientRect is zero until it has.
 layoutStage();
 if (typeof setTimeout === 'function') setTimeout(layoutStage, 0);
+
+// The saved season is announced at the very BOTTOM of this file, not here.
+// See the note beside that call: this spot was tried first and was still too
+// early.
 
 // How many rounds the season runs. Ten by default, which is what it always
 // was; the field is clamped rather than trusted, because a browser will hand
@@ -4447,14 +7485,41 @@ if (typeof setTimeout === 'function') setTimeout(layoutStage, 0);
 // circuit to the game adds it to the season without touching anything else.
 const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent',
                      'quadrato', 'triangle', 'pettine', 'thunder', 'crown',
-                     'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'lombard'];
+                     'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'kart',
+                     'anchor', 'arrow', 'pentagon',
+                     // the big two: worlds larger than the screen, which is
+                     // what the camera is for. One turns right on balance,
+                     // one (mirrored) left, like the rest of the calendar.
+                     'maratona', 'colosso'];
 const SEASON_DEFAULT = 10;
+
+// Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:
+// simulando stagioni intere, sotto l'1% non lo si distingue dal rumore (chi
+// vince cambia comunque ogni anno), sopra il 2% il campionato e' deciso a
+// meta' calendario. Vedi 2.4duodevicies nel piano.
+let RIVAL_BOOST = 1.015;
 
 function seasonRounds() {
     const el = document.getElementById('rounds-select');
     const n = parseInt(el && el.value, 10);
     if (!isFinite(n)) return Math.min(SEASON_DEFAULT, SEASON_POOL.length);
     return Math.max(1, Math.min(SEASON_POOL.length, n));
+}
+
+// What the seed box says, or a fresh one if it is empty. Whitespace and case
+// are ignored so a seed copied off the screen with a stray space still lands on
+// the same calendar - the whole point is that it is retypeable.
+function seasonSeedText() {
+    const el = document.getElementById('season-seed');
+    const raw = (el && el.value ? String(el.value) : '').trim().toLowerCase();
+    return raw || makeSeedText();
+}
+const SEED_STORE_KEY = 'apexzoom.season.seed';
+function rememberSeed(text) {
+    try { window.localStorage.setItem(SEED_STORE_KEY, text); } catch (e) { }
+}
+function lastSeed() {
+    try { return window.localStorage.getItem(SEED_STORE_KEY) || ''; } catch (e) { return ''; }
 }
 
 // The dropdown is built from the pool rather than written out in the HTML:
@@ -4474,17 +7539,84 @@ function populateSeasonLengths() {
 }
 populateSeasonLengths();
 
-// The calendar: `rounds` circuits drawn at random from the pool, WITHOUT
-// replacement, so a season never visits the same place twice. The dropdown
-// cannot ask for more rounds than there are circuits; the refill below is
-// there only so that a longer season asked for in code still returns
-// something sensible rather than a short list.
-function seasonCalendar(rounds) {
+// The repeat button fills the box with the seed of the last season started.
+// Two clicks - repeat, then change the tyre - is the whole workflow the
+// comparison needs.
+(function wireSeedBox() {
+    const el = () => document.getElementById('season-seed');
+    const again = document.getElementById('seed-again');
+    if (again) again.addEventListener('click', () => {
+        const box = el(), s = lastSeed();
+        if (box && s) { box.value = s; box.focus(); }
+    });
+    // And its opposite: roll a new one and show it, rather than leaving the box
+    // empty and finding out what you got afterwards. Same size and shape as the
+    // repeat button - they are two halves of one control.
+    const roll = document.getElementById('seed-random');
+    if (roll) roll.addEventListener('click', () => {
+        const box = el();
+        if (box) { box.value = makeSeedText(); box.focus(); }
+    });
+})();
+
+// ---------------------------------------------------------------------------
+//  THE SEED
+// ---------------------------------------------------------------------------
+//  A calendar drawn at random is right for playing and useless for comparing.
+//  Two championships run to find out what a tyre is worth visited five
+//  different circuits each and shared two, so the answer rested on two races.
+//
+//  So the calendar and the weather come from a NAMED draw. Type the same seed
+//  and you get the same seventeen-circuit shuffle and the same rain, which
+//  makes "the same season on a different tyre" a thing you can actually run.
+//  Leave it blank and a fresh one is rolled and then shown, so a season you
+//  enjoyed can be repeated after the fact.
+//
+//  Deliberately only the calendar and the weather. The racing itself - grid
+//  order, AI mistakes, tyre choices, where the puddles fall - stays on
+//  Math.random, because a seed that froze those too would make the comparison
+//  a replay rather than a second attempt.
+function seedFrom(text) {
+    let h = 2166136261 >>> 0;
+    const s = String(text);
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h >>> 0;
+}
+// mulberry32: small, fast, and good enough for shuffling seventeen circuits.
+function seededRng(seed) {
+    let a = seed >>> 0;
+    return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+// Seeds are shown to you and typed back in, so they are words rather than
+// nine-digit numbers: easier to read off a screen and to write in a log.
+const SEED_WORDS = ['apex', 'kerb', 'slip', 'drift', 'lock', 'tow', 'wing', 'brake',
+                    'grid', 'flag', 'wet', 'dry', 'soft', 'hard', 'late', 'quick'];
+function makeSeedText() {
+    const r = () => SEED_WORDS[Math.floor(Math.random() * SEED_WORDS.length)];
+    return r() + '-' + r() + '-' + Math.floor(100 + Math.random() * 900);
+}
+
+// The calendar: `rounds` circuits drawn from the pool, WITHOUT replacement, so
+// a season never visits the same place twice. The dropdown cannot ask for more
+// rounds than there are circuits; the refill below is there only so that a
+// longer season asked for in code still returns something sensible rather than
+// a short list.
+function seasonCalendar(rounds, rng) {
+    const rand = rng || Math.random;
     const pool = SEASON_POOL;
     const shuffled = () => {
         const a = pool.slice();
         for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
+            const j = Math.floor(rand() * (i + 1));
             [a[i], a[j]] = [a[j], a[i]];
         }
         return a;
@@ -4509,22 +7641,33 @@ function startChampionship() {
     // races the same drivers.
     twoPlayer = twoPlayerEnabled() && color !== 'spectator';
 
-    // Every circuit, in a different order every season. A fixed calendar meant
-    // you learned the season rather than the tracks: the same opener, the same
-    // decider, every time.
-    const tracks = seasonCalendar(seasonRounds());
+    // Every circuit, in a different order every season - unless you name the
+    // season. A fixed calendar meant you learned the season rather than the
+    // tracks; a calendar you cannot repeat meant two championships were never
+    // comparable. A seed gives both: blank rolls a new one, typed reproduces it.
+    const seedText = seasonSeedText();
+    const rng = seededRng(seedFrom(seedText));
+    const tracks = seasonCalendar(seasonRounds(), rng);
 
     // The season's weather is rolled once, up front, at the same 20% per race
     // as before - but a season with no wet race at all is rerolled. At 20% a
     // ten-race season came out completely dry about one time in nine, which is
     // how you can play a whole championship and never see the rain.
-    // Rolled AFTER the shuffle, so weather[i] belongs to round i.
-    const weather = tracks.map(() => Math.random() < 0.20);
-    if (!weather.some(Boolean)) weather[Math.floor(Math.random() * weather.length)] = true;
+    // Rolled AFTER the shuffle, and from the SAME seeded stream, so the same
+    // seed gives the same rain in the same places.
+    const weather = tracks.map(() => rng() < 0.20);
+    if (!weather.some(Boolean)) weather[Math.floor(rng() * weather.length)] = true;
+    // ...and which kind of wet each of those is, from the SAME stream, so a
+    // seed reproduces the rain exactly rather than approximately.
+    const wetKind = weather.map(w => (w ? rollWetKind(rng) : null));
 
     championshipState = {
+        id: seasonId(),
+        startedAt: Date.now(),
+        seed: seedText,
         tracks: tracks,
         weather: weather,
+        wetKind: wetKind,
         currentTrackIndex: 0,
         points: {},
         bonusPoints: {},          // places-gained, tracked apart from race points
@@ -4532,6 +7675,11 @@ function startChampionship() {
         results: [],
         difficulty: difficulty
     };
+    // Written back into the box and kept, so the season you have just started
+    // can be run again on a different tyre without having copied anything down.
+    rememberSeed(seedText);
+    const seedEl = document.getElementById('season-seed');
+    if (seedEl) seedEl.value = seedText;
 
     // Famous names list
     let availableNames = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
@@ -4564,6 +7712,29 @@ function startChampionship() {
             championshipState.points[aiCol] = 0;
             championshipState.bonusPoints[aiCol] = 0;
         }
+    }
+
+    // ---- il rivale della stagione --------------------------------------
+    // Uno degli avversari - estratto dallo stesso flusso seminato del
+    // calendario e della pioggia, quindi lo stesso seme da' lo stesso rivale -
+    // corre tutta la stagione con qualcosa in piu'. Mai il giocatore, mai la
+    // gara singola, e finisce con la stagione.
+    const aiNames = championshipState.participants.filter(p => !p.isPlayer)
+                                                  .map(p => p.driverName);
+    if (aiNames.length) {
+        const pick = aiNames[Math.floor(rng() * aiNames.length)];
+        championshipState.rival = { driver: pick, boost: RIVAL_BOOST };
+        // Due cose, non una. La prima: skillVariation, che ogni pilota pesca
+        // fra 0.8 e 1.1 a inizio stagione, vale il 7% di passo - tre volte lo
+        // scarto fra i caratteri. Un rivale con una pescata storta e' un
+        // rivale invisibile, quindi al rivale la pescata non tocca: prende il
+        // massimo. La seconda: RIVAL_BOOST sopra, che e' quello che lo stacca
+        // anche da chi ha pescato bene. Da sole nessuna delle due basta -
+        // misurato: col solo boost all'1.4% il rivale finiva quinto di media
+        // e non vinceva un titolo su otto.
+        const rp = championshipState.participants.find(p => p.driverName === pick);
+        if (rp) rp.skillVariation = 1.1;
+        RaceLog.event('SEASON', `rival — ${pick}, +${((RIVAL_BOOST - 1) * 100).toFixed(1)}% pace for the season`);
     }
 
     // Chassis for the season. Drawn once for the whole AI field so the grid
@@ -4623,6 +7794,18 @@ function showChassisChoice(title, subtitle, cb) {
     document.getElementById('chassis-title').innerText = title;
     document.getElementById('chassis-subtitle').innerText = subtitle;
     opts.innerHTML = CHASSIS_KEYS.map(k => chassisCardHtml(k)).join('');
+    Array.prototype.forEach.call(opts.querySelectorAll('canvas.ch-art'), (cv) => {
+        const c = CHASSIS[cv.getAttribute('data-chassis')];
+        if (!c || typeof paintCarBody !== 'function') return;
+        const g = cv.getContext('2d');
+        const s = Math.min(cv.width / 28, cv.height / 17);
+        g.setTransform(s, 0, 0, s, cv.width / 2, cv.height / 2);
+        g.save();
+        g.translate(1.6, 1.9);
+        paintCarShadow(g, 24, 14, c, 0.22);
+        g.restore();
+        paintCarBody(g, 24, 14, '#c9ccd2', c, null);
+    });
     Array.prototype.forEach.call(opts.querySelectorAll('.chassis-opt'), (b) => {
         b.addEventListener('click', () => {
             const pick = b.getAttribute('data-chassis');
@@ -4652,6 +7835,9 @@ function chassisCardHtml(k) {
     };
     return `<button class="chassis-opt" data-chassis="${k}" style="border-color:${c.accent};">` +
         `<span class="ch-badge" style="background:${c.accent};">${c.short}</span>` +
+        // The car itself, drawn by the same code that draws it on the road, so
+        // the thing you pick here is recognisably the thing you then drive.
+        `<canvas class="ch-art" width="300" height="180" data-chassis="${k}"></canvas>` +
         `<span class="ch-name">${c.label}</span>` +
         `<span class="ch-line1" style="color:${c.accent};">${c.line1}</span>` +
         `<span class="ch-line2">${c.line2}</span>` +
@@ -4675,12 +7861,17 @@ function nextChampionshipRound() {
         showChampionshipFinal();
         return;
     }
+    saveChampionship();   // covers season creation and the chassis picks too
     // Every round opens on the Grand Prix preview; the session starts (or the
     // whole round is skipped) from its buttons.
     showGpPreview(championshipState.tracks[championshipState.currentTrackIndex]);
 }
 
 function showChampionshipFinal() {
+    // Marked complete BEFORE the resume slot is cleared: after that call the
+    // season no longer exists anywhere else.
+    try { archiveSeason(championshipState, true); } catch (e) { /* as above */ }
+    clearChampionshipSave();
     hud.style.display = 'none';
     hideSplitHud();
     showVscBanner(false);   // never leave it lying over a menu
@@ -4736,29 +7927,34 @@ function showChampionshipFinal() {
 }
 
 // Full season grid: every driver, every race, with the fastest lap starred.
-function renderSeasonRecap() {
-    const host = document.getElementById('season-recap');
-    if (!host) return;
+// Takes the season rather than reading the live one, so the archive screen can
+// draw a season from three months ago with the same code that draws the one
+// that has just finished. No arguments still means "the one being played".
+function renderSeasonRecap(state, hostEl, title) {
+    const st = state || championshipState;
+    const host = hostEl || document.getElementById('season-recap');
+    if (!host || !st) return;
 
-    const races = championshipState.results || [];
+    const races = st.results || [];
     if (!races.length) { host.innerHTML = ''; return; }
 
-    const order = Object.keys(championshipState.points)
-        .sort((a, b) => championshipState.points[b] - championshipState.points[a]);
+    const order = Object.keys(st.points)
+        .sort((a, b) => st.points[b] - st.points[a]);
 
-    const short = (t) => (t || '?').slice(0, 3).toUpperCase();
+    // trackCode, not a slice: the column heads used to read the raw key.
+    const short = (t) => trackCode(t);
 
-    let html = '<h2 style="margin:18px 0 8px;">Season Results</h2>' +
+    let html = '<h2 style="margin:18px 0 8px;">' + (title || 'Season Results') + '</h2>' +
         '<div style="overflow-x:auto;"><table class="season-table"><thead><tr>' +
         '<th style="text-align:left;">Driver</th>';
     races.forEach(r => {
-        html += `<th title="${r.track}${r.wet ? ' (wet)' : ''}">${short(r.track)}` +
+        html += `<th title="${trackLabel(r.track)}${r.wet ? ' (wet)' : ''}">${short(r.track)}` +
                 (r.wet ? '<span style="color:#64b5f6;">&#9730;</span>' : '') + '</th>';
     });
     html += '<th>Pts</th></tr></thead><tbody>';
 
     for (const color of order) {
-        const p = championshipState.participants.find(x => x.color === color);
+        const p = (st.participants || []).find(x => x.color === color);
         const label = p ? participantCode(p) : color.slice(0, 3).toUpperCase();
         html += `<tr><td style="text-align:left;white-space:nowrap;">` +
                 `<span class="tt-chip" style="background:${color};display:inline-block;vertical-align:middle;margin-right:6px;"></span>` +
@@ -4777,18 +7973,42 @@ function renderSeasonRecap() {
                 marks = '<sup class="gc-star" title="Grand Chelem">★</sup>';
             } else {
                 if (r.pole === color) marks += '<sup class="sr-pole" title="pole position">P</sup>';
-                if (r.fastest === color) marks += '<sup class="sr-fl" title="fastest lap">F</sup>';
+                if (r.fastest === color) marks += '<sup class="sr-fl" title="fastest lap of the race">F</sup>';
             }
             html += `<td class="${cls}">${txt}${marks}</td>`;
         }
-        html += `<td><b>${championshipState.points[color]}</b></td></tr>`;
+        html += `<td><b>${st.points[color]}</b></td></tr>`;
     }
     html += '</tbody></table></div>' +
         '<div style="font-size:11px;opacity:0.65;margin-top:6px;">' +
-        '<sup class="sr-pole">P</sup> pole &nbsp;·&nbsp; <sup class="sr-fl">F</sup> fastest lap' +
+        '<sup class="sr-pole">P</sup> pole &nbsp;·&nbsp; <sup class="sr-fl">F</sup> fastest lap (+1 pt)' +
         ' &nbsp;·&nbsp; <sup class="gc-star">★</sup> Grand Chelem' +
         ' &nbsp;·&nbsp; &#9730; wet race &nbsp;·&nbsp; DNS = Grand Prix skipped' +
         ' &nbsp;·&nbsp; gold = win, green = podium</div>';
 
     host.innerHTML = html;
 }
+
+// ---------------------------------------------------------------------------
+//  THE SAVED SEASON, ANNOUNCED - and this is the LAST line of the file for a
+//  reason.
+//
+//  Nicola: "when I start a new one it asks whether to discard the one in
+//  progress, but I don't see a Resume button." Both the question and the
+//  banner call loadChampionshipSave(), so one of them was lying.
+//
+//  It was the banner. The call used to sit a few hundred lines up - moved
+//  there once already, because higher still it hit CHAMP_STORE_KEY before
+//  the const existed. But loadChampionshipSave also checks the calendar
+//  against SEASON_POOL, and SEASON_POOL is declared eight lines FURTHER
+//  down. So at boot the read threw a ReferenceError inside the function's
+//  own try/catch, the catch answered "no save", and the banner hid a season
+//  that was sitting in storage. By the time the player pressed Start
+//  Championship the script had finished running, SEASON_POOL existed, the
+//  same call succeeded - and the discard warning fired. Two answers to one
+//  question, five seconds apart.
+//
+//  const in the temporal dead zone is invisible here because the catch
+//  swallows it, so the rule is now positional and blunt: this call runs
+//  after the whole file has been evaluated. Nothing goes below it.
+refreshChampResume();

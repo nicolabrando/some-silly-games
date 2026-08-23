@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Apex 2</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Apex 3</title>
+    <link rel="stylesheet" href="style.css?v=zoom15">
 </head>
 <body>
     <div id="game-container">
-        <canvas id="gameCanvas" width="1280" height="720"></canvas>
+        <canvas id="gameCanvas" width="1360" height="765"></canvas>
         <div id="ui-layer">
             <!-- Everything that has to line up with the circuit lives in the
-                 stage: a 1280x720 box laid exactly over the canvas and scaled
+                 stage: a 1360x765 box laid exactly over the canvas and scaled
                  with it, so a band reserved in world pixels is the same band
                  on any screen. The menus stay outside, at window scale, so
                  their text does not shrink with the window. -->
@@ -76,96 +76,122 @@
 
             <div id="menu">
                 <div id="menu-title">
-                    <h1>APEX <span id="menu-two">2</span></h1>
+                    <h1>APEX <span id="menu-two">3</span></h1>
                     <div id="menu-stripe"><span></span><span></span><span></span></div>
                 </div>
 
+                <!-- A season in progress announces itself HERE, above
+                     everything: the resume button used to live down in the
+                     button row, 736px into a scrollable menu, where a player
+                     on a short window never saw it - and pressed Start
+                     Championship instead, quietly throwing the season away.
+                     See refreshChampResume(). -->
+                <div id="champ-resume-banner" hidden>
+                    <div class="crb-text">
+                        <b>Championship in progress</b>
+                        <span id="crb-detail"></span>
+                    </div>
+                    <button id="champ-resume-btn" type="button">Resume</button>
+                </div>
+
+                <!-- One tab per way into the game. Every setting lives under the
+                     only mode it applies to, so the "championship only" tags and
+                     the paragraph explaining them have nothing left to explain. -->
+                <div id="mode-tabs" role="tablist">
+                    <button type="button" class="mode-tab" data-mode="champ" role="tab">Championship</button>
+                    <button type="button" class="mode-tab" data-mode="race" role="tab">Single Race</button>
+                    <button type="button" class="mode-tab" data-mode="practice" role="tab">Practice</button>
+                </div>
+
+                <!-- One line about the mode on show, set by setMenuMode(). Full
+                     width and under the tabs, where it belongs: it used to be
+                     the last thing in the left column, three fields away from
+                     the tab it was explaining. -->
+                <div class="menu-hint" id="mode-hint"></div>
+
                 <div class="menu-cols">
                     <div class="menu-col">
-                        <div class="menu-section">Race</div>
-                        <div class="menu-group">
-                            <label>Track <span class="tag">single race &amp; practice</span></label>
+                        <div class="menu-section">Session</div>
+                        <div class="menu-group" data-modes="race practice">
+                            <label>Track</label>
                             <select id="track-select">
-                                <option value="oval">Oval</option>
-                                <option value="f1">F1 Circuit</option>
-                                <option value="peanut">Peanut</option>
-                                <option value="circomassimo">Circus Maximus</option>
-                                <option value="circle">Circle</option>
-                                <option value="serpent">Serpent</option>
-                                <option value="quadrato">Rectangle</option>
-                                <option value="triangle">Triangle</option>
-                                <option value="pettine">Comb</option>
-                                <option value="thunder">Thunder</option>
-                                <option value="crown">Crown</option>
+                                <option value="anchor">Anchor</option>
+                                <option value="arrow">Arrow</option>
                                 <option value="boomerang">Boomerang</option>
-                                <option value="zipper">Zipper</option>
-                                <option value="kettle">Kettle</option>
+                                <option value="circle">Circle</option>
+                                <option value="circomassimo">Circus Maximus</option>
+                                <option value="colosso">Colossus (XL)</option>
+                                <option value="pettine">Comb</option>
+                                <option value="crossover">Crossover</option>
+                                <option value="crown">Crown</option>
+                                <option value="f1">F1 Circuit</option>
                                 <option value="harbour">Harbour</option>
-                                <option value="crossover">Crossover &mdash; bridge</option>
-                                <option value="lombard">Lombard</option>
+                                <option value="kart">Kart</option>
+                                <option value="kettle">Kettle</option>
+                                <option value="pentagon">Lotus (XL)</option>
+                                <option value="maratona">Marathon (XL)</option>
+                                <option value="oval" selected>Oval</option>
+                                <option value="peanut">Peanut</option>
+                                <option value="quadrato">Rectangle</option>
+                                <option value="serpent">Serpent</option>
+                                <option value="thunder">Thunder</option>
+                                <option value="triangle">Triangle</option>
+                                <option value="zipper">Zipper</option>
                             </select>
                         </div>
+                        <div class="menu-group" data-modes="champ">
+                            <label>Season length</label>
+                            <!-- filled by main.js from the circuit list, so the
+                                 longest season it offers is always exactly the
+                                 number of circuits there are -->
+                            <select id="rounds-select"></select>
+                        </div>
+                        <div class="menu-group" data-modes="champ">
+                            <label>Season seed</label>
+                            <!-- Name a season and you can run it again. The seed
+                                 fixes the calendar and the rain and nothing
+                                 else, so a second attempt is a second attempt
+                                 and not a replay. Blank rolls a new one and
+                                 writes it back here. -->
+                            <div class="seed-row">
+                                <input type="text" id="season-seed" placeholder="random"
+                                       autocomplete="off" spellcheck="false">
+                                <button type="button" id="seed-random" title="Roll a new season">🎲</button>
+                                <button type="button" id="seed-again" title="Repeat the last season">↺</button>
+                            </div>
+                            <div class="seed-hint">Same seed, same circuits and the
+                                same rain &mdash; so two seasons can be compared.</div>
+                        </div>
                         <div class="menu-row">
-                            <div class="menu-group">
+                            <div class="menu-group" data-modes="race champ">
                                 <label>Laps</label>
                                 <input type="number" id="laps-select" min="1" max="100" value="5">
                             </div>
-                            <div class="menu-group">
-                                <label>Season Length</label>
-                                <!-- filled by main.js from the circuit list, so the
-                                     longest season it offers is always exactly the
-                                     number of circuits there are -->
-                                <select id="rounds-select"></select>
-                                <span class="tag tag-under">championship</span>
-                            </div>
-                            <div class="menu-group">
+                            <div class="menu-group" data-modes="race champ">
                                 <label>Opponents</label>
-                                <select id="opponents-select">
+                                <!-- Ten, and autocomplete=off so it stays ten:
+                                     a full grid is how this game is played, and
+                                     Firefox was handing the box back as 1 after
+                                     the menu markup changed. Same treatment as
+                                     the car colour. -->
+                                <select id="opponents-select" autocomplete="off">
                                     <option value="1">1</option>
                                     <option value="2">2</option>
                                     <option value="3">3</option>
                                     <option value="4">4</option>
-                                    <option value="5" selected>5</option>
+                                    <option value="5">5</option>
                                     <option value="6">6</option>
                                     <option value="7">7</option>
                                     <option value="8">8</option>
                                     <option value="9">9</option>
-                                    <option value="10">10</option>
+                                    <option value="10" selected>10</option>
                                 </select>
                             </div>
                         </div>
-                        <div class="menu-group">
-                            <label>AI Difficulty</label>
-                            <select id="difficulty-select">
-                                <option value="easy">Easy</option>
-                                <option value="medium" selected>Medium</option>
-                                <option value="hard">Hard</option>
-                                <option value="impossible">Impossible</option>
-                                <option value="alien">Alien</option>
-                            </select>
-                        </div>
-                        <label class="menu-check">
+                        <label class="menu-check" data-modes="race practice">
                             <input type="checkbox" id="wet-race-checkbox">
-                            <span>Force wet race <span class="tag">single race &amp; practice</span></span>
+                            <span>Force wet race</span>
                         </label>
-                        <label class="menu-check">
-                            <input type="checkbox" id="reverse-grid-checkbox">
-                            <span>Reverse grid <span class="tag">championship only</span></span>
-                        </label>
-                        <div class="menu-hint">
-                            A championship draws its calendar at random &mdash; Season
-                            says how many rounds &mdash; and rolls its own weather, so Track
-                            and Force Wet only shape a single race or a practice run.
-                            Laps, opponents and difficulty apply everywhere. In a
-                            The car is chosen on its own screen when a session
-                            starts &mdash; once for a whole season in the
-                            championship, once per weekend otherwise.
-                        </div>
-                        <div class="menu-hint">
-                            You qualify before every race. Tick Reverse Grid and the
-                            championship grid comes from the standings instead &mdash;
-                            round&nbsp;1 drawn at random.
-                        </div>
                     </div>
 
                     <div class="menu-col">
@@ -179,8 +205,14 @@
                         </div>
                         <div class="menu-group">
                             <label id="p1-color-label">Your car</label>
-                            <select id="color-select">
-                                <option value="red">Red</option>
+                            <!-- autocomplete=off, and red says so explicitly:
+                                 Firefox restores <select> values across a
+                                 reload by itself, and once the menu's markup
+                                 changed it started handing this one back as
+                                 blue. The game's default has always been red
+                                 and now nothing else can decide otherwise. -->
+                            <select id="color-select" autocomplete="off">
+                                <option value="red" selected>Red</option>
                                 <option value="blue">Blue</option>
                                 <option value="yellow">Yellow</option>
                                 <option value="purple">Purple</option>
@@ -191,7 +223,7 @@
                         </div>
                         <div class="menu-group" id="p2-color-group" style="display: none;">
                             <label>Player 2 car</label>
-                            <select id="p2-color-select">
+                            <select id="p2-color-select" autocomplete="off">
                                 <option value="blue" selected>Blue</option>
                                 <option value="red">Red</option>
                                 <option value="yellow">Yellow</option>
@@ -200,6 +232,28 @@
                                 <option value="white">White</option>
                             </select>
                         </div>
+                        <div class="menu-group" data-modes="race champ">
+                            <label>AI difficulty</label>
+                            <select id="difficulty-select">
+                                <option value="easy">Easy</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="hard">Hard</option>
+                                <option value="impossible">Impossible</option>
+                                <option value="alien">Alien</option>
+                            </select>
+                        </div>
+                        <label class="menu-check" data-modes="champ">
+                            <input type="checkbox" id="reverse-grid-checkbox">
+                            <span>Reverse grid</span>
+                        </label>
+                    </div>
+
+                    <!-- Third column. Two were enough when the panel was 600px
+                         wide; at 940 they left half the width to a scrollbar,
+                         and everything about how the game is driven and shown
+                         was buried under the drivers. -->
+                    <div class="menu-col">
+                        <div class="menu-section">Controls &amp; screen</div>
                         <div class="menu-group">
                             <label id="controls-label">Controls</label>
                             <select id="controls-select">
@@ -208,16 +262,48 @@
                             </select>
                             <div id="controls-hint">Arrow keys: &uarr; throttle, &darr; brake, &larr;&rarr; steer.</div>
                         </div>
+                        <div class="menu-group">
+                            <label>Sound</label>
+                            <!-- The game had no volume control of any kind
+                                 until the effects went in. Everything hangs
+                                 off one master gain now, so this turns down
+                                 the engines, the music and the effects
+                                 together. -->
+                            <select id="sound-select" autocomplete="off">
+                                <option value="normal" selected>On</option>
+                                <option value="quiet">Quiet</option>
+                                <option value="off">Off</option>
+                            </select>
+                        </div>
+                        <div class="menu-group">
+                            <label>Camera zoom</label>
+                            <!-- The screen is a window on the world now, not
+                                 the world: this is how much the window
+                                 magnifies. autocomplete=off for the same
+                                 reason as the car colour above. -->
+                            <select id="zoom-select" autocomplete="off">
+                                <option value="wide">Wide</option>
+                                <option value="standard" selected>Standard</option>
+                                <option value="close">Close</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
+                <!-- ONE door into the game: the button for the mode on show.
+                     The other two stay in the DOM, hidden, so main.js wiring
+                     does not change. -->
                 <div class="menu-main-row">
-                    <button id="start-btn">Single Race</button>
-                    <button id="champ-btn">Championship</button>
+                    <button id="start-btn" data-modes="race">Start Race</button>
+                    <button id="champ-btn" data-modes="champ">Start Championship</button>
+                    <button id="practice-btn" data-modes="practice">Start Practice</button>
                 </div>
+                <!-- the reading room: nothing here starts a session -->
                 <div class="menu-btn-row">
-                    <button id="practice-btn">Practice</button>
-                    <button id="log-btn">Race Log</button>
+                    <button id="explore-seasons-btn" class="menu-quiet">The seasons</button>
+                    <button id="explore-tracks-btn" class="menu-quiet">The circuits</button>
+                    <button id="explore-drivers-btn" class="menu-quiet">The drivers</button>
+                    <button id="log-btn" class="menu-quiet">Race Log</button>
                 </div>
 
                 <details id="how-to-play">
@@ -230,18 +316,82 @@
                             <li><b>Left / Right</b> steer &nbsp;·&nbsp; on a phone, use the on-screen pad</li>
                             <li>Arrow keys or <b>W A S D</b> &mdash; pick either in the menu. Left&#8209;handers
                                 and anyone who would rather keep a hand on the mouse can swap.</li>
+                            <li><b>Free practice just goes</b>: no start lights and no jumped-start
+                                rule, because alone on an empty circuit there is no grid to reset and
+                                nobody to gain a place over.</li>
                             <li><b>Space</b>, <b>P</b> or <b>Esc</b> pause &mdash; or the Pause button in the
                                 corner. Works any time: on the grid, mid&#8209;race, in qualifying. The clock
                                 stops with you, so a pause costs you nothing &mdash; and the screen shows
                                 you where you stand while it is stopped.</li>
                         </ul>
 
+                        <h3>What you hear</h3>
+                        <p>The engines are yours &mdash; one per driver at the keyboard &mdash; and
+                            around them the circuit now makes its own noise:</p>
+                        <ul>
+                            <li><b>Kerbs</b> rattle and <b>grass</b> rumbles, both louder the faster
+                                you are going over them. If you are hearing either, you are losing time.</li>
+                            <li><b>The tyres squeal</b> when the car starts to slide, and the squeal
+                                rises as the slide gets worse &mdash; it starts at exactly the point
+                                the game begins laying rubber on the road, so black marks and noise
+                                mean the same thing.</li>
+                            <li><b>Contact</b> is heard wherever it happens: quieter the further it
+                                is from the middle of your screen, and from the side it happened on.
+                                A shunt behind you is a shunt you hear.</li>
+                            <li>A beep per <b>red light</b>, a different one at green, the
+                                <b>chequered flag</b>, the <b>VSC</b> coming out and going in, and a
+                                short chime when you beat <b>your own best lap</b>.</li>
+                        </ul>
+                        <p><b>Sound</b> in the menu turns the lot &mdash; engines, music and effects
+                            &mdash; down or off together.</p>
+
+                        <h3>The cars</h3>
+                        <p>Every car is a single&#8209;seater drawn from directly above, and the
+                            three chassis are meant to be told apart at a glance without reading the
+                            timing tower:</p>
+                        <ul>
+                            <li><b>Aero</b> is mostly wing &mdash; the widest front wing of the
+                                three, in two elements, bargeboards ahead of the sidepods and
+                                winglets on top of them, and a hard coke&#8209;bottle waist.</li>
+                            <li><b>Bolt</b> is built to go straight: stub wings, no bargeboards, a
+                                long shark fin down the engine cover, and the fattest rear tyres in
+                                the game &mdash; the only way it puts its own engine on the road.</li>
+                            <li><b>Ridge</b> is built to last: the widest, boxiest sidepods with
+                                cooling louvres cut into them, a big roll hoop and a blunter nose.</li>
+                        </ul>
+                        <p>The coloured band on the inner sidewall of each tyre is that car's
+                            <b>compound</b>, in the same colours as the timing tower &mdash; so you can
+                            see what the car in front of you is on without looking away from the road.</p>
+
+                        <h3>The camera</h3>
+                        <p>The screen is a <b>window on the circuit</b>, not the whole circuit: the camera
+                            follows your car, magnified, looking a little way down the road in the
+                            direction you are travelling. That is what lets circuits be bigger than the
+                            screen. The circuits marked <b>(XL)</b> in the track list live in worlds two to
+                            four times the size of the old canvas: <b>Marathon</b> 7.5&nbsp;km and
+                            eighteen corners, <b>Colossus</b> 5.1&nbsp;km and fifteen,
+                            <b>Lotus</b> 3.7&nbsp;km with a chicane on every side. They are long
+                            because there is more circuit, not because the straights went on for
+                            ever &mdash; which is also what keeps them fair to all three
+                            chassis.</p>
+                        <ul>
+                            <li><b>Camera zoom</b> in the menu sets the magnification: Wide shows more
+                                road ahead, Close puts you nearer the kerbs. It applies immediately, even
+                                mid&#8209;session.</li>
+                            <li>The <b>minimap</b> in the top-right corner shows the whole circuit, a dot
+                                per car (yours is ringed in white, wrecks turn grey), and a thin rectangle
+                                marking exactly where the window is looking.</li>
+                            <li>Spectating, the camera follows the leader &mdash; or click any driver in
+                                the timing tower to follow them instead.</li>
+                        </ul>
+
                         <h3>Two players, one keyboard</h3>
                         <p>Set <b>Players</b> to 2 and a second car joins the field. One of you drives on
                             the arrow keys, the other on <b>W A S D</b> &mdash; whichever scheme Player&nbsp;1
                             takes, Player&nbsp;2 automatically gets the other, so you can never fight over
-                            a key. The whole circuit is on screen at once, so there is no split screen and
-                            no camera to lose you.</p>
+                            a key. There is still no split screen: one camera frames both cars, zooming
+                            out as the gap between you grows and back in as you regroup &mdash; so a
+                            two&#8209;player race is also a fight over where the camera looks.</p>
                         <ul>
                             <li>Each driver picks their <b>own compound</b>, before qualifying and again
                                 before the race. You do not have to agree.</li>
@@ -301,20 +451,47 @@
                             already lapped means nothing.</p>
 
                         <h3>Championship</h3>
-                        <p>A season across every circuit with F1 points. At the end you get the full
-                            season grid: every driver, every race, wins and podiums highlighted, DNFs
-                            marked, and a &#9733; against whoever set the fastest lap of each race.</p>
+                        <p>A season across every circuit with F1 points &mdash; 25 for a win down to
+                            1 for tenth &mdash; plus the two extras: <b>1 point per place gained</b>
+                            from your grid slot, up to 5, and <b>1 point for the fastest lap</b> of
+                            the race. The fastest lap only pays if you finish in the top ten: set it
+                            and then park it in the wall and it counts for nothing, which is why a car
+                            three laps down cannot go hunting for it.</p>
+                        <p>At the end you get the full season grid: every driver, every race, wins and
+                            podiums highlighted, DNFs marked, an <b>F</b> against whoever set the
+                            fastest lap of each race and a &#9733; for a Grand Chelem.</p>
 
                         <h3>Racing</h3>
                         <ul>
-                            <li><b>Lights.</b> Move before they go out and you take a <b>5&nbsp;second penalty</b>
-                                and the grid is reset. The delay before the green is random &mdash; do not anticipate.</li>
+                            <li><b>Lights.</b> Move before they go out and the grid is reset &mdash; everyone
+                                back to their slot, wheels stopped, lap counters wiped &mdash; and you take a time
+                                penalty at the flag. The hold before the green is random, and it is drawn from
+                                the same range at a restart as at the first start, so jumping on purpose to be
+                                given an easier start to read buys you nothing.</li>
+                            <li><b>How big the penalty is.</b> Not a fixed number:
+                                <b>5% of a lap here &times; &radic;(laps&nbsp;&divide;&nbsp;5)</b>, never under a
+                                second and never over five. Five seconds is Formula 1's figure and it does not
+                                travel: there it is 5.6% of a ninety-second lap in a race whose finishers are
+                                four seconds apart, so it costs about one place. Here a lap is eighteen seconds
+                                and the field finishes 0.85s apart, so the same five seconds cost three to four
+                                places &mdash; a false start would decide the race rather than punish it. The
+                                square root is there because the field does not spread out in proportion to the
+                                distance: over three laps it finishes within 10.5s, over twenty within 20.5s.
+                                In practice that means <b>one second</b> on most circuits over a short race,
+                                1.8s over five laps of Marathon, 3.6s over twenty of them. Every further
+                                offence costs the same again, and the exact figure is on the banner and in the
+                                race log.</li>
                             <li><b>Slipstream.</b> Tuck in behind a car and you get a tow: more power, less drag.
                                 It builds the closer you get, so use it down the straight and pull out late.
                                 The car ahead has to be <i>moving</i> to leave a hole in the air &mdash; one that
                                 is stopped, crawling or spun gives you nothing.</li>
                             <li><b>Blue flags.</b> A small blue flag over a car means it is about to be lapped
                                 and must let the leader through. If it appears over <i>you</i>, you are a lap down.</li>
+                            <li><b>Everyone's compound is on the sheet.</b> In qualifying, the
+                                timing tower and the final classification both carry the tyre each
+                                driver set their time on, beside the time itself &mdash; because
+                                that is part of what the time means. Half a second is a lot between
+                                two drivers and nothing at all between a soft and a hard.</li>
                             <li><b>Qualifying.</b> You qualify before every race. The session is three laps:
                                 a warm&#8209;up lap from a standing start, then two flying laps &mdash; your
                                 best of the two counts. Every opponent runs the same three laps of their own,
@@ -353,6 +530,28 @@
                                 performance, not how much. A set lasts the same fraction of any race, so a
                                 soft covers twice as many laps in a ten-lap race as in a five-lap one.
                                 Sliding the car wears it faster. The bar in the corner shows what is left.</li>
+                            <li><b>Every season is kept.</b> <b>The seasons</b>, from the menu, holds
+                                every championship you have run &mdash; filed from its first Grand Prix,
+                                so the ones you walk away from are there too. Open one for the full
+                                standings with starts, wins, podiums, poles, fastest laps, retirements
+                                and best finish per driver, plus the round-by-round grid; the strip at
+                                the top adds it all up across your career. <b>Download everything</b>
+                                writes a .txt that is both the race log and a save: <b>Load a file</b>,
+                                on that screen or on the Race Log, reads it back on any machine and
+                                merges it with what is already there &mdash; the same file twice changes
+                                nothing. <b>Older logs work too</b>: a .txt written before any of this
+                                existed has no data block, so the report itself is read and the seasons
+                                are rebuilt from the classifications in it. Those are marked
+                                <i>from a log</i>, because a log never carried the drivers&rsquo;
+                                colours or how long the calendar was meant to be.</li>
+                            <li><b>What you did here last time.</b> The tyre screen carries your own
+                                record book for that circuit: your best lap on each compound, dry and
+                                wet in separate columns, with the column for today's weather picked
+                                out and your quickest in green. Every button also shows your time on
+                                that compound in the weather you are about to drive in, or a dash if
+                                you have never tried it. The percentages beside each tyre are the
+                                model's opinion; those times are the stopwatch's, and the two do not
+                                always agree.</li>
                             <li><b>The AI choose too.</b> Each driver picks from their own style: Senna and
                                 Verstappen almost always take the soft, Prost and Lauda almost always the
                                 hard. Longer races push the whole field onto harder rubber.</li>
@@ -423,8 +622,19 @@
             </div>
             <div id="tyre-screen" style="display: none;">
                 <h1 id="tyre-title" style="margin: 0 0 4px; font-size: 24px;">Choose your tyres</h1>
-                <div id="tyre-subtitle" style="font-size: 13px; opacity: 0.65; margin-bottom: 18px;"></div>
+                <div id="tyre-subtitle" style="font-size: 13px; opacity: 0.65; margin-bottom: 14px;"></div>
+                <!-- The weather, on the screen where getting it wrong costs you
+                     the race. A small icon in the corner of the menu was not
+                     enough: it is easy to walk past and pick slicks for a wet
+                     race, which is a 17% mistake you cannot undo. -->
+                <div id="tyre-weather" class="tw"></div>
                 <div id="tyre-options"></div>
+                <!-- Your own times here, per compound and per weather. The
+                     record book was already being written from the first lap;
+                     it was just only readable from the pause panel, halfway
+                     through a session - which is after the moment it helps.
+                     Filled by pbBookHtml(). -->
+                <div id="tyre-records"></div>
                 <div style="font-size: 11px; opacity: 0.5; margin-top: 14px;">
                     Softer rubber is quicker while it lasts and falls away sharply once it is gone.
                 </div>
@@ -446,6 +656,47 @@
                 <button id="gp-start-btn" style="background: #4CAF50; color: #002;">Start Qualifying</button>
                 <button id="gp-skip-btn" style="margin-top: 10px; background: #37474f; color: #ddd;">Skip this Grand Prix</button>
             </div>
+            <!-- Explore: the circuits. A grid of cards, and a card opens into a
+                 full page with a map, the numbers, and the records - which are
+                 measured on demand rather than shipped as a table, so they are
+                 always the times this build actually produces. -->
+            <!-- Every season ever run, kept as it is run rather than only when
+                 it finishes: a championship abandoned at round four is still
+                 four rounds of racing. Filled by showExploreSeasons(). -->
+            <div id="explore-seasons" style="display: none;">
+                <h1 class="ex-title">The seasons</h1>
+                <div class="ex-sub" id="ex-seasons-sub"></div>
+                <div id="ex-career"></div>
+                <div id="ex-season-list"></div>
+                <div id="ex-season-detail" style="display: none;"></div>
+                <div class="ex-io">
+                    <button type="button" id="ex-seasons-export" class="menu-quiet">Download everything</button>
+                    <button type="button" id="ex-seasons-import" class="menu-quiet">Load a file</button>
+                    <span class="ex-io-msg" id="ex-seasons-msg"></span>
+                </div>
+                <button id="ex-seasons-back" class="ex-back">Back</button>
+            </div>
+
+            <div id="explore-tracks" style="display: none;">
+                <h1 class="ex-title">The circuits</h1>
+                <div class="ex-sub" id="ex-tracks-sub">Twenty-two of them, two bigger than the screen. Pick one.</div>
+                <div id="ex-track-grid"></div>
+                <div id="ex-track-detail" style="display: none;"></div>
+                <button id="ex-tracks-back" class="ex-back">Back</button>
+            </div>
+
+            <!-- Explore: the drivers. -->
+            <div id="explore-drivers" style="display: none;">
+                <h1 class="ex-title">The drivers</h1>
+                <div class="ex-sub">
+                    Ten of them, and none is better than the rest. Every strength
+                    is paid for somewhere else &mdash; that is the rule the numbers
+                    below are fitted to.
+                </div>
+                <div id="ex-driver-grid"></div>
+                <button id="ex-drivers-back" class="ex-back">Back</button>
+            </div>
+
             <div id="quali-screen" style="display: none;">
                 <h1 id="quali-title" style="margin: 0 0 4px; font-size: 26px;">Qualifying</h1>
                 <div style="font-size: 12px; opacity: 0.6; margin-bottom: 16px;">
@@ -456,7 +707,7 @@
                         <tr>
                             <th style="width: 42px;">Pos</th>
                             <th style="text-align: left;">Driver</th>
-                            <th style="width: 92px;">Best Lap</th>
+                            <th style="width: 122px;" title="the compound the lap was set on">Best Lap</th>
                             <th style="width: 82px;">Gap</th>
                         </tr>
                     </thead>
@@ -480,21 +731,24 @@
                             <th>Gap</th>
                             <th title="time from lights out to the first input — the AI reacts according to its driver's style">React</th>
                             <th title="points for finishing position">Race pts</th>
-                            <th title="bonus points for places gained from the grid">Bonus pts</th>
+                            <th title="points that are not for finishing position: places gained from the grid, and the fastest lap">Extra pts</th>
                         </tr>
                     </thead>
                     <tbody id="stats-body">
                     </tbody>
                 </table>
                 <div id="champ-recap-section" style="display: none; margin-top: 20px; border-top: 2px solid #555; padding-top: 10px;">
-                    <h2>Current Standings</h2>
+                    <!-- filled by main.js: which round you have just finished,
+                         out of how many. A standings table with no round on it
+                         says nothing about how much season is left. -->
+                    <h2 id="champ-recap-title">Current Standings</h2>
                     <table id="champ-recap-table" style="width: 100%; border-collapse: collapse; margin-bottom: 6px;">
                         <thead>
                             <tr style="border-bottom: 1px solid #fff;">
                                 <th>Pos</th>
                                 <th>Car</th>
                                 <th title="points for finishing positions">Race pts</th>
-                                <th title="bonus points for places gained from the grid">Bonus pts</th>
+                                <th title="points that are not for finishing position: places gained from the grid, and the fastest lap">Extra pts</th>
                                 <th>Total</th>
                             </tr>
                         </thead>
@@ -502,8 +756,10 @@
                         </tbody>
                     </table>
                     <div class="pts-legend">
-                        <b>Bonus pts</b> &mdash; 1 point for every place gained from your grid slot,
-                        up to 5 per race. Already included in the total.
+                        <b>Extra pts</b> &mdash; 1 point for every place gained from your grid
+                        slot, up to 5 per race, plus <b>1 for the fastest lap</b> of the race
+                        &mdash; that one only if you finish in the top ten. Already included
+                        in the total.
                     </div>
                 </div>
                 <button id="restart-btn">Menu</button>
@@ -517,7 +773,7 @@
                             <th>Pos</th>
                             <th>Car</th>
                             <th title="points for finishing positions">Race pts</th>
-                            <th title="bonus points for places gained from the grid">Bonus pts</th>
+                            <th title="points that are not for finishing position: places gained from the grid, and the fastest lap">Extra pts</th>
                             <th>Total</th>
                         </tr>
                     </thead>
@@ -525,8 +781,9 @@
                     </tbody>
                 </table>
                 <div class="pts-legend">
-                    <b>Bonus pts</b> &mdash; 1 point for every place gained from your grid slot,
-                    up to 5 per race. Already included in the total.
+                    <b>Extra pts</b> &mdash; 1 point for every place gained from your grid slot,
+                    up to 5 per race, plus <b>1 for the fastest lap</b> of the race &mdash; that
+                    one only if you finish in the top ten. Already included in the total.
                 </div>
                 <div id="champ-legend"></div>
                 <div id="season-recap"></div>
@@ -542,11 +799,22 @@
                      margin: 0; white-space: pre; color: #cfd8dc;"></pre>
                 <div style="text-align: center; margin-top: 14px;">
                     <button id="log-download-btn" style="width: auto; padding: 10px 22px;">Download .txt</button>
+                    <!-- The same file, read back. The download carries the
+                         seasons and the record book in a block at the end, so
+                         one file is both the report you read and the save you
+                         bring to another machine. -->
+                    <button id="log-load-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #37474f; color: #ddd;">Load .txt</button>
                     <button id="log-close-btn" style="width: auto; padding: 10px 22px; margin-left: 8px; background: #555;">Close</button>
                 </div>
+                <div class="ex-io-msg" id="log-io-msg" style="text-align: center; margin-top: 8px;"></div>
+                <!-- one file input for both doors into the importer -->
+                <input type="file" id="data-file" accept=".txt,.json,text/plain" style="display: none;">
             </div>
-            <div id="winner-announcement" style="display: none; position: absolute; top: 20%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; border: 2px solid #555; text-align: center; font-size: 24px;">
-                <h2 id="winner-text" style="margin: 0;"></h2>
+            <!-- Pinned to the top edge, styled in the stylesheet: a box in
+                 the middle of the screen covered the road while the player
+                 was still driving the last corners. -->
+            <div id="winner-announcement" style="display: none;">
+                <h2 id="winner-text"></h2>
             </div>
         </div>
         
@@ -571,26 +839,111 @@
             </div>
         </div>
     </div>
-    <script src="racelog.js"></script>
-    <script src="track.js"></script>
-    <script src="car.js"></script>
-    <script src="ai.js"></script>
-    <script src="audio.js"></script>
+    <!-- Il ?v= non e' decorazione: aprendo il gioco da disco il browser
+         teneva in cache i .js e ricaricava solo la pagina, quindi il menu
+         mostrava un circuito nuovo e il gioco ne costruiva un altro
+         (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
+         cambia uno di questi file. Se un cambiamento non si vede lo
+         stesso: ricarica forzata, Cmd+Shift+R. -->
+    <script src="racelog.js?v=zoom15"></script>
+    <script src="track.js?v=zoom15"></script>
+    <script src="lines.js?v=zoom15"></script>
+    <script src="car.js?v=zoom15"></script>
+    <script src="ai.js?v=zoom15"></script>
+    <script src="audio.js?v=zoom15"></script>
     <script>
-        window.onerror = function(msg, url, lineNo, columnNo, error) {
-            const errDiv = document.createElement('div');
-            errDiv.style.position = 'fixed';
-            errDiv.style.top = '50px';
-            errDiv.style.left = '50px';
-            errDiv.style.backgroundColor = 'red';
-            errDiv.style.color = 'white';
-            errDiv.style.padding = '20px';
-            errDiv.style.zIndex = '9999';
-            errDiv.innerText = `Error: ${msg}\nLine: ${lineNo}\nURL: ${url}`;
-            document.body.appendChild(errDiv);
-            return false;
-        };
+        // ---------------------------------------------------------------
+        //  THE ERROR PANEL
+        //
+        //  The game is opened from a file:// URL, where the browser treats
+        //  every file as its own origin - so a script loaded from another
+        //  file is "cross-origin" and window.onerror is handed a sanitised
+        //  "Script error.", line 0, and nothing else. Safari does exactly
+        //  this: a real crash arrives as three useless lines, which is what
+        //  a screenshot from Nicola showed after the pit build froze.
+        //
+        //  An error we CATCH OURSELVES is not sanitised. So the two places
+        //  the game's own code is entered from - an animation frame and a
+        //  DOM event handler - are wrapped, and what they catch is printed
+        //  in full: message, and the first lines of the stack. Nothing is
+        //  swallowed: after reporting, the error is re-thrown, and the frame
+        //  loop is restarted so one bad frame degrades the game instead of
+        //  killing it.
+        // ---------------------------------------------------------------
+        (function () {
+            let panel = null, seen = {}, count = 0, lastAt = 0;
+            function report(where, e) {
+                lastAt = new Date().getTime();
+                const msg = (e && e.message) || String(e);
+                const key = where + '|' + msg;
+                count++;
+                if (seen[key]) { if (panel) panel.querySelector('.apex-err-n').innerText = ' (x' + count + ')'; return; }
+                seen[key] = true;
+                if (!panel) {
+                    panel = document.createElement('div');
+                    panel.style.cssText = 'position:fixed;top:12px;left:12px;right:12px;max-height:45vh;overflow:auto;' +
+                        'background:#b71c1c;color:#fff;padding:14px 16px;z-index:9999;font:12px/1.45 monospace;' +
+                        'white-space:pre-wrap;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+                    const head = document.createElement('div');
+                    head.style.cssText = 'font-weight:bold;margin-bottom:6px;font-size:13px';
+                    head.innerHTML = 'Apex — errore<span class="apex-err-n"></span> ' +
+                        '<span style="float:right;cursor:pointer;opacity:.85">chiudi ✕</span>';
+                    head.querySelector('span:last-child').onclick = function () { panel.remove(); panel = null; };
+                    panel.appendChild(head);
+                    panel.appendChild(document.createElement('div')).className = 'apex-err-body';
+                    document.body.appendChild(panel);
+                }
+                const stack = ((e && e.stack) || '').split('\n').slice(0, 6)
+                    .map(function (l) { return '   ' + l.trim().replace(/^at /, 'in '); }).join('\n');
+                panel.querySelector('.apex-err-body').innerText +=
+                    (where ? '[' + where + '] ' : '') + msg + (stack ? '\n' + stack : '') + '\n\n';
+            }
+            window.apexReportError = report;
+            // 1. animation frames: the game loop and everything it draws
+            const rafOrig = window.requestAnimationFrame.bind(window);
+            window.requestAnimationFrame = function (cb) {
+                return rafOrig(function (t) {
+                    try { return cb(t); }
+                    catch (e) {
+                        report('frame', e);
+                        // keep the loop alive: a frame that threw is not a
+                        // reason for the game to stop for ever
+                        if (typeof gameLoop === 'function') rafOrig(gameLoop);
+                        throw e;
+                    }
+                });
+            };
+            // 2. every DOM listener: buttons, keys, the whole interface
+            const addOrig = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function (type, fn, opts) {
+                if (typeof fn === 'function' && !fn.__apexWrap) {
+                    const wrap = function (ev) {
+                        try { return fn.call(this, ev); }
+                        catch (e) { report(type, e); throw e; }
+                    };
+                    fn.__apexWrap = wrap;      // so removeEventListener still works
+                    wrap.__apexWrap = wrap;
+                    return addOrig.call(this, type, wrap, opts);
+                }
+                return addOrig.call(this, type, (fn && fn.__apexWrap) || fn, opts);
+            };
+            const remOrig = EventTarget.prototype.removeEventListener;
+            EventTarget.prototype.removeEventListener = function (type, fn, opts) {
+                return remOrig.call(this, type, (fn && fn.__apexWrap) || fn, opts);
+            };
+            // 3. and the sanitised report, for anything that escapes both
+            window.onerror = function (msg, url, lineNo) {
+                // the wrappers above re-throw what they report, and that lands
+                // here as well: do not print the same thing twice
+                if (new Date().getTime() - lastAt < 200) return false;
+                report('', msg + (lineNo ? ' (riga ' + lineNo + ' di ' + String(url).split('/').pop() + ')' : ''));
+                return false;
+            };
+            window.addEventListener('unhandledrejection', function (ev) {
+                report('promise', ev.reason || 'rifiutata senza motivo');
+            });
+        })();
     </script>
-    <script src="main.js"></script>
+    <script src="main.js?v=zoom15"></script>
 </body>
 </html>
