@@ -886,6 +886,37 @@ vinto, con la frazione accanto in piccolo — 25% <sub>1/4</sub>. Sulle gare
 iniziate, non sui round del calendario: un Gran Premio saltato non è una gara
 che non hai vinto. Chi ha corso da spettatore ha un trattino.
 
+## Ogni circuito tiene la sua storia
+
+L'archivio è un mucchio di stagioni; questa lo legge nell'altro verso, **per
+luogo**. Sulla parete dei circuiti ogni carta dice cosa ci hai fatto — «5 races ·
+4 won · 80%», le vittorie in verde, «never raced» se non ci sei mai andato —
+così la parete risponde a «dove vado forte?» senza aprire ventidue circuiti.
+
+Aprendone uno, sotto le specifiche e i record, c'è **Your record here**: gare,
+vittorie con percentuale, podi con percentuale, pole, giri veloci, Grand Chelem,
+ritiri con percentuale, Gran Premi saltati, miglior piazzamento, peggiore,
+**piazzamento medio** (i ritiri non fanno media: non sono un piazzamento),
+punti e punti per gara, quante gare sul bagnato e quante vinte, il **tuo miglior
+giro** su quel tracciato asciutto e bagnato con la mescola, e prima e ultima
+volta che ci hai corso. Sotto, **Everyone who has raced here**: la stessa
+tabella per tutti e undici i piloti, ordinata per vittorie, con la tua riga
+evidenziata — si vede a colpo d'occhio chi è il padrone di casa.
+
+Due scelte che contano:
+
+- **Si conta per NOME, non per colore.** Un colore è un'identità dentro una
+  stagione e nient'altro: lo stesso pilota corre in blu un anno e in arancione
+  l'altro, e in una stagione ricostruita da un log i colori sono assegnati, non
+  corsi. I nomi sopravvivono.
+- **Un passaggio solo per tutti i circuiti**, tenuto finché l'archivio non
+  cambia (`seasonsSave` azzera la cache). Altrimenti la parete rileggeva
+  l'intero archivio ventidue volte per disegnare ventidue carte.
+
+Un circuito ha una storia solo dopo che ci ha girato un **round di campionato**:
+le gare singole non vengono archiviate, e la pagina lo dice invece di mostrare
+una tabella di zeri.
+
 ## Verificato (Chromium headless, dpr 2)
 
 Gara singola con qualifiche su Oval fino al risultato (linea "shipped" ⇒
@@ -1034,3 +1065,16 @@ round 4 con le tre gare già corse, 54 punti, il telaio giusto, ogni IA con una
 bravura valida e nessun rivale. Una ricostruita da un log continua a rifiutare.
 Una stagione con zero gare non nomina un campione e non ti dà una posizione, ma
 si può riprendere.
+
+Sulle statistiche per circuito (`test_track_stats.js`) il test importa le sette
+stagioni vere dai log di Nicola e poi **riconta tutto per conto suo** — dallo
+stesso archivio ma per un'altra strada, dentro il test invece che dentro il
+gioco — e confronta: gare, gare bagnate, partenze, vittorie, podi, pole, giri
+veloci, ritiri, punti e numero di piloti, circuito per circuito. Zero
+discrepanze su 22 circuiti e 59 round. Controlla anche che il piazzamento medio
+non conti mai un ritiro, che le 22 carte della parete mostrino un record quando
+c'è (e «never raced» quando non c'è), che aprendo il circuito più frequentato la
+tabella abbia gli undici piloti con la tua riga evidenziata e i numeri uguali a
+quelli calcolati, e che **la cache si azzeri** modificando l'archivio (5 round →
+4). Infine, con l'archivio vuoto, la carta dice «never raced» e la pagina spiega
+perché invece di mostrare una tabella vuota.

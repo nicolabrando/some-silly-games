@@ -3473,6 +3473,7 @@ function seasonEntryOk(e) {
 }
 
 function seasonsSave(list) {
+    _circuitStats = null;         // the per-circuit counts are read from this
     // Newest first and capped: a ten-round season is a few kilobytes, and
     // localStorage is a shelf, not a database. If the write still will not
     // fit, the oldest go one at a time until it does rather than the whole
@@ -3687,6 +3688,87 @@ function seasonTally(entry) {
     // what the archive reports - the sum above is a cross-check, not a source.
     for (const c of Object.keys(entry.points || {})) get(c).total = entry.points[c] || 0;
     return Object.keys(by).map(k => by[k]).sort((a, b) => b.total - a.total);
+}
+
+// ---------------------------------------------------------------------------
+//  WHAT HAS HAPPENED AT ONE CIRCUIT
+//  The archive is a pile of seasons; this reads it the other way round, by
+//  place. Counted by DRIVER NAME rather than by colour: a colour is an
+//  identity inside one season and nothing more - the same name races in blue
+//  one year and orange the next, and a season rebuilt from a log has colours
+//  that were assigned rather than raced. Names are what survive.
+//
+//  Computed for every circuit in ONE pass and kept until the archive changes,
+//  because the wall of circuits would otherwise parse the whole archive
+//  twenty-two times to draw twenty-two cards.
+// ---------------------------------------------------------------------------
+let _circuitStats = null;
+function circuitStatsAll() {
+    if (_circuitStats) return _circuitStats;
+    const all = {};
+    const place = (k) => (all[k] || (all[k] = {
+        races: 0, wet: 0, seasons: 0, firstAt: null, lastAt: null, byName: {}
+    }));
+    const driver = (p, name) => (p.byName[name] || (p.byName[name] = {
+        name: name, isPlayer: false, races: 0, wins: 0, podiums: 0, poles: 0,
+        fl: 0, chelem: 0, dnf: 0, dns: 0, points: 0, best: null, worst: null,
+        posSum: 0, posN: 0, wetRaces: 0, wetWins: 0
+    }));
+
+    for (const e of seasonsLoad()) {
+        const info = {};
+        for (const p of (e.participants || [])) {
+            info[p.color] = { name: (p.isPlayer ? 'You' : (p.driverName || p.color)),
+                              isPlayer: !!p.isPlayer };
+        }
+        const nameOf = (col) => (info[col] ? info[col].name : col);
+        const seenHere = {};
+        (e.results || []).forEach((r, i) => {
+            const key = r.track || (e.tracks || [])[i];
+            if (!key) return;
+            const p = place(key);
+            p.races++;
+            if (r.wet) p.wet++;
+            const when = e.startedAt || e.updatedAt || null;
+            if (when) {
+                if (p.firstAt === null || when < p.firstAt) p.firstAt = when;
+                if (p.lastAt === null || when > p.lastAt) p.lastAt = when;
+            }
+            if (!seenHere[key]) { seenHere[key] = 1; p.seasons++; }
+
+            if (r.pole) driver(p, nameOf(r.pole)).poles++;
+            if (r.fastest) driver(p, nameOf(r.fastest)).fl++;
+            if (r.chelem) driver(p, nameOf(r.chelem)).chelem++;
+            for (const o of (r.order || [])) {
+                const d = driver(p, o.name || nameOf(o.color));
+                if (info[o.color]) d.isPlayer = d.isPlayer || info[o.color].isPlayer;
+                if (o.dns) { d.dns++; continue; }
+                d.races++;
+                d.points += (o.pts || 0) + (o.bonus || 0);
+                if (r.wet) d.wetRaces++;
+                if (o.dnf) { d.dnf++; continue; }
+                if (o.pos === 1) { d.wins++; if (r.wet) d.wetWins++; }
+                if (o.pos && o.pos <= 3) d.podiums++;
+                if (o.pos) {
+                    d.posSum += o.pos; d.posN++;
+                    if (d.best === null || o.pos < d.best) d.best = o.pos;
+                    if (d.worst === null || o.pos > d.worst) d.worst = o.pos;
+                }
+            }
+        });
+    }
+    // one sorted list per circuit, the busiest driver first
+    for (const k of Object.keys(all)) {
+        const p = all[k];
+        p.drivers = Object.keys(p.byName).map(n => p.byName[n])
+            .sort((a, b) => (b.wins - a.wins) || (b.points - a.points) || (b.races - a.races));
+        p.me = p.drivers.find(d => d.isPlayer) || null;
+    }
+    _circuitStats = all;
+    return all;
+}
+function circuitStats(key) {
+    return circuitStatsAll()[key] || null;
 }
 
 // And across all of them.
@@ -4206,6 +4288,20 @@ function exShowTrackList() {
         meta.innerText = (line.length / 1000).toFixed(2) + ' km';
         btn.appendChild(name);
         btn.appendChild(meta);
+        // and your own record here, on the card, so the wall answers "where
+        // do I go well?" without opening twenty-two circuits
+        const p = circuitStats(key);
+        const me = p && p.me;
+        const you = document.createElement('div');
+        you.className = 'ex-meta ex-card-you';
+        if (me && me.races) {
+            you.innerHTML = me.races + (me.races === 1 ? ' race' : ' races') + ' · ' +
+                '<b class="' + (me.wins ? 'ex-w' : '') + '">' + me.wins + ' won</b>' +
+                ' · ' + Math.round(100 * me.wins / me.races) + '%';
+        } else {
+            you.innerHTML = '<span class="ex-never">never raced</span>';
+        }
+        btn.appendChild(you);
         btn.addEventListener('click', () => exOpenTrack(key));
         grid.appendChild(btn);
     }
@@ -4267,12 +4363,90 @@ function exOpenTrack(key) {
         `at alien pace &mdash; a different thing, and quicker by 10 to 30% ` +
         `depending on the circuit.</div>` +
         `<div class="ex-rec" id="ex-rec"></div>` +
-        `</div></div>`;
+        `</div></div>` +
+        exTrackHistoryHtml(key);
 
     exDrawTrack(document.getElementById('ex-d-map'), track);
     document.getElementById('ex-track-list-btn')
         .addEventListener('click', exShowTrackList);
     exRenderRecords(key);
+}
+
+// Everything the season archive knows about this circuit: your own record
+// here, and everyone else's. Empty until a championship has actually visited
+// it - a single race is not archived, and a table of zeroes is a table about
+// nothing.
+function exTrackHistoryHtml(key) {
+    const p = circuitStats(key);
+    if (!p || !p.races) {
+        return '<div class="ex-hist"><div class="ex-rec-h">Your record here</div>' +
+            '<div class="ex-empty">No championship round has been run at ' + trackLabel(key) +
+            ' yet. Single races are not filed &mdash; the history is built from season rounds.</div></div>';
+    }
+    const me = p.me;
+    const pct = (n, d) => (d ? Math.round(100 * n / d) + '%' : '—');
+    const when = (t) => t ? exDate(t) : '—';
+    // your best lap here, from the same record book the tyre screen reads
+    const book = pbBook(key);
+    const bestOf = (bucket) => {
+        const k = pbBookBest(bucket);
+        if (!k) return '—';
+        return fmtLapMs(bucket[k].ms) +
+            '<span class="ex-sml"> ' + (TYRES[k] ? TYRES[k].short : k) + '</span>';
+    };
+
+    let html = '<div class="ex-hist"><div class="ex-rec-h">Your record here</div>';
+    if (!me || !me.races) {
+        html += '<div class="ex-empty">' + p.races + ' round' + (p.races === 1 ? '' : 's') +
+            ' have been run here, but never with you on the grid.</div>';
+    } else {
+        html += '<div class="ex-grid ex-career-grid">' +
+            exCell('Races', me.races, 'Grands Prix you started here') +
+            exCell('Wins', me.wins + '<span class="ex-sml"> · ' + pct(me.wins, me.races) + '</span>') +
+            exCell('Podiums', me.podiums + '<span class="ex-sml"> · ' + pct(me.podiums, me.races) + '</span>') +
+            exCell('Poles', me.poles) +
+            exCell('Fastest laps', me.fl) +
+            exCell('Grand Chelems', me.chelem) +
+            exCell('Retirements', me.dnf + '<span class="ex-sml"> · ' + pct(me.dnf, me.races) + '</span>') +
+            exCell('Skipped', me.dns) +
+            exCell('Best finish', me.best === null ? '—' : 'P' + me.best) +
+            exCell('Worst', me.worst === null ? '—' : 'P' + me.worst) +
+            exCell('Average finish', me.posN ? 'P' + (me.posSum / me.posN).toFixed(1) : '—',
+                   'retirements are not counted in the average') +
+            exCell('Points', me.points +
+                   '<span class="ex-sml"> · ' + (me.points / me.races).toFixed(1) + '/race</span>') +
+            exCell('In the wet', me.wetRaces + '<span class="ex-sml"> · ' + me.wetWins + ' won</span>') +
+            exCell('Your best lap', bestOf(book.dry), 'dry, and the compound it was set on') +
+            exCell('Best in the wet', bestOf(book.wet)) +
+            exCell('First raced', when(p.firstAt)) +
+            exCell('Last raced', when(p.lastAt)) +
+            exCell('Seasons here', p.seasons) +
+            '</div>';
+    }
+
+    html += '<div class="ex-rec-h" style="margin-top:16px;">Everyone who has raced here</div>' +
+        '<div class="ex-sml" style="margin-bottom:6px;">' + p.races + ' round' +
+        (p.races === 1 ? '' : 's') + ' across ' + p.seasons + ' season' +
+        (p.seasons === 1 ? '' : 's') + ', ' + p.wet + ' of them wet.</div>' +
+        '<div class="ex-scroll"><table class="ex-seasons ex-standings"><thead><tr>' +
+        '<th>Driver</th><th title="races started here">Starts</th><th>Wins</th>' +
+        '<th title="share of the races started that were won">Win rate</th>' +
+        '<th>Podiums</th><th title="pole positions">Poles</th>' +
+        '<th title="fastest laps">FL</th><th title="Grand Chelems">★</th>' +
+        '<th title="retirements">DNF</th><th title="best finishing position">Best</th>' +
+        '<th title="mean finishing position, retirements excluded">Avg</th><th>Points</th>' +
+        '</tr></thead><tbody>' +
+        p.drivers.map(d => '<tr' + (d.isPlayer ? ' class="ex-me"' : '') + '>' +
+            '<td style="text-align:left;white-space:nowrap;">' + d.name + '</td>' +
+            '<td>' + d.races + '</td><td>' + d.wins + '</td>' +
+            '<td>' + pct(d.wins, d.races) + '</td>' +
+            '<td>' + d.podiums + '</td><td>' + d.poles + '</td><td>' + d.fl + '</td>' +
+            '<td>' + (d.chelem || '') + '</td><td>' + d.dnf + '</td>' +
+            '<td>' + (d.best === null ? '—' : 'P' + d.best) + '</td>' +
+            '<td>' + (d.posN ? (d.posSum / d.posN).toFixed(1) : '—') + '</td>' +
+            '<td><b>' + d.points + '</b></td></tr>').join('') +
+        '</tbody></table></div></div>';
+    return html;
 }
 
 // The tightest corner on the circuit, as a radius. Read off the racing line,

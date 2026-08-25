@@ -1663,6 +1663,20 @@ tr.ex-season-row td { border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
 /* your own row in a season's standings */
 tr.ex-me td { background: rgba(255, 213, 79, 0.09); }
 tr.ex-me td:nth-child(2) { font-weight: 700; }
+/* what you have done at a circuit: on its card, and under its page */
+.ex-card-you { margin-top: 2px; opacity: 0.85; }
+.ex-card-you .ex-w { color: #69f0ae; }
+.ex-card-you b { font-variant-numeric: tabular-nums; }
+.ex-never { opacity: 0.45; font-style: italic; }
+.ex-hist {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #2e343a;
+}
+.ex-hist .ex-career-grid { margin-bottom: 0; }
+.ex-hist .ex-standings { margin-top: 4px; min-width: 620px; }
+.ex-hist .ex-empty { margin-top: 4px; }
+
 .ex-fromlog { color: #9ecbff; border-bottom: 1px dotted rgba(158, 203, 255, 0.5); cursor: help; }
 .ex-note {
     background: rgba(158, 203, 255, 0.08);
