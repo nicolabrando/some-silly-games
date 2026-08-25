@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom19">
+    <link rel="stylesheet" href="style.css?v=zoom20">
 </head>
 <body>
     <div id="game-container">
@@ -246,6 +246,14 @@
                             <input type="checkbox" id="reverse-grid-checkbox">
                             <span>Reverse grid</span>
                         </label>
+                        <!-- The calendar comes from the record book instead of
+                             the hat: the circuits that have gone worst for you.
+                             See nightmareCalendar(). -->
+                        <label class="menu-check" data-modes="champ">
+                            <input type="checkbox" id="nightmare-checkbox">
+                            <span>Nightmare season</span>
+                        </label>
+
                     </div>
 
                     <!-- Third column. Two were enough when the panel was 600px
@@ -290,6 +298,11 @@
                     </div>
                 </div>
 
+                <!-- What Nightmare season would actually pick, named before you
+                     commit to it. Full width rather than under its own checkbox:
+                     inside a 280px column the same sentence ran to four lines. -->
+                <div class="menu-hint menu-hint-inline" id="nightmare-hint" data-modes="champ"></div>
+
                 <!-- ONE door into the game: the button for the mode on show.
                      The other two stay in the DOM, hidden, so main.js wiring
                      does not change. -->
@@ -310,7 +323,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom19 &nbsp;·&nbsp; 23 Aug 2026</div>
+                <div id="build-stamp">build zoom20 &nbsp;·&nbsp; 23 Aug 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -562,6 +575,17 @@
                                 them. The
                                 <b>Win rate</b> column is the share of the races you <i>started</i>
                                 that you won: a Grand Prix you sat out is not one you failed to win.</li>
+                            <li><b>Nightmare season.</b> On the Championship tab: instead of drawing
+                                the calendar out of the hat, it picks the circuits that have gone
+                                <i>worst</i> for you &mdash; ranked by average finishing position, with
+                                a retirement counted as one place worse than the biggest field, so the
+                                places that keep breaking your car count as the nightmares they are.
+                                <b>Season length is still yours</b>: the option changes which circuits,
+                                never how many. The line under the settings names them before you start.
+                                If you have not raced enough circuits yet, the ones you have never seen
+                                fill the calendar. The set comes from your record rather than from the
+                                seed, so the same seed will not reproduce it once your record has moved,
+                                and seasons run this way are marked <i>nightmare</i> in the history.</li>
                             <li><b>And every circuit keeps its own history.</b> <b>The circuits</b>
                                 now carries what has happened there: each card says how many races
                                 you have started and how many you won, and opening one adds your
@@ -890,12 +914,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom19"></script>
-    <script src="track.js?v=zoom19"></script>
-    <script src="lines.js?v=zoom19"></script>
-    <script src="car.js?v=zoom19"></script>
-    <script src="ai.js?v=zoom19"></script>
-    <script src="audio.js?v=zoom19"></script>
+    <script src="racelog.js?v=zoom20"></script>
+    <script src="track.js?v=zoom20"></script>
+    <script src="lines.js?v=zoom20"></script>
+    <script src="car.js?v=zoom20"></script>
+    <script src="ai.js?v=zoom20"></script>
+    <script src="audio.js?v=zoom20"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -989,6 +1013,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom19"></script>
+    <script src="main.js?v=zoom20"></script>
 </body>
 </html>

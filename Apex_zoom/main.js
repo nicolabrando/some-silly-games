@@ -1111,7 +1111,17 @@ function setMenuMode(mode) {
 function showMenu() {
     menu.style.display = 'block';
     if (typeof refreshChampResume === 'function') refreshChampResume();
+    // the record book may have moved since you were last here
+    if (typeof refreshNightmareHint === 'function') refreshNightmareHint();
 }
+
+// The line under Nightmare season names the circuits it would pick, so it is
+// redrawn whenever the answer can have changed: the tick itself, and how many
+// rounds the season is.
+const nightmareBox = document.getElementById('nightmare-checkbox');
+if (nightmareBox) nightmareBox.addEventListener('change', refreshNightmareHint);
+const roundsBox = document.getElementById('rounds-select');
+if (roundsBox) roundsBox.addEventListener('change', refreshNightmareHint);
 
 menu.querySelectorAll('.mode-tab').forEach(b => {
     b.addEventListener('click', () => {
@@ -3505,6 +3515,7 @@ function archiveSeason(state, complete) {
         complete: !!complete,
         seed: state.seed || null,
         difficulty: state.difficulty || null,
+        nightmare: !!state.nightmare,
         // who was given the season's boost. Part of what that championship
         // was, and the archive is the only place it can still be read once
         // the season is over.
@@ -3580,6 +3591,7 @@ function rebuildSeasonState(e) {
     });
     return {
         id: e.id, startedAt: e.startedAt, seed: e.seed || null,
+        nightmare: !!e.nightmare,
         tracks: e.tracks.slice(),
         weather: (e.weather || []).slice(),
         wetKind: [],
@@ -4645,7 +4657,9 @@ function exRenderSeasons() {
                   '<span class="ex-sml"> ' + me.wins + '/' + me.races + '</span>'
                 : '<span class="pbk-none">—</span>';
             return '<tr class="ex-season-row" data-id="' + e.id + '">' +
-                '<td class="ex-seed">' + (e.seed || '—') + '</td>' +
+                '<td class="ex-seed">' + (e.seed || '—') +
+                (e.nightmare ? ' <span class="ex-nightmare" title="the calendar was your ' +
+                    'worst circuits, not a random draw">nightmare</span>' : '') + '</td>' +
                 '<td>' + exDate(e.startedAt) + '</td>' +
                 '<td>' + e.done + ' / ' + e.rounds + '</td>' +
                 '<td>' + (champ ? '<span class="tt-chip" style="background:' + champ.color +
@@ -4789,6 +4803,10 @@ function exShowSeason(id) {
             : (me ? 'not raced yet' : 'spectator')) +
         exCell('Season rival', entry.rival || '—',
                'one opponent runs the whole season with a little more') +
+        exCell('Calendar', entry.nightmare
+            ? '<span class="ex-nightmare">nightmare</span>' : 'drawn at random',
+            entry.nightmare ? 'the circuits where you had gone worst, at the time it was started'
+                            : '') +
         '</div>';
 
     // in its own scroller: fourteen columns do not fit a narrow window, and a
@@ -8045,6 +8063,113 @@ function seasonCalendar(rounds, rng) {
     return out;
 }
 
+// ---------------------------------------------------------------------------
+//  THE NIGHTMARE CALENDAR
+//  A season made of the circuits that have gone worst for you, drawn from the
+//  same history the circuits page shows.
+//
+//  Which measure? Win rate alone is too blunt: once a dozen circuits sit at
+//  0% there is no order left inside them, and a circuit you lost once ranks
+//  with one you have lost ten times. AVERAGE FINISHING POSITION is one number,
+//  it moves continuously, and it already contains the wins - a victory is a P1
+//  pulling the mean down. Retirements are counted as one place worse than the
+//  biggest field, because a circuit that keeps breaking your car is exactly
+//  the kind of circuit this season is looking for, and leaving them out would
+//  reward the places that end your races.
+//
+//  Circuits you have never raced are not nightmares, they are unknowns: they
+//  fill the calendar only after the known-bad ones run out, and the menu says
+//  so rather than pretending.
+const NIGHTMARE_DNF_AS = 12;      // a retirement, scored as a finish
+
+function nightmarePain(stats) {
+    const me = stats && stats.me;
+    if (!me || !me.races) return null;
+    const finishes = me.posN || 0;
+    const sum = (me.posSum || 0) + me.dnf * NIGHTMARE_DNF_AS;
+    const n = finishes + me.dnf;
+    if (!n) return null;
+    return { pain: sum / n, races: me.races, wins: me.wins, dnf: me.dnf };
+}
+
+// The circuits, worst first. Ties - and there will be ties, a circuit raced
+// once and finished second is a clean 2.0 - are broken by the win rate and
+// then by how much racing the number is based on.
+function nightmareRanking() {
+    const all = circuitStatsAll();
+    const known = [], unknown = [];
+    for (const key of SEASON_POOL) {
+        const p = nightmarePain(all[key]);
+        if (p) known.push({ key: key, pain: p.pain, rate: p.wins / p.races, races: p.races });
+        else unknown.push({ key: key, pain: null, rate: null, races: 0 });
+    }
+    known.sort((a, b) => (b.pain - a.pain) || (a.rate - b.rate) || (b.races - a.races));
+    return { known: known, unknown: unknown };
+}
+
+// The calendar for a nightmare season: the worst `rounds` circuits, in an
+// order the seed still decides. The SET comes from your record, the ORDER
+// from the seed - so the same seed twice in a row gives the same season, and
+// the same seed months later does not, because by then the record has moved.
+// That is not a flaw to hide; it is what the option is for, and the menu says
+// it out loud.
+function nightmareCalendar(rounds, rng) {
+    const rank = nightmareRanking();
+    const rand = rng || Math.random;
+    // worst first, then the unknowns, shuffled among themselves
+    const unknown = rank.unknown.map(x => x.key);
+    for (let i = unknown.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [unknown[i], unknown[j]] = [unknown[j], unknown[i]];
+    }
+    const ordered = rank.known.map(x => x.key).concat(unknown);
+    const picked = [];
+    // a season longer than the game has circuits goes round again, still
+    // worst-first
+    for (let i = 0; i < rounds && ordered.length; i++) picked.push(ordered[i % ordered.length]);
+    for (let i = picked.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [picked[i], picked[j]] = [picked[j], picked[i]];
+    }
+    return picked;
+}
+
+function nightmareEnabled() {
+    const el = document.getElementById('nightmare-checkbox');
+    return !!(el && el.checked);
+}
+
+// What ticking it would actually give you, named, before you commit to it.
+// An option whose effect you can only discover by living through ten rounds
+// of it is not much of an option.
+function refreshNightmareHint() {
+    const el = document.getElementById('nightmare-hint');
+    if (!el) return;
+    if (!nightmareEnabled()) { el.innerHTML = ''; el.style.display = 'none'; return; }
+    el.style.display = '';
+    const rank = nightmareRanking();
+    const rounds = seasonRounds();
+    if (!rank.known.length) {
+        el.innerHTML = 'Nothing on record yet, so there is nothing to be afraid of: ' +
+            'the calendar will be drawn at random until some championship rounds have been run.';
+        return;
+    }
+    const picked = rank.known.slice(0, rounds);
+    const names = picked.map(x => trackLabel(x.key));
+    const short = names.slice(0, 4).join(', ') +
+        (names.length > 4 ? ' and ' + (names.length - 4) + ' more' : '');
+    // The length is still yours - this only changes WHICH circuits, never how
+    // many - so the line counts out the number in the Season length box.
+    el.innerHTML = '<b>Your worst ' + Math.min(rounds, picked.length) + ':</b> ' + short +
+        (picked.length < rounds
+            ? ' &mdash; plus ' + (rounds - picked.length) + ' you have never raced, to fill the calendar'
+            : '') +
+        '. <span title="a retirement is counted as one place worse than the biggest field">' +
+        'Ranked by average finishing position</span>. Season length is still yours; ' +
+        'only which circuits changes, and the set comes from your record, so the seed ' +
+        'alone will not reproduce it later.';
+}
+
 function startChampionship() {
     const color = document.getElementById('color-select').value;
     const difficulty = document.getElementById('difficulty-select').value;
@@ -8063,7 +8188,9 @@ function startChampionship() {
     // comparable. A seed gives both: blank rolls a new one, typed reproduces it.
     const seedText = seasonSeedText();
     const rng = seededRng(seedFrom(seedText));
-    const tracks = seasonCalendar(seasonRounds(), rng);
+    const nightmare = nightmareEnabled();
+    const tracks = nightmare ? nightmareCalendar(seasonRounds(), rng)
+                             : seasonCalendar(seasonRounds(), rng);
 
     // The season's weather is rolled once, up front, at the same 20% per race
     // as before - but a season with no wet race at all is rerolled. At 20% a
@@ -8081,6 +8208,7 @@ function startChampionship() {
         id: seasonId(),
         startedAt: Date.now(),
         seed: seedText,
+        nightmare: nightmare,
         tracks: tracks,
         weather: weather,
         wetKind: wetKind,

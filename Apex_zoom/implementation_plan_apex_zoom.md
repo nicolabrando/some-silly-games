@@ -917,6 +917,42 @@ Un circuito ha una storia solo dopo che ci ha girato un **round di campionato**:
 le gare singole non vengono archiviate, e la pagina lo dice invece di mostrare
 una tabella di zeri.
 
+## Nightmare season
+
+Casella nella linguetta Championship: il calendario non esce dal cappello ma
+dai circuiti che ti sono andati **peggio**.
+
+**Con che metro.** Il tasso di vittorie da solo è troppo grosso: quando una
+dozzina di circuiti sta a 0% dentro quel gruppo non c'è più ordine, e un
+circuito perso una volta pesa quanto uno perso dieci. Il **piazzamento medio**
+è un numero solo, si muove con continuità, e le vittorie ce le ha già dentro —
+una vittoria è un P1 che tira giù la media. I **ritiri contano come un posto
+peggio del campo più grande**: un circuito che ti rompe la macchina è
+esattamente il tipo di circuito che questa stagione sta cercando, e lasciarli
+fuori premierebbe i posti che ti fanno finire la gara in anticipo.
+
+**La lunghezza resta tua.** L'opzione cambia *quali* circuiti, mai *quanti*: il
+numero viene dal campo Season length come sempre, e la riga sotto le
+impostazioni conta esattamente quello.
+
+**Cosa dipende dal seme e cosa no.** L'insieme viene dal tuo libretto, l'ordine
+dal seme. Quindi lo stesso seme due volte di fila dà la stessa stagione, e lo
+stesso seme fra un mese no, perché nel frattempo il libretto si è mosso. Non è
+un difetto da nascondere — è a questo che serve l'opzione — e la riga lo dice.
+
+**I circuiti mai corsi non sono incubi, sono incognite**: riempiono il
+calendario solo dopo che quelli provati sono finiti, e il menu lo dichiara
+invece di far finta.
+
+La riga sotto le impostazioni nomina i circuiti *prima* di partire: un'opzione
+il cui effetto si scopre solo vivendo dieci round non è granché come opzione.
+Sta a tutta larghezza e non sotto la sua casella perché dentro una colonna da
+280px la stessa frase diventava quattro righe.
+
+Nello storico, le stagioni giocate così portano un marchio **nightmare** accanto
+al seme, e aprendole c'è la casella *Calendar* che dice se era pescato a caso o
+no.
+
 ## Verificato (Chromium headless, dpr 2)
 
 Gara singola con qualifiche su Oval fino al risultato (linea "shipped" ⇒
@@ -1078,3 +1114,20 @@ tabella abbia gli undici piloti con la tua riga evidenziata e i numeri uguali a
 quelli calcolati, e che **la cache si azzeri** modificando l'archivio (5 round →
 4). Infine, con l'archivio vuoto, la carta dice «never raced» e la pagina spiega
 perché invece di mostrare una tabella vuota.
+
+Sulla Nightmare season (`test_nightmare.js`) l'archivio viene seminato con un
+libretto di cui **la risposta si sa in anticipo**: tre circuiti guidati male
+(Kart P9-P10, Harbour due ritiri, Crown P7-P8) e tre bene (Oval due vittorie,
+F1 P2-P1, Peanut P3-P2). La classifica esce Harbour 12,0 · Kart 9,5 · Crown 7,5
+e in fondo Oval 1,0; una stagione da tre round contiene esattamente quei tre;
+una da sei li contiene tutti e sei; una da dieci fa dieci round e dieci circuiti
+diversi pescando fra quelli mai corsi. Lo stesso seme dà lo stesso **ordine**, un
+seme diverso dà lo stesso **insieme**. La casella si vede sulla linguetta giusta,
+la riga sotto nomina Harbour, Kart e Crown, una stagione avviata così viene
+marcata nello stato e nell'archivio, e nello storico compare col marchio. Con il
+libretto vuoto la riga lo dice e il calendario torna casuale.
+
+`test_false_start` aveva un difetto suo, che si è visto eseguendolo in serie:
+ogni IA ha il 5% di bruciare la partenza per conto proprio, quindi con tre
+avversari una volta su sette il cartello parlava di qualcun altro. Adesso gli
+avversari vengono zittiti: sotto test c'è la penalità **del giocatore**.
