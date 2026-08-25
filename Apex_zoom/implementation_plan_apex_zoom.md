@@ -828,6 +828,44 @@ Sotto il menu adesso c'è una riga piccola e grigia: **build zoom16 · 23 Aug
 risposta — «sto guardando la versione nuova?» — e a farla diventare una domanda
 che si può fare a distanza.
 
+## Cancellare, riprendere, e il tasso di vittorie
+
+**Cancellare.** Ogni riga ha una crocetta. Non è annullabile, quindi chiede —
+col pulsante stesso, come fa *Start Championship*, non con una finestra del
+browser che questo gioco non ha mai usato: primo clic diventa «Sure? Press
+again», secondo clic e la stagione se ne va, e si disarma da sola dopo cinque
+secondi. Se quella cancellata è anche la stagione che sta nello slot di ripresa,
+lo slot viene svuotato con lei: lasciare il banner *Resume* del menu puntato a
+una stagione appena buttata via sarebbe l'archivio che mente al menu.
+
+**Riprendere.** Una stagione lasciata a metà ha un *Resume* che la riporta al
+round dov'eri. Perché funzionasse ho dovuto cambiare cosa viene archiviato:
+finché una stagione è **incompleta** l'archivio si porta dietro anche il suo
+stato vivo — mescole, telai, il rivale, la variazione di bravura di ogni IA —
+che è roba che il riassunto per lo schermo non contiene. Appena finisce, quello
+stato viene buttato: da una stagione conclusa non c'è niente da riprendere, ed
+è la parte più pesante della voce. I risultati non vengono duplicati: la copia
+viva li omette e li ritrova nella voce d'archivio.
+
+Il gioco ha **uno solo** slot di ripresa, quindi riprendere dall'archivio lo
+toglie a quello che ci stava. Non si perde niente, ed è per costruzione: ogni
+stagione viene archiviata a ogni round, quindi quella spodestata è già nella
+lista e si riprende allo stesso modo. Va nel registro di gara che è successo.
+
+Chi **non** si può riprendere: le stagioni finite (non c'è niente da riprendere)
+e quelle ricostruite da un log (un rapporto dice cosa è successo, non a che
+punto era la stagione). Il pulsante non compare, e se ci si arriva per altre
+strade la funzione risponde di no.
+
+Una stagione archiviata **prima** che l'archivio imparasse a portarsi lo stato
+non sarebbe ripresa. Quella nello slot viene rabboccata quando si passa dal
+menu, una volta sola e solo se manca davvero.
+
+**Win rate.** Colonna a destra: la quota delle gare che hai **iniziato** e hai
+vinto, con la frazione accanto in piccolo — 25% <sub>1/4</sub>. Sulle gare
+iniziate, non sui round del calendario: un Gran Premio saltato non è una gara
+che non hai vinto. Chi ha corso da spettatore ha un trattino.
+
 ## Verificato (Chromium headless, dpr 2)
 
 Gara singola con qualifiche su Oval fino al risultato (linea "shipped" ⇒
@@ -952,3 +990,20 @@ in un colpo solo**: sette stagioni sullo scaffale — fra cui due volte
 `brake-hard-813`, stesso seme e due tentativi diversi, riconosciute come
 stagioni distinte — 59 gare, 28 vittorie, 6 titoli, 1277 punti in carriera. Gli
 stessi sette file una seconda volta non aggiungono niente.
+
+Su cancella/riprendi/win rate (`test_season_actions.js`), con tre stagioni
+inventate: finita, a metà con lo stato, e a metà **senza** stato. Il tasso di
+vittorie legge 60% 3/5, 50% 1/2 e 0% 0/3; la crocetta c'è su tutte e tre, il
+*Resume* solo su una. Il primo clic sulla crocetta dice «Sure? Press again» e la
+stagione **è ancora lì**; il secondo la toglie. Poi la parte che conta: con una
+stagione già nello slot di ripresa se ne riprende un'altra dall'archivio — lo
+slot passa di mano, la ripresa riparte dal round 3, telaio, rivale e due gare
+già corse tutti al loro posto, **e la stagione spodestata è ancora nella lista e
+ancora ripristinabile**. La stagione finita e quella senza stato rifiutano.
+Infine, cancellando la stagione che teneva lo slot, lo slot resta vuoto e il
+banner *Resume* del menu sparisce.
+
+Il controllo sul timbro del build non è più legato a un numero scritto a mano:
+il test confronta il timbro con la versione con cui la pagina carica davvero
+`main.js`, che è la cosa che deve restare vera (e voleva dire modificare il test
+a ogni consegna).

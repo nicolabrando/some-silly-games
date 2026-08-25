@@ -3361,6 +3361,15 @@ function refreshChampResume() {
     const bar = document.getElementById('champ-resume-banner');
     const det = document.getElementById('crb-detail');
     const s = loadChampionshipSave();
+    // A season that was already in the slot before the archive learned to
+    // carry live state would be listed but not resumable. Topping it up here
+    // costs one write, once, and only when it is actually missing.
+    if (s) {
+        try {
+            const have = seasonsLoad().find(e => e.id === s.id);
+            if (!have || !have.state) archiveSeason(s, false);
+        } catch (e) { /* the history is not load-bearing */ }
+    }
     if (bar) bar.hidden = !s;
     if (det && s) {
         const leader = Object.keys(s.points || {})
@@ -3513,9 +3522,59 @@ function archiveSeason(state, complete) {
         bonusPoints: Object.assign({}, state.bonusPoints),
         results: state.results || []
     };
+    // While a season is UNFINISHED it also carries its whole live state, so it
+    // can be picked up again from here - months later, after three other
+    // seasons, long after the single resume slot has been handed to something
+    // else. Dropped the moment it finishes: there is nothing to resume in a
+    // season that is over. The results are left out of the copy because the
+    // entry already carries them, and they are the bulk of it.
+    if (!complete) {
+        const lean = Object.assign({}, state);
+        delete lean.results;
+        try { entry.state = JSON.parse(JSON.stringify(lean)); } catch (e) { entry.state = null; }
+    }
     const i = list.findIndex(x => x.id === entry.id);
     if (i >= 0) list[i] = entry; else list.push(entry);
     seasonsSave(list);
+}
+
+// Can this one be picked up again? It has to be unfinished, it has to have
+// rounds left, and it has to be carrying the state to do it with - which a
+// season rebuilt from a log never is: a report says what happened, not what
+// the season was in the middle of.
+function seasonResumable(e) {
+    return !!(e && !e.complete && e.state && e.done < e.rounds && !e.fromLog);
+}
+
+// Hands the single resume slot to an archived season. Nothing is lost by
+// doing so: whatever was in that slot is a season too, and every season is
+// archived at every round - so the one being displaced can be resumed from
+// this same list, the same way, afterwards.
+function resumeSeasonFromArchive(id) {
+    const e = seasonsLoad().find(x => x.id === id);
+    if (!seasonResumable(e)) return null;
+    const state = Object.assign({}, e.state, { results: e.results || [] });
+    try {
+        window.localStorage.setItem(CHAMP_STORE_KEY, JSON.stringify({ v: 1, state: state }));
+    } catch (err) { return null; }
+    // loadChampionshipSave does the shape-checking, including refusing a
+    // calendar this build can no longer drive, so resumeChampionship is the
+    // right door rather than assigning championshipState here.
+    if (!loadChampionshipSave()) return null;
+    return state;
+}
+
+function deleteSeason(id) {
+    const list = seasonsLoad();
+    const keep = list.filter(e => e.id !== id);
+    if (keep.length === list.length) return false;
+    seasonsSave(keep);
+    // If what was deleted is also the season sitting in the resume slot, that
+    // slot goes with it: leaving a Resume banner pointing at a season the
+    // player has just thrown away would be the archive lying to the menu.
+    const inSlot = loadChampionshipSave();
+    if (inSlot && inSlot.id === id) clearChampionshipSave();
+    return true;
 }
 
 // Merge, never replace: importing a file must not cost you the seasons you
@@ -4335,15 +4394,22 @@ function exRenderSeasons() {
             '</div>';
     }
 
-    host.innerHTML = '<table class="ex-seasons"><thead><tr>' +
+    host.innerHTML = '<div class="ex-scroll"><table class="ex-seasons"><thead><tr>' +
         '<th>Season</th><th>Started</th><th>Rounds</th><th>Champion</th>' +
-        '<th>You</th><th></th></tr></thead><tbody>' +
+        '<th>You</th><th title="the share of the races you started that you won">Win rate</th>' +
+        '<th></th><th></th></tr></thead><tbody>' +
         list.map(e => {
             const rows = seasonTally(e);
             const me = rows.find(r => r.isPlayer);
             const champ = rows[0];
             const place = me ? rows.indexOf(me) + 1 : null;
             const cls = e.complete ? (place === 1 ? 'sr-win' : (place && place <= 3 ? 'sr-pod' : '')) : '';
+            // Out of the races STARTED, not the rounds on the calendar: a
+            // Grand Prix you sat out is not a race you failed to win.
+            const rate = (me && me.races)
+                ? '<b>' + Math.round(100 * me.wins / me.races) + '%</b>' +
+                  '<span class="ex-sml"> ' + me.wins + '/' + me.races + '</span>'
+                : '<span class="pbk-none">—</span>';
             return '<tr class="ex-season-row" data-id="' + e.id + '">' +
                 '<td class="ex-seed">' + (e.seed || '—') + '</td>' +
                 '<td>' + exDate(e.startedAt) + '</td>' +
@@ -4351,18 +4417,103 @@ function exRenderSeasons() {
                 '<td>' + (champ ? '<span class="tt-chip" style="background:' + champ.color +
                     ';"></span> ' + champ.name : '—') + '</td>' +
                 '<td class="' + cls + '">' + (place ? 'P' + place : '—') + '</td>' +
+                '<td class="ex-rate">' + rate + '</td>' +
                 '<td class="ex-state">' + (e.fromLog
                     ? '<span class="ex-fromlog" title="rebuilt from a downloaded race log: ' +
                       'the drivers\u2019 colours and the length of the calendar were never ' +
                       'written into one">from a log</span>'
                     : (e.complete ? 'finished'
                         : (e.done >= e.rounds ? 'finished' : 'left at round ' + (e.done + 1)))) + '</td>' +
-                '</tr>';
-        }).join('') + '</tbody></table>';
+                '<td class="ex-actions">' +
+                (seasonResumable(e)
+                    ? '<button type="button" class="ex-go" data-go="' + e.id + '" ' +
+                      'title="pick this season up at round ' + (e.done + 1) + '">Resume</button>' : '') +
+                '<button type="button" class="ex-del" data-del="' + e.id + '" ' +
+                'title="delete this season from the history">&times;</button>' +
+                '</td></tr>';
+        }).join('') + '</tbody></table></div>';
 
     Array.prototype.forEach.call(host.querySelectorAll('.ex-season-row'), (tr) => {
         tr.addEventListener('click', () => exShowSeason(tr.getAttribute('data-id')));
     });
+    exWireSeasonActions(host);
+}
+
+// Resume and delete, wired the same way wherever they appear. Both live
+// INSIDE a row that opens the season, so both have to stop the click there.
+let exArmedDelete = 0;
+function exDisarmDelete() {
+    if (exArmedDelete) clearTimeout(exArmedDelete);
+    exArmedDelete = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.ex-del.armed'), (b) => {
+        b.classList.remove('armed');
+        // restored from what it said before it was armed: in the list that is
+        // a cross, in an opened season it is three words
+        b.innerHTML = b.getAttribute('data-label') || '&times;';
+    });
+}
+function exWireSeasonActions(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('.ex-go'), (b) => {
+        b.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            exResumeFromList(b.getAttribute('data-go'));
+        });
+    });
+    // Deleting a season is not undoable, so it asks - with the button itself,
+    // the way Start Championship does, rather than a browser dialog this game
+    // has never used.
+    Array.prototype.forEach.call(root.querySelectorAll('.ex-del'), (b) => {
+        b.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (!b.classList.contains('armed')) {
+                exDisarmDelete();
+                if (!b.getAttribute('data-label')) b.setAttribute('data-label', b.innerHTML);
+                b.classList.add('armed');
+                b.innerHTML = 'Sure? Press again';
+                exArmedDelete = setTimeout(exDisarmDelete, 5000);
+                return;
+            }
+            exDisarmDelete();
+            const id = b.getAttribute('data-del');
+            const gone = deleteSeason(id);
+            // back to the list if the season being looked at is the one deleted
+            const detail = document.getElementById('ex-season-detail');
+            if (detail && detail.style.display !== 'none') {
+                detail.style.display = 'none';
+                document.getElementById('ex-season-list').style.display = '';
+                document.getElementById('ex-career').style.display = '';
+            }
+            exRenderSeasons();
+            const msg = document.getElementById('ex-seasons-msg');
+            if (msg) {
+                msg.className = 'ex-io-msg';
+                msg.textContent = gone ? 'Season deleted.' : '';
+            }
+        });
+    });
+}
+
+function exResumeFromList(id) {
+    const before = loadChampionshipSave();
+    const state = resumeSeasonFromArchive(id);
+    if (!state) {
+        const msg = document.getElementById('ex-seasons-msg');
+        if (msg) {
+            msg.className = 'ex-io-msg ex-io-bad';
+            msg.textContent = 'That season cannot be picked up: it is finished, ' +
+                              'or it was rebuilt from a log and a log does not carry ' +
+                              'enough to carry on with.';
+        }
+        return;
+    }
+    document.getElementById('explore-seasons').style.display = 'none';
+    // and say what happened to the season that was in the slot, because it
+    // has not been lost and the player should not have to wonder
+    if (before && before.id !== state.id) {
+        RaceLog.event('SEASON', 'resume slot handed to season ' + (state.seed || state.id) +
+            '; ' + (before.seed || before.id) + ' stays in the history');
+    }
+    resumeChampionship();
 }
 
 function exShowSeason(id) {
@@ -4378,6 +4529,12 @@ function exShowSeason(id) {
         (entry.fromLog ? 'rebuilt from a race log'
                        : (entry.complete ? 'finished' : 'left after round ' + entry.done)) +
         '</span></div>';
+    html += '<div class="ex-io ex-io-detail">' +
+        (seasonResumable(entry)
+            ? '<button type="button" class="ex-go" data-go="' + entry.id + '">Resume at round ' +
+              (entry.done + 1) + '</button>' : '') +
+        '<button type="button" class="ex-del" data-del="' + entry.id + '">Delete this season</button>' +
+        '</div>';
     if (entry.fromLog) {
         html += '<div class="ex-note">Read back out of a downloaded race log rather than saved by ' +
             'the game. Everything here was counted from the classifications in that file &mdash; ' +
@@ -4430,6 +4587,7 @@ function exShowSeason(id) {
     host.innerHTML = html;
     // the same grid the end-of-season screen draws, from the archived season
     renderSeasonRecap(entry, document.getElementById('ex-season-grid'), 'Round by round');
+    exWireSeasonActions(host);
 
     // The career strip belongs to the list: with a season open it is 150px of
     // numbers about something else, pushing the season down the screen.

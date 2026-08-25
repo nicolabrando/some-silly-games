@@ -1675,6 +1675,33 @@ tr.ex-me td:nth-child(2) { font-weight: 700; }
     color: #b7cbe0;
 }
 .ex-note b { color: #dbe8f5; }
+/* win rate, and the two things you can do to a season */
+.ex-rate b { color: #eceff1; }
+td.ex-actions { white-space: nowrap; text-align: right; padding-left: 4px; }
+.ex-go, .ex-del {
+    width: auto;
+    margin: 0 0 0 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 5px;
+    border: 1px solid transparent;
+}
+.ex-go { background: #c9a227; color: #111; }
+.ex-go:hover { background: #ffd700; }
+.ex-del {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: #37474f;
+    color: #90a4ae;
+    padding: 4px 9px;
+}
+.ex-del:hover { background: rgba(198, 40, 40, 0.25); border-color: #c62828; color: #ffcdd2; }
+/* armed: it has been asked once and is waiting for the second press */
+.ex-del.armed { background: #c62828; border-color: #c62828; color: #fff; }
+/* the same pair inside an opened season, where they can afford words */
+.ex-io-detail { margin-top: 12px; padding-top: 0; border-top: none; }
+.ex-io-detail .ex-go, .ex-io-detail .ex-del { margin: 0 8px 0 0; padding: 8px 14px; font-size: 12.5px; }
+
 .ex-scroll { overflow-x: auto; }
 .ex-standings { margin-top: 16px; min-width: 640px; }
 .ex-standings th { padding-bottom: 6px; }
