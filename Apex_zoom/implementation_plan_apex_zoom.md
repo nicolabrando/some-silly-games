@@ -857,9 +857,29 @@ e quelle ricostruite da un log (un rapporto dice cosa è successo, non a che
 punto era la stagione). Il pulsante non compare, e se ci si arriva per altre
 strade la funzione risponde di no.
 
-Una stagione archiviata **prima** che l'archivio imparasse a portarsi lo stato
-non sarebbe ripresa. Quella nello slot viene rabboccata quando si passa dal
-menu, una volta sola e solo se manca davvero.
+**Anche quelle di prima.** La prima versione richiedeva lo stato vivo per
+riprendere, e questo rendeva definitivamente non riprendibile ogni stagione
+archiviata prima che l'archivio imparasse a tenerlo — cioè una regola su
+*quando è stato scritto il codice*, non sulla stagione, e il giocatore non ha
+modo di vederla. Adesso una stagione senza stato viene **ricostruita** da quello
+che l'archivio ha comunque: calendario, classifica, risultati e auto sono quelli
+veri; la variazione di bravura delle IA viene ritirata dallo stesso intervallo
+della partenza di stagione (deve esistere: `new AI(car, difficulty,
+p.skillVariation)` con `undefined` produce un'IA che guida a NaN) e il rivale
+della stagione viene lasciato cadere, perché inventarne uno diverso sarebbe
+peggio che non averlo. Finisce nel registro di gara, così resta scritto.
+
+Quella che sta nello slot viene comunque rabboccata col suo stato vero quando si
+passa dal menu, una volta sola e solo se manca davvero: se è lei che riprendi,
+riprendi l'originale.
+
+### Una stagione senza gare non ha un campione
+
+`flag-quick-783`, zero round su cinque, dichiarava campione «You» e ti dava P1.
+A zero gare sono tutti a zero punti e l'ordinamento restituisce il primo colore
+che trova, che è sempre il giocatore. Adesso una stagione senza risultati mostra
+un trattino in *Champion* e in *You* — è la stessa trappola che diceva «you lead
+on 0» nel banner del menu, in un'altra tabella.
 
 **Win rate.** Colonna a destra: la quota delle gare che hai **iniziato** e hai
 vinto, con la frazione accanto in piccolo — 25% <sub>1/4</sub>. Sulle gare
@@ -1007,3 +1027,10 @@ Il controllo sul timbro del build non è più legato a un numero scritto a mano:
 il test confronta il timbro con la versione con cui la pagina carica davvero
 `main.js`, che è la cosa che deve restare vera (e voleva dire modificare il test
 a ogni consegna).
+
+E una stagione **senza stato vivo** — archiviata come lo erano tutte fino a
+un'ora fa — si riprende lo stesso: ricostruita dalla voce d'archivio riparte dal
+round 4 con le tre gare già corse, 54 punti, il telaio giusto, ogni IA con una
+bravura valida e nessun rivale. Una ricostruita da un log continua a rifiutare.
+Una stagione con zero gare non nomina un campione e non ti dà una posizione, ma
+si può riprendere.

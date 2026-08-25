@@ -3538,12 +3538,59 @@ function archiveSeason(state, complete) {
     seasonsSave(list);
 }
 
-// Can this one be picked up again? It has to be unfinished, it has to have
-// rounds left, and it has to be carrying the state to do it with - which a
-// season rebuilt from a log never is: a report says what happened, not what
-// the season was in the middle of.
+// Can this one be picked up again? Unfinished, with rounds left, with a field
+// and a calendar - and not rebuilt from a log, because a report says what
+// happened, not what the season was in the middle of.
+//
+// Carrying the live state is NOT a condition. It was, for about an hour, and
+// that made every season archived before the archive learned to keep state
+// permanently unresumable - which is a rule about when the code was written
+// rather than about the season, and the player has no way to see it. A season
+// without its state is rebuilt from what the archive does hold; see below for
+// what that costs.
 function seasonResumable(e) {
-    return !!(e && !e.complete && e.state && e.done < e.rounds && !e.fromLog);
+    return !!(e && !e.complete && !e.fromLog && e.done < e.rounds &&
+              Array.isArray(e.tracks) && e.tracks.length &&
+              Array.isArray(e.participants) && e.participants.length);
+}
+
+// The state to hand the game, for a season archived before states were kept.
+// Everything here is either in the archive already or was never load-bearing:
+//   - skillVariation is re-rolled from the same range the season start uses.
+//     It has to exist: `new AI(car, difficulty, p.skillVariation)` with
+//     undefined makes an AI that drives at NaN.
+//   - the season rival is dropped. It was one opponent with 1.5% more, and
+//     inventing a different one would be worse than having none.
+//   - which KIND of wet each round was is re-rolled per round, as it is for
+//     any season whose save predates that field.
+// The calendar, the points, the results and the cars are all real.
+function rebuildSeasonState(e) {
+    const chassis = {};
+    const participants = (e.participants || []).map(p => {
+        const q = Object.assign({}, p);
+        if (q.isPlayer) {
+            q.playerIndex = q.playerIndex || 1;
+            if (q.chassis) chassis[q.playerIndex] = q.chassis;
+            q.skillVariation = 1;
+        } else if (typeof q.skillVariation !== 'number') {
+            q.skillVariation = 0.8 + Math.random() * 0.3;
+        }
+        return q;
+    });
+    return {
+        id: e.id, startedAt: e.startedAt, seed: e.seed || null,
+        tracks: e.tracks.slice(),
+        weather: (e.weather || []).slice(),
+        wetKind: [],
+        currentTrackIndex: Math.max(0, Math.min(e.done || 0, e.tracks.length)),
+        points: Object.assign({}, e.points),
+        bonusPoints: Object.assign({}, e.bonusPoints),
+        participants: participants,
+        results: e.results || [],
+        difficulty: e.difficulty || 'medium',
+        chassis: chassis,
+        rival: null
+    };
 }
 
 // Hands the single resume slot to an archived season. Nothing is lost by
@@ -3553,7 +3600,15 @@ function seasonResumable(e) {
 function resumeSeasonFromArchive(id) {
     const e = seasonsLoad().find(x => x.id === id);
     if (!seasonResumable(e)) return null;
-    const state = Object.assign({}, e.state, { results: e.results || [] });
+    const exact = !!e.state;
+    const state = exact ? Object.assign({}, e.state, { results: e.results || [] })
+                        : rebuildSeasonState(e);
+    if (!exact) {
+        RaceLog.event('SEASON', 'season ' + (state.seed || state.id) + ' picked up from the ' +
+            'history without its live state: the calendar, the standings and the results are ' +
+            'the real ones; the opponents\u2019 skill spread was re-rolled and the season ' +
+            'rival was dropped');
+    }
     try {
         window.localStorage.setItem(CHAMP_STORE_KEY, JSON.stringify({ v: 1, state: state }));
     } catch (err) { return null; }
@@ -4401,8 +4456,13 @@ function exRenderSeasons() {
         list.map(e => {
             const rows = seasonTally(e);
             const me = rows.find(r => r.isPlayer);
-            const champ = rows[0];
-            const place = me ? rows.indexOf(me) + 1 : null;
+            // Nought races means nought points for everyone, and the sort then
+            // hands back whichever driver happens to be first - which is how a
+            // season with no Grands Prix in it was announcing a champion, and
+            // that champion was always you.
+            const raced = (e.results || []).length > 0;
+            const champ = raced ? rows[0] : null;
+            const place = (raced && me) ? rows.indexOf(me) + 1 : null;
             const cls = e.complete ? (place === 1 ? 'sr-win' : (place && place <= 3 ? 'sr-pod' : '')) : '';
             // Out of the races STARTED, not the rounds on the calendar: a
             // Grand Prix you sat out is not a race you failed to win.
@@ -4548,8 +4608,11 @@ function exShowSeason(id) {
         exCell('AI', entry.difficulty || '—') +
         exCell('Your car', me && me.chassis ? (CHASSIS[me.chassis] ? CHASSIS[me.chassis].label : me.chassis) : '—') +
         exCell('Wet rounds', wet) +
-        exCell('Champion', rows[0] ? rows[0].name : '—') +
-        exCell('You', me ? 'P' + (rows.indexOf(me) + 1) : 'spectator') +
+        // as in the list: with no races run there is no champion to name
+        exCell('Champion', (entry.results || []).length && rows[0] ? rows[0].name : '—') +
+        exCell('You', ((entry.results || []).length && me)
+            ? 'P' + (rows.indexOf(me) + 1)
+            : (me ? 'not raced yet' : 'spectator')) +
         exCell('Season rival', entry.rival || '—',
                'one opponent runs the whole season with a little more') +
         '</div>';
