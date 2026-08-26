@@ -1908,6 +1908,7 @@ function makeTrackRaw(trackType) {
         case 'pentagon':     return new PentagonTrack();
         case 'maratona':     return new MaratonaTrack();
         case 'colosso':      return new ColossoTrack();
+        case 'spa':          return new SpaTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2803,7 +2804,7 @@ const TRACK_LABELS = {
     boomerang: 'Boomerang', zipper: 'Zipper', kettle: 'Kettle',
     harbour: 'Harbour', crossover: 'Crossover', kart: 'Kart',
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown',
-    maratona: 'Marathon', colosso: 'Colossus'
+    maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -2819,7 +2820,7 @@ const TRACK_CODES = {
     boomerang: 'BOO', zipper: 'ZIP', kettle: 'KET',
     harbour: 'HAR', crossover: 'CRS', kart: 'KAR',
     pettine: 'COM', thunder: 'THU', crown: 'CRW',
-    maratona: 'MAR', colosso: 'COL'
+    maratona: 'MAR', colosso: 'COL', spa: 'SPA'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -7921,10 +7922,13 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      'quadrato', 'triangle', 'pettine', 'thunder', 'crown',
                      'boomerang', 'zipper', 'kettle', 'harbour', 'crossover', 'kart',
                      'anchor', 'arrow', 'pentagon',
-                     // the big two: worlds larger than the screen, which is
-                     // what the camera is for. One turns right on balance,
-                     // one (mirrored) left, like the rest of the calendar.
-                     'maratona', 'colosso'];
+                     // the big ones: worlds larger than the screen, which is
+                     // what the camera is for. Marathon turns right on balance,
+                     // Colossus (mirrored) left, like the rest of the calendar.
+                     // Spa is the exception and stays right-handed: it is a
+                     // portrait of a real, right-handed circuit, and mirroring
+                     // it would be a portrait of somewhere else.
+                     'maratona', 'colosso', 'spa'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:

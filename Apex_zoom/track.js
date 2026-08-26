@@ -3308,3 +3308,101 @@ class ColossoTrack extends SegmentedTrack {
         this.waypoints = this.generateWaypoints();
     }
 }
+
+//  SPA. 7.5 km in a 3400x1780 world - the biggest world any circuit has asked
+//  for, and level with Marathon as the longest lap.
+//
+//  A PORTRAIT AND NOT A SURVEY. What had to survive is what the place is: the
+//  hairpin at La Source with the pit straight and the Bus Stop either side of
+//  it, the plunge and climb through Eau Rouge and Raidillon, a Kemmel straight
+//  long enough to hurt, the chicane at Les Combes, the right at Bruxelles that
+//  turns the lap back on itself, the double left at Pouhon, Fagnes, Stavelot,
+//  and the fast run home through Paul Frere and Blanchimont into the Bus Stop.
+//
+//  Two of the game's own rules fixed the drawing, and both are worth knowing
+//  before anyone edits a number here:
+//
+//  1. checkLapCross() counts a lap by crossing startX travelling in +x, so the
+//     start/finish straight HAS to run east. That fixes the rotation of the
+//     whole circuit. Rotating is safe; mirroring is not, because a mirror
+//     turns every right-hander into a left and Spa is a right-handed circuit -
+//     which is also why this one is not in mirrorVertically()'s list.
+//  2. A closed lap turns through exactly 360 degrees. Drawn corner by corner
+//     off the map it came to 466, and no chicane can absorb 106 degrees.
+//
+//  So it was not drawn, it was SOLVED: /root/tools/design_spa.js lays the lap
+//  out with a turtle - so the road is continuous by construction - and then
+//  finds the two straights either side of Courbe Paul Frere by linear algebra,
+//  which shuts the loop to four decimal places while leaving every corner the
+//  shape it was given. The straights between the corners were then searched
+//  for, against the closure, the corridor separation, the world it has to fit
+//  and the lap length wanted. That is why the coordinates below are not round
+//  numbers: they are the answer, not the input. Edit design_spa.js, not this.
+//
+//  La Source is r=92 and not the r=60 the map wants, because a hairpin of
+//  radius r brings the road back within 2r of the straight it left and two
+//  corridors here need 168px of daylight. It is still the slowest corner on
+//  the lap: radius is what makes a corner slow in this game.
+class SpaTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 3400;
+        this.worldH = 1780;
+        this.trackWidth = 62;
+        this.grassWidth = 82;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 400, y2: 0 },
+            { type: 'arc', cx: 400, cy: 92, r: 92, start: -1.5708, end: 1.39626, ccw: false },
+            { type: 'line', x1: 415.98, y1: 182.6, x2: 219.01, y2: 217.33 },
+            { type: 'arc', cx: 245.41, cy: 367.02, r: 152, start: 4.53786, end: 3.87463, ccw: true },
+            { type: 'line', x1: 132.45, y1: 265.31, x2: 45.46, y2: 361.92 },
+            { type: 'arc', cx: -64.52, cy: 262.89, r: 148, start: 0.73304, end: 1.6057, ccw: false },
+            { type: 'line', x1: -69.69, y1: 410.8, x2: -199.61, y2: 406.27 },
+            { type: 'arc', cx: -206.87, cy: 614.14, r: 208, start: 4.7473, end: 3.87463, ccw: true },
+            { type: 'line', x1: -361.44, y1: 474.96, x2: -1033.92, y2: 1221.82 },
+            { type: 'arc', cx: -1087.42, cy: 1173.64, r: 72, start: 0.73304, end: 2.02458, ccw: false },
+            { type: 'line', x1: -1118.99, y1: 1238.36, x2: -1168.42, y2: 1214.25 },
+            { type: 'arc', cx: -1197.35, cy: 1273.57, r: 66, start: 5.16617, end: 4.32842, ccw: true },
+            { type: 'line', x1: -1222.08, y1: 1212.37, x2: -1277.71, y2: 1234.85 },
+            { type: 'arc', cx: -1306.18, cy: 1164.38, r: 76, start: 1.18682, end: 2.1293, ccw: false },
+            { type: 'line', x1: -1346.45, y1: 1228.83, x2: -1439.74, y2: 1170.54 },
+            { type: 'arc', cx: -1496.97, cy: 1262.13, r: 108, start: 5.27089, end: 4.60767, ccw: true },
+            { type: 'line', x1: -1508.26, y1: 1154.72, x2: -1682.3, y2: 1173.02 },
+            { type: 'arc', cx: -1689.62, cy: 1103.4, r: 70, start: 1.46608, end: 4.08407, ccw: false },
+            { type: 'line', x1: -1730.76, y1: 1046.77, x2: -1520.42, y2: 893.94 },
+            { type: 'arc', cx: -1574.49, cy: 819.51, r: 92, start: 7.22566, end: 6.38791, ccw: true },
+            { type: 'line', x1: -1483, y1: 829.13, x2: -1470.07, y2: 706.14 },
+            { type: 'arc', cx: -1574.49, cy: 695.17, r: 105, start: 6.38791, end: 5.37561, ccw: true },
+            { type: 'line', x1: -1509.85, y1: 612.43, x2: -1565.01, y2: 569.33 },
+            { type: 'arc', cx: -1624.11, cy: 644.98, r: 96, start: 5.37561, end: 4.50295, ccw: true },
+            { type: 'line', x1: -1644.07, y1: 551.08, x2: -1869.05, y2: 598.9 },
+            { type: 'arc', cx: -1884.02, cy: 528.47, r: 72, start: 1.36136, end: 2.37365, ccw: false },
+            { type: 'line', x1: -1935.81, y1: 578.49, x2: -1987.91, y2: 524.53 },
+            { type: 'arc', cx: -2038.26, cy: 573.16, r: 70, start: 5.51524, end: 4.64258, ccw: true },
+            { type: 'line', x1: -2043.15, y1: 503.33, x2: -2137.42, y2: 509.92 },
+            { type: 'arc', cx: -2143, cy: 430.12, r: 80, start: 1.50098, end: 2.6529, ccw: false },
+            { type: 'line', x1: -2213.64, y1: 467.68, x2: -2267.63, y2: 366.14 },
+            { type: 'arc', cx: -2186.4, cy: 322.95, r: 92, start: 2.6529, end: 4.11898, ccw: false },
+            { type: 'line', x1: -2237.84, y1: 246.67, x2: -1889.65, y2: 11.81 },
+            { type: 'arc', cx: -1831.49, cy: 98.03, r: 104, start: 4.11898, end: 4.71239, ccw: false },
+            { type: 'line', x1: -1831.49, y1: -5.97, x2: -1411.49, y2: -5.97 },
+            { type: 'arc', cx: -1411.49, cy: -123.97, r: 118, start: 7.85398, end: 7.33038, ccw: true },
+            { type: 'line', x1: -1352.49, y1: -21.78, x2: -988.76, y2: -231.78 },
+            { type: 'arc', cx: -939.76, cy: -146.9, r: 98, start: 4.18879, end: 4.71239, ccw: false },
+            { type: 'line', x1: -939.76, y1: -244.9, x2: -559.76, y2: -244.9 },
+            { type: 'arc', cx: -559.76, cy: -188.9, r: 56, start: 4.71239, end: 5.93412, ccw: false },
+            { type: 'line', x1: -507.14, y1: -208.06, x2: -443.86, y2: -34.21 },
+            { type: 'arc', cx: -395, cy: -52, r: 52, start: 9.07571, end: 7.85398, ccw: true },
+            { type: 'line', x1: -395, y1: 0, x2: 0, y2: 0 }
+        ];
+
+        // 130px into the pit straight: 610px of road behind the line, which is
+        // room for a 12-car grid (35 + 11*30 = 365 back) and then some, and
+        // 260 ahead of it before the car has to stop for La Source.
+        this.startX = 130;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}

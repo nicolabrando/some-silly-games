@@ -426,13 +426,54 @@ function tyreHookAt(tyre, speed, wet) {
 //      1.12/0.92 to 1.06/0.97, and the power car's engine trimmed from 1.08
 //      to 1.05: in the wet a big engine is mostly a way of spinning the
 //      rears, since powerOversteer sits at its cap once the surface is wet.
+//
+//  A THIRD ROUND, because the calendar moved and the fit did not. Lotus,
+//  Marathon and Colossus were redrawn and Spa was added, and measured over the
+//  23 circuits as they now stand the Aero car won ONE of them and was 1.7% off
+//  the pace on average. Over races - ten cars, the field split three ways, the
+//  chassis rotated between the same ten drivers - it finished P6.20 on average
+//  against P4.60 for the Bolt, and won 3 races of 18. That is not a trade-off,
+//  it is a menu entry nobody should ever pick.
+//
+//  TWO numbers were wrong, and they are wrong at DIFFERENT RACE DISTANCES,
+//  which is why one of them alone never showed up:
+//
+//    steer 1.030 -> 1.055.  Swept across all 23 circuits, this is where the
+//      three level out on one-lap pace (deficits 0.88 / 0.89 / 0.56, against
+//      1.68 / 0.73 / 0.41 before). Over four-lap races it puts the Aero at
+//      P5.35 against P5.48 and P5.67 - the flattest the three have ever been.
+//
+//    wear 1.15 -> 1.05.  And over EIGHT-lap races the same car was straight
+//      back to P6.53, because tyre wear feeds tyrePerf, which multiplies the
+//      steering rate: the downforce it had just been given wore off exactly as
+//      the tyres did. Measured at steer 1.055, over eight laps: wear 1.15
+//      gives P6.53, wear 1.00 gives P4.97, wear 0.95 gives P5.22 - the last
+//      two are the same number inside the noise, so the whole of the effect is
+//      spent by 1.00 and 1.05 is the midpoint that lands the eight-lap race
+//      level rather than over-corrected.
+//
+//  Note WHY one number could not have done it: the two knobs bite at
+//  different race distances. Steering rate is nearly the only thing that
+//  matters over four laps and wear nearly the only thing that matters over
+//  eight, so a fit done at one distance looks perfect and is wrong at the
+//  other. The first attempt here moved steer alone, measured four-lap races,
+//  and declared victory.
+//
+//  At 1.05 the Aero is still the hardest of the three on its tyres (Bolt 1.00,
+//  Ridge 0.88), so its card is still true; it simply no longer destroys them.
+//
+//  A CAVEAT worth leaving for whoever fits this next: the race numbers above
+//  come from 12-18 races per row, which is about 60 samples per chassis, and
+//  the standard error on an average finishing position is then around 0.37.
+//  Differences smaller than about half a position are not real. What IS real
+//  is the size of what was fixed: P6.20 against P4.60 is four standard errors.
 // =========================================================================
 const CHASSIS = {
     aero: {
         key: 'aero', label: 'Aero', short: 'AER', accent: '#4dd0e1',
         line1: 'High downforce',
-        line2: 'Turns in like nothing else and drags its heels on the straight. Hard on tyres.',
-        steer: 1.030, top: 0.928, power: 1.000, grip: 1.00, wear: 1.15, brake: 1.05
+        line2: 'Turns in like nothing else and drags its heels on the straight. Hard on tyres, and it brakes latest.',
+        steer: 1.055, top: 0.928, power: 1.000, grip: 1.00, wear: 1.05, brake: 1.05
     },
     bolt: {
         key: 'bolt', label: 'Bolt', short: 'BLT', accent: '#ff7043',
