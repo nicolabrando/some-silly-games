@@ -1441,12 +1441,18 @@ button.tyre-opt:hover {
 
 
 /* --- the season's chassis choice ---------------------------------------- */
-#chassis-screen { min-width: 700px; }
+#chassis-screen { min-width: 700px; padding: 18px 34px 22px; }
+#chassis-screen h2 { margin: 4px 0 2px; }
+#chassis-screen .screen-subtitle, #chassis-subtitle { margin: 2px 0 10px; }
 
 #chassis-options {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    /* Four cars now. 2x2 rather than four across: at four the cards fell
+       under 300px and the stat bars stopped being readable. */
+    grid-template-columns: repeat(2, 1fr);
     gap: 12px;
+    max-width: 980px;
+    margin: 0 auto;
 }
 
 button.chassis-opt {
@@ -1456,7 +1462,7 @@ button.chassis-opt {
     gap: 3px;
     width: 100%;
     margin: 0;
-    padding: 16px 14px 14px;
+    padding: 10px 14px 12px;
     background: rgba(255, 255, 255, 0.06);
     border: 2px solid rgba(255, 255, 255, 0.18);
     border-radius: 10px;
@@ -1480,19 +1486,22 @@ button.chassis-opt:hover {
     border-radius: 4px;
 }
 
-/* the car itself, on the card you choose it from */
+/* the car itself, on the card you choose it from. Height-capped since the
+   fourth car arrived: at 2x2 the full-width canvas made the screen 240px
+   taller than a 900px window, and a season choice should not need scrolling. */
 .chassis-opt .ch-art {
     display: block;
-    width: 100%;
-    height: auto;
-    margin: 6px 0 2px;
+    height: 100px;
+    width: auto;
+    align-self: center;
+    margin: 4px 0 0;
     border-radius: 6px;
     background: rgba(255, 255, 255, 0.05);
 }
 
-.chassis-opt .ch-name { font-size: 21px; font-weight: 900; letter-spacing: 1px; margin-top: 6px; }
+.chassis-opt .ch-name { font-size: 19px; font-weight: 900; letter-spacing: 1px; margin-top: 2px; }
 .chassis-opt .ch-line1 { font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; }
-.chassis-opt .ch-line2 { font-size: 12px; opacity: 0.72; line-height: 1.45; margin: 6px 0 12px; min-height: 52px; }
+.chassis-opt .ch-line2 { font-size: 12px; opacity: 0.72; line-height: 1.45; margin: 4px 0 8px; min-height: 36px; }
 
 .chassis-opt .ch-stat {
     display: flex;
@@ -1965,3 +1974,13 @@ button.menu-danger {
     letter-spacing: 0.4px;
     white-space: nowrap;
 }
+
+/* the fastest-chassis pip on the circuit cards and detail */
+.ex-card-chassis { display: flex; align-items: center; justify-content: center; gap: 5px; }
+.ex-ch-pip {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex: 0 0 8px;
+}
+.ex-pace { margin-top: 8px; }

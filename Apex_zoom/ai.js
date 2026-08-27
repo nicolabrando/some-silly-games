@@ -1669,7 +1669,7 @@ AI.chooseTyre = function (driverName, laps, raining, trackKey) {
 AI.chooseChassis = function (driverName, rand) {
     const rnd = rand || Math.random;
     const s = AI_DRIVER_STYLES[driverName];
-    const score = { aero: 1, bolt: 1, ridge: 1 };
+    const score = { aero: 1, bolt: 1, ridge: 1, torque: 1 };
 
     if (s) {
         // where this driver makes their lap time
@@ -1681,16 +1681,24 @@ AI.chooseChassis = function (driverName, rand) {
         const smooth = s.steerTau - 1;                          // + = smooth
         score.ridge += smooth * 0.85;
         score.aero  += (-smooth) * 0.30;                        // sharp hands like the pointy car
+        score.torque += (-smooth) * 0.22;                       // and the loose one
 
-        // appetite for a car that moves around
-        score.bolt  += (s.err - 0.7) * 0.42;
+        // appetite for a car that moves around. This affinity used to belong
+        // to Bolt, back when Bolt carried the big engine; the engine moved to
+        // Torque when Torque was built, and the affinity moved with it -
+        // powerOversteer follows the engine, not the badge.
+        score.torque += (s.err - 0.7) * 0.42;
+        score.bolt  += (s.err - 0.7) * 0.10;
         score.ridge += (0.7 - s.err) * 0.38;
 
-        // rain
+        // rain: the grip car shines, the low-grip muscle car suffers
         score.ridge += (s.wet - 1.005) * 26;
+        score.torque -= (s.wet - 1.005) * 12;
 
-        // late brakers want the brakes and the front end
+        // late brakers want the brakes and the front end - which rules the
+        // soft-braked Torque out for them
         score.aero  += (s.brake - 1) * 1.6;
+        score.torque -= (s.brake - 1) * 0.8;
     }
 
     for (const k of CHASSIS_KEYS) score[k] = Math.max(0.08, score[k]);

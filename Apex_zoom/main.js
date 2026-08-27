@@ -2791,6 +2791,51 @@ function measureTrackStats(qTrack, raining) {
     return { lap: lap, vmax: vmax };
 }
 
+// Which chassis is quickest around each circuit - MEASURED, not inferred:
+// best of twenty-one simulated qualifying laps per chassis (three drivers,
+// seven attempts each, soft tyre, dry, medium difficulty) at the fitted
+// chassis numbers. Twenty-one because the top of a column is often decided by
+// under 0.3%, and a six-lap winner flipped on a rerun; margins that small are
+// genuine ties, which is why the circuit page shows every car's percentage
+// rather than only a name. tools/gen_pace.js regenerates this whole table; run it again
+// whenever a chassis number or a circuit changes. Every row carries the
+// geometry stamp of the circuit it measured, and chassisPaceFor() refuses to
+// serve a row whose circuit has since been redrawn - a stale "fastest car
+// here" is worse than no answer, exactly like a lap record on a road that no
+// longer exists (see pbFor, which plays the same trick with the same stamp).
+const CHASSIS_PACE = {
+    oval: { best: 'ridge', g: '1d9hxrb', pct: { aero: 0.2, bolt: 0.7, ridge: 0, torque: 1.4 } },
+    peanut: { best: 'ridge', g: 'uw84g1', pct: { aero: 0.8, bolt: 1.1, ridge: 0, torque: 0.2 } },
+    f1: { best: 'aero', g: '1rdoo7h', pct: { aero: 0, bolt: 0.7, ridge: 0.3, torque: 1.2 } },
+    circomassimo: { best: 'bolt', g: '144o0t6', pct: { aero: 2.1, bolt: 0, ridge: 1.1, torque: 0 } },
+    circle: { best: 'aero', g: '1iye08i', pct: { aero: 0, bolt: 1.9, ridge: 0.9, torque: 2.1 } },
+    serpent: { best: 'ridge', g: '1vpnpkm', pct: { aero: 0.4, bolt: 0.6, ridge: 0, torque: 1 } },
+    quadrato: { best: 'bolt', g: '13nk8zt', pct: { aero: 1.8, bolt: 0, ridge: 0.3, torque: 0.6 } },
+    triangle: { best: 'ridge', g: '1twge4u', pct: { aero: 0.3, bolt: 0.8, ridge: 0, torque: 0.5 } },
+    pettine: { best: 'aero', g: '19s8xsq', pct: { aero: 0, bolt: 1.5, ridge: 1.5, torque: 1.3 } },
+    thunder: { best: 'ridge', g: '1imiljy', pct: { aero: 0.3, bolt: 2.2, ridge: 0, torque: 1 } },
+    crown: { best: 'ridge', g: '11pc8c1', pct: { aero: 0.1, bolt: 0.8, ridge: 0, torque: 0.7 } },
+    boomerang: { best: 'bolt', g: '1foq198', pct: { aero: 1.2, bolt: 0, ridge: 0.6, torque: 0.3 } },
+    zipper: { best: 'ridge', g: 'pi16a9', pct: { aero: 0.5, bolt: 0.7, ridge: 0, torque: 0.5 } },
+    kettle: { best: 'aero', g: '1p1emhn', pct: { aero: 0, bolt: 2.1, ridge: 0.6, torque: 0.6 } },
+    harbour: { best: 'ridge', g: 'fm8fbt', pct: { aero: 0.9, bolt: 0.6, ridge: 0, torque: 0.7 } },
+    crossover: { best: 'aero', g: 'l4dbjm', pct: { aero: 0, bolt: 2, ridge: 0.5, torque: 1.8 } },
+    kart: { best: 'ridge', g: 'asjv61', pct: { aero: 0.8, bolt: 0.3, ridge: 0, torque: 0.7 } },
+    anchor: { best: 'aero', g: '13mt61c', pct: { aero: 0, bolt: 1.9, ridge: 0.7, torque: 1.8 } },
+    arrow: { best: 'aero', g: 'ixi5qt', pct: { aero: 0, bolt: 1.1, ridge: 0, torque: 1.6 } },
+    pentagon: { best: 'aero', g: '1voz5h', pct: { aero: 0, bolt: 2, ridge: 0.7, torque: 1.6 } },
+    maratona: { best: 'ridge', g: 'y3sw7f', pct: { aero: 0.1, bolt: 0.7, ridge: 0, torque: 0.9 } },
+    colosso: { best: 'aero', g: '1c7w272', pct: { aero: 0, bolt: 1.3, ridge: 0.5, torque: 1.5 } },
+    spa: { best: 'bolt', g: '1t6n78m', pct: { aero: 1.4, bolt: 0, ridge: 0.1, torque: 0.5 } }
+};
+
+function chassisPaceFor(key) {
+    const row = CHASSIS_PACE[key];
+    if (!row || !CHASSIS[row.best]) return null;
+    try { if (exGeomHash(key) !== row.g) return null; } catch (e) { return null; }
+    return row;
+}
+
 const TRACK_LABELS = {
     anchor: 'Anchor', arrow: 'Arrow', pentagon: 'Lotus',
     oval: 'Oval', peanut: 'Peanut', f1: 'F1 Circuit', circomassimo: 'Circus Maximus',
@@ -4301,6 +4346,17 @@ function exShowTrackList() {
         meta.innerText = (line.length / 1000).toFixed(2) + ' km';
         btn.appendChild(name);
         btn.appendChild(meta);
+        // the fastest chassis around here, as a coloured pip - the wall
+        // answers "where would my car shine?" the same way it answers "where
+        // do I go well?"
+        const pace = chassisPaceFor(key);
+        if (pace) {
+            const chip = document.createElement('div');
+            chip.className = 'ex-meta ex-card-chassis';
+            chip.innerHTML = '<i class="ex-ch-pip" style="background:' +
+                CHASSIS[pace.best].accent + '"></i>' + CHASSIS[pace.best].label;
+            btn.appendChild(chip);
+        }
         // and your own record here, on the card, so the wall answers "where
         // do I go well?" without opening twenty-two circuits
         const p = circuitStats(key);
@@ -4359,6 +4415,15 @@ function exOpenTrack(key) {
             ? '+' + (100 * (wet.lap - dry.lap) / dry.lap).toFixed(0) + '%' : '—'],
         ['Tightest corner', Math.round(exTightest(track)) + ' m']
     ];
+    const pace = chassisPaceFor(key);
+    // "over a lap", said out loud: Torque never tops this column ANYWHERE -
+    // its pace lives in race starts, traction and tyre life, none of which a
+    // flying lap can see - and a cell that just said "fastest chassis" would
+    // quietly call the fourth car pointless. The strip below gives every
+    // car's margin, so a 0.1% "win" reads as the tie it is.
+    if (pace) cells.push(['Fastest over a lap',
+        '<span style="color:' + CHASSIS[pace.best].accent + ';font-weight:bold;">' +
+        CHASSIS[pace.best].label + '</span>']);
 
     detail.innerHTML =
         `<div class="ex-d-head"><h2>${trackLabel(key)}</h2>` +
@@ -4375,6 +4440,12 @@ function exOpenTrack(key) {
         `driving a stint. The records below are one flying lap on fresh softs ` +
         `at alien pace &mdash; a different thing, and quicker by 10 to 30% ` +
         `depending on the circuit.</div>` +
+        (pace ? `<div class="ex-note ex-pace">Chassis around here &mdash; ` +
+            CHASSIS_KEYS.slice().sort((x, y) => pace.pct[x] - pace.pct[y]).map(k =>
+                `<b style="color:${CHASSIS[k].accent};">${CHASSIS[k].label}</b> ` +
+                (pace.pct[k] ? '+' + pace.pct[k].toFixed(1) + '%' : 'fastest'))
+            .join(' &nbsp;&middot;&nbsp; ') +
+            `. Best of twenty-one simulated qualifying laps each, dry, soft tyre.</div>` : '') +
         `<div class="ex-rec" id="ex-rec"></div>` +
         `</div></div>` +
         exTrackHistoryHtml(key);

@@ -462,11 +462,36 @@ function tyreHookAt(tyre, speed, wet) {
 //  At 1.05 the Aero is still the hardest of the three on its tyres (Bolt 1.00,
 //  Ridge 0.88), so its card is still true; it simply no longer destroys them.
 //
-//  A CAVEAT worth leaving for whoever fits this next: the race numbers above
-//  come from 12-18 races per row, which is about 60 samples per chassis, and
-//  the standard error on an average finishing position is then around 0.37.
-//  Differences smaller than about half a position are not real. What IS real
-//  is the size of what was fixed: P6.20 against P4.60 is four standard errors.
+//  A FOURTH ROUND, when the fourth car arrived - and a change of instrument.
+//  Fitting on real-time races cost forty minutes a battery; the game's own
+//  skip path (skipMode - the genuine loop with the drawing skipped) runs the
+//  same races at a few hundred times speed, so this round was fitted on
+//  48-72 races per view instead of 12-18 (tools/race_fast.js; standard error
+//  about 0.25 of a position). Three views, because the knobs bite at
+//  different distances: 4-lap dry, 4-lap wet, 8-lap dry.
+//
+//  What the batteries said, and what moved:
+//    - Bolt at top 1.098 was the class of the four-car field (P4.67 dry
+//      against a P5.5 field mean, four standard errors). top -> 1.090.
+//    - Ridge sat P5.75-5.78 dry in run after run. steer 0.992 -> 1.000.
+//    - Torque was fitted from scratch: power 1.065 -> 1.085 and top 1.025 ->
+//      1.032 for dry pace; then it faded over distance (P6.18 at 8 laps) and
+//      drowned in the wet (P5.95) - wear -> 0.92 and grip -> 1.00. Grip was
+//      the knife-edge knob: 0.985 gave P6.05 in the wet and 1.00 gave P5.53
+//      (96 races), a full half position for a percent and a half of grip,
+//      because with an engine this size the wet rear is always near the spin
+//      cap and a sliver of grip decides which side of it the car lives on.
+//      So Torque's wet-grip BAR reads +0% and its wet weakness is entirely
+//      its own engine, which is the honest version of the trade.
+//  Final spreads, at the shipped numbers: 0.30 dry, 0.47 wet (96 races),
+//  0.59 over eight laps - every view inside two standard errors, against a
+//  spread of 1.6 positions when the round began.
+//
+//  A CAVEAT worth leaving for whoever fits this next: even at 48-72 races a
+//  view, the standard error on an average finish is about 0.25 of a position.
+//  Differences under half a position are still noise, and chasing them is
+//  how a fit starts oscillating. Fit to three views at once, accept anything
+//  inside two standard errors, and stop.
 // =========================================================================
 const CHASSIS = {
     aero: {
@@ -479,16 +504,29 @@ const CHASSIS = {
         key: 'bolt', label: 'Bolt', short: 'BLT', accent: '#ff7043',
         line1: 'Low drag, long legs',
         line2: 'Fastest thing on the straight by a distance. It does not want to turn.',
-        steer: 0.978, top: 1.098, power: 1.000, grip: 0.98, wear: 1.00, brake: 0.97
+        steer: 0.978, top: 1.090, power: 1.000, grip: 0.98, wear: 1.00, brake: 0.97
     },
     ridge: {
         key: 'ridge', label: 'Ridge', short: 'RDG', accent: '#9ccc65',
         line1: 'Understeer, but it lasts',
         line2: 'Washes wide if you rush it. Still on its tyres at the end, and quick in the rain.',
-        steer: 0.992, top: 1.005, power: 0.985, grip: 1.04, wear: 0.88, brake: 1.02
+        steer: 1.000, top: 1.005, power: 0.985, grip: 1.04, wear: 0.88, brake: 1.02
+    },
+    // The fourth car, added a year after the first three, because the three
+    // majors were downforce, drag and durability and nobody had built the
+    // engine. `power` was the one knob no chassis had ever majored in - and it
+    // is the one with a built-in vice, since powerOversteer is DERIVED from it
+    // (demand = enginePower / speed): the muscular car is genuinely the loose
+    // one, no separate fudge needed. Numbers fitted the same way as the other
+    // three - races, not lap times; see the fourth fitting round below.
+    torque: {
+        key: 'torque', label: 'Torque', short: 'TRQ', accent: '#ba68c8',
+        line1: 'Big engine, loose rear',
+        line2: 'Fires out of the slow corners like nothing else, and the tail wants to come along. Soft brakes.',
+        steer: 0.975, top: 1.032, power: 1.085, grip: 1.00, wear: 0.92, brake: 0.96
     }
 };
-const CHASSIS_KEYS = ['aero', 'bolt', 'ridge'];
+const CHASSIS_KEYS = ['aero', 'bolt', 'ridge', 'torque'];
 const CHASSIS_DEFAULT = 'ridge';
 
 // ===========================================================================
@@ -540,6 +578,11 @@ const CHASSIS_DEFAULT = 'ridge';
 //    RIDGE - a car built to last. The widest, boxiest sidepods with cooling
 //            louvres cut into them, a big roll hoop, heavy shoulders, a
 //            blunter nose and a conventional wing at each end.
+//    TORQUE - a dragster in a single-seater's clothes. The biggest airbox in
+//            the field feeding the biggest engine, narrow front tyres and
+//            ENORMOUS rears - wider than Bolt's, because there is even more
+//            engine to put on the road - modest single-element wings, and a
+//            wide flat engine cover. The stance says it before the stats do.
 //
 //  The thin coloured band on the inner sidewall of each tyre is the compound,
 //  the same colours as the timing tower - the one place in the game where you
@@ -558,6 +601,8 @@ const CHASSIS_ART = {
     bolt: {
         fwSpan: 3.9, fwD: 1.6, fwTwo: false, fwEndL: 2.0,
         rwSpan: 2.6, rwD: 1.6, rwTwo: false,
+        // rtW 3.9: the fattest rears of the ORIGINAL three - Torque, which
+        // carries even more engine, has since out-fattened it (4.2).
         ftW: 2.4, rtW: 3.9,
         noseW: 0.55, noseBase: 1.6,
         podW: 3.9, podTail: 1.3, podNose: 1.7,
@@ -572,6 +617,15 @@ const CHASSIS_ART = {
         podW: 4.9, podTail: 2.2, podNose: 2.9,
         spine: 1.9,
         barge: false, winglet: false, fin: 0, louvres: 3, hoop: 1.9
+    },
+    torque: {
+        fwSpan: 4.8, fwD: 1.8, fwTwo: false, fwEndL: 2.2,
+        rwSpan: 3.0, rwD: 1.9, rwTwo: false,
+        ftW: 2.3, rtW: 4.2,                    // the dragster stance
+        noseW: 0.75, noseBase: 1.9,
+        podW: 4.4, podTail: 1.8, podNose: 2.4,
+        spine: 2.0,
+        barge: false, winglet: false, fin: 0, louvres: 0, hoop: 2.2
     }
 };
 
