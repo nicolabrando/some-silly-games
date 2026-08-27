@@ -1970,6 +1970,7 @@ function makeTrackRaw(trackType) {
         case 'maratona':     return new MaratonaTrack();
         case 'colosso':      return new ColossoTrack();
         case 'spa':          return new SpaTrack();
+        case 'suzuka':       return new SuzukaTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2865,29 +2866,30 @@ function measureTrackStats(qTrack, raining) {
 // here" is worse than no answer, exactly like a lap record on a road that no
 // longer exists (see pbFor, which plays the same trick with the same stamp).
 const CHASSIS_PACE = {
-    oval: { best: 'ridge', g: '1d9hxrb', pct: { aero: 0.2, bolt: 0.7, ridge: 0, torque: 1.4 } },
-    peanut: { best: 'ridge', g: 'uw84g1', pct: { aero: 0.8, bolt: 1.1, ridge: 0, torque: 0.2 } },
-    f1: { best: 'aero', g: '1rdoo7h', pct: { aero: 0, bolt: 0.7, ridge: 0.3, torque: 1.2 } },
-    circomassimo: { best: 'bolt', g: '144o0t6', pct: { aero: 2.1, bolt: 0, ridge: 1.1, torque: 0 } },
-    circle: { best: 'aero', g: '1iye08i', pct: { aero: 0, bolt: 1.9, ridge: 0.9, torque: 2.1 } },
-    serpent: { best: 'ridge', g: '1vpnpkm', pct: { aero: 0.4, bolt: 0.6, ridge: 0, torque: 1 } },
-    quadrato: { best: 'bolt', g: '13nk8zt', pct: { aero: 1.8, bolt: 0, ridge: 0.3, torque: 0.6 } },
-    triangle: { best: 'ridge', g: '1twge4u', pct: { aero: 0.3, bolt: 0.8, ridge: 0, torque: 0.5 } },
-    pettine: { best: 'aero', g: '19s8xsq', pct: { aero: 0, bolt: 1.5, ridge: 1.5, torque: 1.3 } },
-    thunder: { best: 'ridge', g: '1imiljy', pct: { aero: 0.3, bolt: 2.2, ridge: 0, torque: 1 } },
-    crown: { best: 'ridge', g: '11pc8c1', pct: { aero: 0.1, bolt: 0.8, ridge: 0, torque: 0.7 } },
-    boomerang: { best: 'bolt', g: '1foq198', pct: { aero: 1.2, bolt: 0, ridge: 0.6, torque: 0.3 } },
-    zipper: { best: 'ridge', g: 'pi16a9', pct: { aero: 0.5, bolt: 0.7, ridge: 0, torque: 0.5 } },
-    kettle: { best: 'aero', g: '1p1emhn', pct: { aero: 0, bolt: 2.1, ridge: 0.6, torque: 0.6 } },
-    harbour: { best: 'ridge', g: 'fm8fbt', pct: { aero: 0.9, bolt: 0.6, ridge: 0, torque: 0.7 } },
-    crossover: { best: 'aero', g: 'l4dbjm', pct: { aero: 0, bolt: 2, ridge: 0.5, torque: 1.8 } },
-    kart: { best: 'ridge', g: 'asjv61', pct: { aero: 0.8, bolt: 0.3, ridge: 0, torque: 0.7 } },
-    anchor: { best: 'aero', g: '13mt61c', pct: { aero: 0, bolt: 1.9, ridge: 0.7, torque: 1.8 } },
-    arrow: { best: 'aero', g: 'ixi5qt', pct: { aero: 0, bolt: 1.1, ridge: 0, torque: 1.6 } },
-    pentagon: { best: 'aero', g: '1voz5h', pct: { aero: 0, bolt: 2, ridge: 0.7, torque: 1.6 } },
-    maratona: { best: 'ridge', g: 'y3sw7f', pct: { aero: 0.1, bolt: 0.7, ridge: 0, torque: 0.9 } },
-    colosso: { best: 'aero', g: '1c7w272', pct: { aero: 0, bolt: 1.3, ridge: 0.5, torque: 1.5 } },
-    spa: { best: 'bolt', g: '1t6n78m', pct: { aero: 1.4, bolt: 0, ridge: 0.1, torque: 0.5 } }
+    oval: { best: 'ridge', g: '1d9hxrb', pct: { aero: 1.4, bolt: 2.1, ridge: 0, torque: 1 } },
+    peanut: { best: 'ridge', g: 'uw84g1', pct: { aero: 1.3, bolt: 0.5, ridge: 0, torque: 1.5 } },
+    f1: { best: 'aero', g: '1rdoo7h', pct: { aero: 0, bolt: 0.4, ridge: 0.3, torque: 0.7 } },
+    circomassimo: { best: 'bolt', g: '144o0t6', pct: { aero: 2.1, bolt: 0, ridge: 0.2, torque: 0.3 } },
+    circle: { best: 'aero', g: '1iye08i', pct: { aero: 0, bolt: 1.7, ridge: 1.7, torque: 1.4 } },
+    serpent: { best: 'aero', g: '1vpnpkm', pct: { aero: 0, bolt: 0.9, ridge: 0.2, torque: 1 } },
+    quadrato: { best: 'ridge', g: '13nk8zt', pct: { aero: 2, bolt: 0.6, ridge: 0, torque: 1 } },
+    triangle: { best: 'ridge', g: '1twge4u', pct: { aero: 0.8, bolt: 0.8, ridge: 0, torque: 0.8 } },
+    pettine: { best: 'aero', g: '19s8xsq', pct: { aero: 0, bolt: 1.4, ridge: 0.9, torque: 1.4 } },
+    thunder: { best: 'aero', g: '1imiljy', pct: { aero: 0, bolt: 0.5, ridge: 0.2, torque: 0.2 } },
+    crown: { best: 'ridge', g: '11pc8c1', pct: { aero: 0.3, bolt: 0.5, ridge: 0, torque: 1.1 } },
+    boomerang: { best: 'bolt', g: '1foq198', pct: { aero: 1.4, bolt: 0, ridge: 0.6, torque: 1.1 } },
+    zipper: { best: 'ridge', g: 'pi16a9', pct: { aero: 1.1, bolt: 1.2, ridge: 0, torque: 0.1 } },
+    kettle: { best: 'ridge', g: '1p1emhn', pct: { aero: 0.5, bolt: 0.6, ridge: 0, torque: 0.6 } },
+    harbour: { best: 'ridge', g: 'fm8fbt', pct: { aero: 0.9, bolt: 0.3, ridge: 0, torque: 0.6 } },
+    crossover: { best: 'aero', g: 'l4dbjm', pct: { aero: 0, bolt: 2, ridge: 0.6, torque: 1.9 } },
+    kart: { best: 'bolt', g: 'asjv61', pct: { aero: 0.6, bolt: 0, ridge: 0, torque: 0.4 } },
+    anchor: { best: 'aero', g: '13mt61c', pct: { aero: 0, bolt: 2, ridge: 1, torque: 1.4 } },
+    arrow: { best: 'aero', g: 'ixi5qt', pct: { aero: 0, bolt: 1.3, ridge: 0.3, torque: 0.3 } },
+    pentagon: { best: 'aero', g: '1voz5h', pct: { aero: 0, bolt: 1.1, ridge: 0.3, torque: 0.9 } },
+    maratona: { best: 'ridge', g: 'y3sw7f', pct: { aero: 0.2, bolt: 0.5, ridge: 0, torque: 0.5 } },
+    colosso: { best: 'aero', g: '1c7w272', pct: { aero: 0, bolt: 0.8, ridge: 0.4, torque: 1 } },
+    spa: { best: 'bolt', g: '1t6n78m', pct: { aero: 2.8, bolt: 0, ridge: 0.4, torque: 0.7 } },
+    suzuka: { best: 'bolt', g: '1tp2v7z', pct: { aero: 2.6, bolt: 0, ridge: 0.9, torque: 0.9 } }
 };
 
 function chassisPaceFor(key) {
@@ -2910,7 +2912,7 @@ const TRACK_LABELS = {
     boomerang: 'Boomerang', zipper: 'Zipper', kettle: 'Kettle',
     harbour: 'Harbour', crossover: 'Crossover', kart: 'Kart',
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown',
-    maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa'
+    maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -2926,7 +2928,7 @@ const TRACK_CODES = {
     boomerang: 'BOO', zipper: 'ZIP', kettle: 'KET',
     harbour: 'HAR', crossover: 'CRS', kart: 'KAR',
     pettine: 'COM', thunder: 'THU', crown: 'CRW',
-    maratona: 'MAR', colosso: 'COL', spa: 'SPA'
+    maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -8276,7 +8278,7 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      // Spa is the exception and stays right-handed: it is a
                      // portrait of a real, right-handed circuit, and mirroring
                      // it would be a portrait of somewhere else.
-                     'maratona', 'colosso', 'spa'];
+                     'maratona', 'colosso', 'spa', 'suzuka'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:

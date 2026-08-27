@@ -3406,3 +3406,106 @@ class SpaTrack extends SegmentedTrack {
         this.waypoints = this.generateWaypoints();
     }
 }
+
+
+//  SUZUKA. 6.7 km in a 2080x2290 world - the game's first TALL world, because
+//  the lap-counter rule (checkLapCross counts a lap crossing startX eastbound)
+//  pins the pit straight east-west, and this circuit is a portrait of a place
+//  whose long axis then comes out vertical.
+//
+//  A portrait of Suzuka, loosely: a First Corner that hooks through 170
+//  degrees in two bites, THE ESSES - see below, they are the point of the
+//  place - Dunlop, a vestigial Degner, the kinked underpass run to the
+//  HAIRPIN, 200R, a Spoon that is itself a small pair of esses, a 1005px
+//  backstretch carried OVER the bridge, the 130R sweep into the Casio
+//  chicane, and a long Last Curve. And the thing that makes it Suzuka rather
+//  than anywhere else: the lap CROSSES ITSELF - a figure of eight, the
+//  second on the calendar after Crossover, with the backstretch carried over
+//  the hairpin approach (bridgeOverFirst false: you pass under first, and
+//  three corners later you are the traffic above), crossing at 70 degrees.
+//
+//  THE ESSES are six alternating 100-degree corners at r120, and their depth
+//  is a designed threshold, found by measuring rather than luck. The road
+//  swings 65px either side of its mean line. The AI racing line's sideways
+//  budget is 46px, so the OPTIMISED line cannot straighten them - measured,
+//  it slaloms at the road's own radius, flat to the stops at every apex. The
+//  PLAYER's budget is the half-road minus half a car plus the kerb: 60 - 7 +
+//  16 = 69px. So the straight line through the esses exists, only over the
+//  kerbs, at full commitment, with 4px to spare: you can drive them straight
+//  and the AI never will. Nicola chose this layout off the preview sheet,
+//  and the chassis-parity brief the first draft was built to was dropped at
+//  the same moment - this circuit is allowed to prefer whoever it prefers.
+//
+//  A figure of eight turns through ZERO net degrees, not 360, so its corner
+//  angles must cancel - the design tool balances them by computing the Last
+//  Curve's sweep as whatever brings the sum home. It also splits handedness
+//  almost evenly by construction, which is why this circuit, like Crossover,
+//  is not in the mirror list and owes the ring fingers nothing.
+//
+//  Drawn, searched and checked by /root/tools/design_suzuka.js: closure to
+//  the pixel, EXACTLY one self-crossing, corridor separation 181px everywhere
+//  the bridge approach is not (the rule stands down within 200px of the
+//  crossing, where two roads converging is the whole idea). Edit that tool,
+//  not these numbers.
+class SuzukaTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 2080;
+        this.worldH = 2290;
+        this.trackWidth = 60;
+        this.grassWidth = 80;
+        this.hasBridge = true;
+        // the backstretch (later in the lap) is the road on the deck
+        this.bridgeOverFirst = false;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 475, y2: 0 },
+            { type: 'arc', cx: 475, cy: 170, r: 170, start: -1.5708, end: -0.41888, ccw: false },
+            { type: 'arc', cx: 534.38, cy: 143.56, r: 105, start: -0.41888, end: 1.39626, ccw: false },
+            { type: 'line', x1: 552.61, y1: 246.97, x2: 419.66, y2: 270.41 },
+            { type: 'arc', cx: 440.5, cy: 388.59, r: 120, start: 4.53786, end: 2.79253, ccw: true },
+            { type: 'line', x1: 327.74, y1: 429.63, x2: 343.47, y2: 472.85 },
+            { type: 'arc', cx: 230.71, cy: 513.9, r: 120, start: -0.34907, end: 1.39626, ccw: false },
+            { type: 'line', x1: 251.55, y1: 632.07, x2: 206.25, y2: 640.06 },
+            { type: 'arc', cx: 227.08, cy: 758.24, r: 120, start: 4.53786, end: 2.79253, ccw: true },
+            { type: 'line', x1: 114.32, y1: 799.28, x2: 130.05, y2: 842.51 },
+            { type: 'arc', cx: 17.29, cy: 883.55, r: 120, start: -0.34907, end: 1.39626, ccw: false },
+            { type: 'line', x1: 38.13, y1: 1001.73, x2: -7.17, y2: 1009.71 },
+            { type: 'arc', cx: 13.66, cy: 1127.89, r: 120, start: 4.53786, end: 2.79253, ccw: true },
+            { type: 'line', x1: -99.1, y1: 1168.93, x2: -83.37, y2: 1212.16 },
+            { type: 'arc', cx: -196.13, cy: 1253.2, r: 120, start: -0.34907, end: 1.39626, ccw: false },
+            { type: 'line', x1: -175.29, y1: 1371.38, x2: -254.08, y2: 1385.27 },
+            { type: 'arc', cx: -233.24, cy: 1503.45, r: 120, start: 4.53786, end: 2.89725, ccw: true },
+            { type: 'line', x1: -349.67, y1: 1532.48, x2: -330.32, y2: 1610.1 },
+            { type: 'arc', cx: -409.88, cy: 1629.94, r: 82, start: -0.24435, end: 0.5236, ccw: false },
+            { type: 'line', x1: -338.87, y1: 1670.94, x2: -353.87, y2: 1696.92 },
+            { type: 'arc', cx: -416.22, cy: 1660.92, r: 72, start: 0.5236, end: 0.76794, ccw: false },
+            { type: 'line', x1: -364.43, y1: 1710.94, x2: -557.5, y2: 1910.86 },
+            { type: 'arc', cx: -643.82, cy: 1827.5, r: 120, start: 0.76794, end: 1.01229, ccw: false },
+            { type: 'line', x1: -580.23, y1: 1929.27, x2: -631.11, y2: 1961.06 },
+            { type: 'arc', cx: -595.08, cy: 2018.73, r: 68, start: 4.15388, end: 1.53589, ccw: true },
+            { type: 'line', x1: -592.7, y1: 2086.69, x2: -432.8, y2: 2081.11 },
+            { type: 'arc', cx: -439.78, cy: 1881.23, r: 200, start: 1.53589, end: 0.90757, ccw: true },
+            { type: 'line', x1: -316.65, y1: 2038.83, x2: 187.68, y2: 1644.81 },
+            { type: 'arc', cx: 126.11, cy: 1566, r: 100, start: 0.90757, end: 0.20944, ccw: true },
+            { type: 'line', x1: 223.93, y1: 1586.8, x2: 250.96, y2: 1459.64 },
+            { type: 'arc', cx: 164.88, cy: 1441.34, r: 88, start: 0.20944, end: -0.5236, ccw: true },
+            { type: 'line', x1: 241.09, y1: 1397.34, x2: -261.41, y2: 526.98 },
+            { type: 'arc', cx: -434.62, cy: 626.98, r: 200, start: -0.5236, end: -0.94248, ccw: true },
+            { type: 'line', x1: -317.06, y1: 465.18, x2: -434.37, y2: 379.95 },
+            { type: 'arc', cx: -403.8, cy: 337.88, r: 52, start: -4.08407, end: -2.89725, ccw: false },
+            { type: 'line', x1: -454.26, y1: 325.3, x2: -443.13, y2: 280.67 },
+            { type: 'arc', cx: -489.7, cy: 269.06, r: 48, start: 0.24435, end: -0.69813, ccw: true },
+            { type: 'arc', cx: -341.86, cy: 145, r: 145, start: -3.83972, end: -1.5708, ccw: false },
+            { type: 'line', x1: -341.86, y1: 0, x2: 0, y2: 0 }
+        ];
+
+        // 130px past the turtle origin: 596px of road behind the line (the
+        // solved final straight plus the origin run) for a 12-car grid, and
+        // 320px ahead before First Corner asks anything of anybody.
+        this.startX = 130;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}

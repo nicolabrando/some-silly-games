@@ -1071,6 +1071,67 @@ class AI {
         const safeGap = Math.max(AI_MIN_GAP, (this.p.safeGap + 26 * caution) *
                         (1 - AI_ATTACK_GAP * atkGap));
 
+        // ---- the esses rule ---------------------------------------------
+        // Racing alongside through ALTERNATING tight corners is how mid-pack
+        // cars destroy each other. Suzuka's wreck map (27 Aug 2026) at
+        // Impossible: 4.3 retirements a race, 103 of 104 fatal blows were
+        // car-on-car, nearly all on lap 1 in the esses - and none of them
+        // during the start caution, so the column hold was innocent. The
+        // mechanism: the alongside law below grants a car speed to hold a
+        // position two-wide, which through one corner is a race and through
+        // six alternating ones is a demolition derby - the racing line swings
+        // 65px per arc, the two lanes have to cross, and the wheel-to-wheel
+        // push grinds both cars along the kerbs six times in a row.
+        //
+        // So, real racecraft: nobody holds a car around the outside of a
+        // slalom. When the line ahead alternates - a strong left run AND a
+        // strong right run (radius < 300 sustained for ~50px each way) inside
+        // the next 420px - the TRAILING car of an alongside pair gives up its
+        // alongside rights, lifts to ~93% of the leader's speed and folds
+        // back onto the line behind. One corner, a hairpin, a T1 complex all
+        // stay one-signed in this window, so normal passing is untouched;
+        // Spa's Bus Stop and the whole of Pettine flag too, which is correct
+        // - they are slaloms.
+        //
+        // Measured (suzuka_wreckmap2, 24 races each). Suzuka at Impossible:
+        // 4.33 -> 2.00 retirements a race; at Medium 0.5-0.97 -> 0.00. The
+        // classics with the rule live: pettine 0.38, f1 0.25, oval 0.71 -
+        // the healthy band. The same instrument put SPA at 2.42, nearly all
+        // lap 1 at Eau Rouge: the identical two-wide-through-a-swing
+        // mechanism, but at radii above this detector's 300 threshold, so
+        // the rule does not reach it. Raising the threshold would flag fast
+        // flowing sections on half the calendar and needs its own broad
+        // regression pass - left measured and undone, deliberately.
+        let _slalom = null;
+        const slalomAhead = () => {
+            if (_slalom !== null) return _slalom;
+            const N = line.count, nodes = line.nodes;
+            const lookN = Math.min(Math.ceil(420 / line.ds), N - 1);
+            let runL = 0, runR = 0, hasL = false, hasR = false;
+            // The window starts a little BEHIND the car: without that, the
+            // rule expired two arcs before the exit (the window ahead was
+            // all one sign by then) and the deaths simply moved to the last
+            // esses - measured, seg13-16 took over from seg6-8.
+            for (let o = -10; o < lookN; o++) {
+                const j = (i + o + N) % N;
+                const nd = nodes[j];
+                if ((nd.radius || 1e9) < 300) {
+                    const n2 = nodes[(j + 2) % N];
+                    const cross = nd.tx * n2.ty - nd.ty * n2.tx;
+                    if (cross > 0) { runL++; runR = 0; }
+                    else if (cross < 0) { runR++; runL = 0; }
+                } else { runL = 0; runR = 0; }
+                if (runL >= 6) hasL = true; else if (runR >= 6) hasR = true;
+                if (hasL && hasR) break;
+            }
+            return (_slalom = hasL && hasR);
+        };
+        // Who gives way in a pair: whoever is behind - and a dead-even pair
+        // (|fwd| <= 2, where neither reads as trailing) is broken by list
+        // order, so exactly one of the two backs out instead of neither.
+        const yieldsTo = (fwd, other) => fwd > 2 ||
+            (fwd > -2 && cars.indexOf(car) > cars.indexOf(other));
+
         if (typeof cars !== 'undefined' && cars.length > 1) {
             const tx = here.tx, ty = here.ty;
             const nx = here.nx, ny = here.ny;
@@ -1104,11 +1165,17 @@ class AI {
                         const ourFwd0 = car.velocity.x * tx + car.velocity.y * ty;
                         const obstacle = theirFwd0 < 80 || theirFwd0 < 0.6 * ourFwd0;
 
+                        // The esses rule (above): trailing into a slalom, the
+                        // move is off - no aiming beside them, and no
+                        // alongside speed rights below. A stopped car is
+                        // still swerved round: obstacles override the rule.
+                        const bail = !obstacle && slalomAhead() && yieldsTo(fwd, other);
+
                         // Choose a side - but only if a move is actually on.
                         // Beyond AI_PASS_RANGE we hold the racing line and use
                         // the speed cap below, which is what keeps a queue a
                         // queue instead of a fan.
-                        if (fwd < (obstacle ? 140 : AI_PASS_RANGE)) {
+                        if (!bail && fwd < (obstacle ? 140 : AI_PASS_RANGE)) {
                         hasTarget = true;
                         // The side with the most room is the outside of the
                         // corner, and the outside is the long way round. Give
@@ -1146,7 +1213,15 @@ class AI {
                         // ---- car following: never drive into their gearbox
                         if (fwd > -6 && Math.abs(side) < 30) {
                             const theirFwd = other.velocity.x * tx + other.velocity.y * ty;
-                            const gap = fwd - safeGap;
+                            // Through a slalom, following distance is not
+                            // about braking - the car ahead SWINGS, and a
+                            // nose inside its swing envelope gets clipped by
+                            // crossing paths. Hold back roughly an arc: the
+                            // 16-21px race gap at Impossible reads as
+                            // "share the arc with me", and the wreck map
+                            // shows how that ends. Attack mode does not get
+                            // to shrink this one.
+                            const gap = fwd - safeGap - (slalomAhead() ? 55 : 0);
                             let v = theirFwd + gap * this.p.gapGain;
                             if (v < 0) v = 0;
                             // The follow law above is for a car that is MOVING:
@@ -1174,7 +1249,14 @@ class AI {
                             // level, matched pace, and dropped back into the
                             // queue. The field finished in grid order.
                             const clear = Math.abs(side);
-                            if (clear >= AI_CLEAR_SIDE) {
+                            if (bail) {
+                                // Tuck in: drop to 93% of their pace until
+                                // we are clearly behind. The floor keeps a
+                                // conceding car rolling - a crawler in the
+                                // middle of a slalom is an obstacle.
+                                const tuck = Math.max(45, theirFwd * 0.93);
+                                if (tuck < v) v = tuck;
+                            } else if (clear >= AI_CLEAR_SIDE) {
                                 // On a different line: free to outpace them.
                                 // Bounded rather than uncapped - lifting the
                                 // cap entirely let a car arrive alongside at
@@ -1225,6 +1307,13 @@ class AI {
                             const concede = Math.max(60, theirFwd * 0.95);
                             if (concede < this.followSpeed) this.followSpeed = concede;
                         }
+                    } else if (slalomAhead() && yieldsTo(fwd, other)) {
+                        // The esses rule again: wheel to wheel with a slalom
+                        // coming, the trailing car backs out BEFORE the
+                        // contact, not after it.
+                        const theirFwd = other.velocity.x * tx + other.velocity.y * ty;
+                        const concede = Math.max(45, theirFwd * 0.93);
+                        if (concede < this.followSpeed) this.followSpeed = concede;
                     }
                 }
             }
