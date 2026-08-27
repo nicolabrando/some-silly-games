@@ -96,6 +96,15 @@ function cameraTargets() {
     const out = [];
     if (playerCar && live(playerCar)) out.push(playerCar);
     if (player2Car && live(player2Car)) out.push(player2Car);
+    // A driver out of the race who picked a car from the tower is watching
+    // THAT car, not their own hulk waiting for the crane. spectatePick() is
+    // null while the player is still racing, so this can never steal the
+    // camera from a live drive.
+    const pick = spectatePick();
+    if (pick && pick !== playerCar && live(pick) &&
+        (!out.length || (out.length === 1 && out[0] === playerCar))) {
+        return [pick];
+    }
     if (!out.length) {
         const c = hudCar() || raceLeader();
         if (c) out.push(c);
@@ -542,7 +551,23 @@ let weekendChassisAsked = false;
 //  It falls back to the leader when nothing is picked, and also when the car
 //  you picked is out of the race - a HUD frozen on a wreck is worse than one
 //  that moves on.
+//
+//  And since zoom29 the same pick is open to a driver whose own race is OVER:
+//  wrecked (or already across the line), you click a name in the tower and
+//  the camera and the whole panel become that driver's - their lap, their
+//  speed, their tyre - until you click them again, or click your own name,
+//  which puts you back on your wreck. With no pick made, nothing changes:
+//  the death cam parks on your car exactly as it always did.
 let spectateCar = null;
+
+// Who may pick a car out of the tower: a spectator (no seat at all), or a
+// seat-one driver with nothing left to drive. Never in two-player - the
+// screen belongs to whoever is still racing.
+function spectateEligible() {
+    if (twoPlayer) return false;
+    if (!playerCar) return true;
+    return !!(playerCar.isBroken || playerCar.finished);
+}
 
 function raceLeader() {
     let best = null, bestLap = -1, bestProg = -1;
@@ -556,21 +581,30 @@ function raceLeader() {
     return best;
 }
 
-function hudCar() {
-    if (twoPlayer) return null;              // each seat has its own card
-    if (playerCar) return playerCar;
-    if (spectateCar && cars.indexOf(spectateCar) >= 0 &&
-        !(spectateCar.isBroken && !spectateCar.finished)) return spectateCar;
-    return raceLeader();
+// The tower pick, when it is currently valid: eligible to spectate, the car
+// still in this race, and not a wreck (a HUD frozen on a wreck is worse than
+// one that moves on). Null otherwise.
+function spectatePick() {
+    if (!spectateEligible() || !spectateCar) return null;
+    if (cars.indexOf(spectateCar) < 0) return null;
+    if (spectateCar.isBroken && !spectateCar.finished) return null;
+    return spectateCar;
 }
 
-// Clicking a row in the tower follows that car. Only while spectating: with a
-// car of your own the panel is about you and nothing else.
+function hudCar() {
+    if (twoPlayer) return null;              // each seat has its own card
+    const pick = spectatePick();
+    if (playerCar) return (pick && pick !== playerCar) ? pick : playerCar;
+    return pick || raceLeader();
+}
+
+// Clicking a row in the tower follows that car - for a spectator, and for a
+// driver whose race is over. Clicking the row again, or your own row, lets go.
 function spectateFollow(idx) {
-    if (playerCar || twoPlayer) return;
+    if (!spectateEligible()) return;
     const c = cars[idx];
     if (!c) return;
-    spectateCar = (spectateCar === c) ? null : c;   // click again to let go
+    spectateCar = (spectateCar === c || c === playerCar) ? null : c;
 }
 
 function anyoneDriving() {
@@ -2299,6 +2333,7 @@ function startQualifying(forceTrackType) {
     ais = [];
     playerCar = null;
     player2Car = null;
+    spectateCar = null;   // a tower pick belongs to one race only
 
     const humans = pendingField.filter(p => p.isPlayer);
     twoPlayer = humans.length > 1;
@@ -5636,6 +5671,7 @@ function startGame(forceTrackType = null) {
     ais = [];
     playerCar = null; // Reset playerCar
     player2Car = null;
+    spectateCar = null;   // a tower pick belongs to one race only
 
     // Find closest waypoint to start line
     let startIdx = 0;
@@ -6927,6 +6963,12 @@ function endPracticeSession() {
 }
 
 function updateHUD() {
+    // A pick that wrecked or is no longer in the race lets go by itself: the
+    // ring in the tower must never sit on a car the panel has stopped
+    // following. (Finished cars stay followable - the cool-down is theirs.)
+    if (spectateCar && (cars.indexOf(spectateCar) < 0 ||
+        (spectateCar.isBroken && !spectateCar.finished))) spectateCar = null;
+
     const dnfTimerDiv = document.getElementById('dnf-timer');
     if (firstFinisherTime && !raceFinished) {
         const timeLeft = Math.max(0, dnfWindowMs / 1000 - (raceNow() - firstFinisherTime) / 1000);
@@ -7159,7 +7201,9 @@ function updateHUD() {
             // rebuilt from innerHTML every frame - a listener attached here
             // would be thrown away before it could ever fire.
             const idx = cars.indexOf(c);
-            const spect = !playerCar && !twoPlayer;
+            // Clickable for a spectator - and for a driver whose own race is
+            // over (DNF or finished), who can now follow anybody still out.
+            const spect = spectateEligible();
             // The lead-lap group is marked once, at its edge: everything
             // below that rule is a lap or more down and is not racing the
             // cars above it. Half the confusion was never the numbers, it
@@ -7176,7 +7220,8 @@ function updateHUD() {
                 `<div class="tt-row${c.isPlayer ? ' me' : ''}${lapClass}` +
                 `${spect ? ' tt-click' : ''}${spectateCar === c ? ' tt-watch' : ''}" ` +
                 (spect ? `onclick="spectateFollow(${idx})" ` +
-                         `title="Follow ${c.driverName || c.color}" ` : '') +
+                         `title="${c === playerCar ? 'Back to your car'
+                                 : 'Follow ' + (c.driverName || c.color)}" ` : '') +
                 `style="border-left-color:${c.color};">` +
                 `<div class="tt-top">` +
                 `<span class="tt-pos">${i + 1}</span>` +
@@ -7192,7 +7237,11 @@ function updateHUD() {
     renderSplitHud(sortedCars);
 
     const pos = playerCar ? sortedCars.indexOf(playerCar) + 1 : "-";
-    if (playerCar && !twoPlayer) {
+    // Whose position the line shows: yours while the panel is about you -
+    // including your wreck, before any pick is made - and the followed
+    // driver's once a tower pick is active, which is also how a dead driver
+    // can tell at a glance that the panel has stopped being about them.
+    if (playerCar && !twoPlayer && hudCar() === playerCar) {
         if (raceMode === 'practice') {
             posCounter.innerText = '';
         } else if (raceMode === 'qualifying') {
@@ -7201,10 +7250,10 @@ function updateHUD() {
         } else {
             posCounter.innerText = `Pos: ${pos}/${cars.length}`;
         }
-    } else if (!playerCar && !twoPlayer &&
-               (raceMode === 'race' || raceMode === 'championship')) {
-        // Spectating. The lap, speed, tyre and live lap time were all filled in
-        // above for whichever car is being followed; only the position line is
+    } else if (!twoPlayer && (raceMode === 'race' || raceMode === 'championship')) {
+        // Spectating - with no seat, or from the barriers after a DNF. The
+        // lap, speed, tyre and live lap time were all filled in above for
+        // whichever car is being followed; only the position line is
         // different, because "Pos" for a spectator has to say WHOSE position.
         const hc2 = hudCar();
         if (hc2) {
