@@ -284,31 +284,55 @@ const AI_PROFILES = {
 //  a damped step got it to 1.2.
 //
 //  Change any personality trait and both columns need refitting.
+//
+//  THIRD FIT of the trim column (the game moved again: four chassis, Spa, the
+//  redrawn XLs, and every driver now qualifying and racing in the chassis
+//  their own taste picks). Fitted at IMPOSSIBLE, where Nicola actually plays,
+//  and ANALYTICALLY this time: seventy real simulated flying laps per driver
+//  per circuit on four circuits, each driver's median lap against the field's
+//  mean, trim moved by the measured gap (damped 0.85) in ONE step - which
+//  out-fitted four rounds of iterating on 80-race batteries, because an
+//  average finishing position carries ±0.35 of noise at that sample size and
+//  the medians carry almost none.
+//
+//  What this fit fixes and what it does not, both measured at impossible:
+//  one-lap pace is LEVEL (it is what was fitted), so grids and poles spread
+//  across the whole field. Race finishing spread improved from 3.8 to about
+//  3.0 positions and there it STOPS: Senna, Verstappen and Alonso lose the
+//  rest to crash rate (20-30% a race against Prost's 6-14%), and that
+//  residual resisted every single-trait fix that was tried - err halved,
+//  steerTau compressed, gap raised, overtake cut, compounds pinned, each
+//  measured on 64-80 race batteries and none of them moved the wreck rate
+//  outside its noise. Whatever prices aggression into the wall at impossible
+//  is spread across several traits at once, and flattening them all would
+//  flatten the drivers into one person. It is left: the wild trio really is
+//  wilder, and pays for it - more than the original design intended, less
+//  than before this fit.
 const AI_DRIVER_STYLES = {
     // Blinding through the quick stuff and peerless in the rain; gives it back
     // on the straights and lives closest to the edge - by far the most mistakes.
-    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.026, cleanAir: 1, look: -6, trim: 0.9999 },
+    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.026, cleanAir: 1, look: -6, trim: 1.0102 },
     // The Professor: never errs, superb alone - and genuinely poor in the wet
     // and reluctant wheel to wheel.
-    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.988, cleanAir: 1.01, look: 10, trim: 1.0114 },
+    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.988, cleanAir: 1.01, look: 10, trim: 1.0019 },
     // Relentless metronome, brutal on defence, superb in the rain; nothing
     // special in clean air.
-    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.050, cleanAir: 0.999, look: 4, trim: 0.9990 },
+    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.050, cleanAir: 0.999, look: 4, trim: 1.0005 },
     // Latest braker on the grid, never yields - and error-prone with it.
-    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.949, cleanAir: 0.998, look: -8, trim: 1.0126 },
+    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.949, cleanAir: 0.998, look: -8, trim: 1.0271 },
     // Thrives in the wet and in a fight; the weakest of the lot on his own.
-    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.038, cleanAir: 0.997, look: 8, trim: 1.0010 },
+    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.038, cleanAir: 0.997, look: 8, trim: 0.9978 },
     // Unbeatable wheel to wheel, ordinary once the road is clear.
-    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.044, cleanAir: 0.997, look: 0, trim: 0.9954 },
+    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.044, cleanAir: 0.997, look: 0, trim: 0.9972 },
     // Devastating in clean air and on a straight; hates traffic and the rain.
-    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.986, cleanAir: 1.014, look: -2, trim: 0.9973 },
+    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.986, cleanAir: 1.014, look: -2, trim: 0.9938 },
     // Famously smooth and almost mistake-free; passive in a fight.
-    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.011, cleanAir: 1.005, look: 8, trim: 0.9928 },
+    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.011, cleanAir: 1.005, look: 8, trim: 0.9907 },
     // The computer: calculated risk, no heroics, no mistakes - and no pace in
     // the wet.
-    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.014, cleanAir: 1.008, look: 10, trim: 0.9919 },
+    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.014, cleanAir: 1.008, look: 10, trim: 0.9846 },
     // Wins at the slowest speed necessary: no weakness, no standout either.
-    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.015, cleanAir: 1.003, look: 4, trim: 0.9988 }
+    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.015, cleanAir: 1.003, look: 4, trim: 0.9961 }
 };
 
 // Physics constants mirrored from car.js - keep in sync if the car changes.
@@ -1738,6 +1762,11 @@ AI.assignChassis = function (names, rand) {
     return picks;
 };
 
+// DEAD SINCE THE REAL-SIM GRIDS, kept only so an old save or tool that calls
+// it does not throw. Measured against the genuine simulator this formula had
+// drifted into caricature - Prost took 47% of every grid's poles and its
+// order was nearly the reverse of the real laps' order - so single races now
+// build their grids with simulateQualifyingLap, the way sessions always did.
 AI.qualifyingPace = function (driverName, difficulty, skillVariation, raining, chassis) {
     const p = AI.buildProfile(driverName, difficulty, skillVariation);
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom25">
+    <link rel="stylesheet" href="style.css?v=zoom26">
 </head>
 <body>
     <div id="game-container">
@@ -324,7 +324,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom25 &nbsp;·&nbsp; 26 Aug 2026</div>
+                <div id="build-stamp">build zoom26 &nbsp;·&nbsp; 27 Aug 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -383,7 +383,15 @@
                         </ul>
                         <p>The coloured band on the inner sidewall of each tyre is that car's
                             <b>compound</b>, in the same colours as the timing tower &mdash; so you can
-                            see what the car in front of you is on without looking away from the road.</p>
+                            see what the car in front of you is on without looking away from the road.
+                            In the tower, the small bar beside each compound pip is how much of that
+                            tyre is <b>left</b> &mdash; green, then amber under half, red under a
+                            quarter. A rival whose bar has gone red is a rival about to slow down.</p>
+                        <p>Between the tyre choice and the lights, the <b>grid recap</b> shows the
+                            whole field at a glance: everyone's car, the compound and time their grid
+                            slot was earned on, and &mdash; the column worth reading &mdash; the
+                            compound each of them <b>starts the race on</b>. The countdown waits until
+                            you press start.</p>
 
                         <h3>The camera</h3>
                         <p>The screen is a <b>window on the circuit</b>, not the whole circuit: the camera
@@ -592,10 +600,10 @@
                                 season with its champion in gold; the table under it is one career
                                 row per name &mdash; seasons, titles, starts, wins, podiums, poles,
                                 fastest laps, retirements, average finish and points &mdash; with
-                                yours highlighted. Starts and wins count every archived round,
-                                finished season or not; <b>titles only come from finished ones</b>,
-                                because an abandoned season has no champion. Average finish skips
-                                retirements and skipped rounds.</li>
+                                yours highlighted. <b>Only finished seasons count</b> &mdash; here
+                                and in every other statistic: single races are never filed, and an
+                                abandoned season counts for nothing unless you resume and finish
+                                it. Average finish skips retirements and skipped rounds.</li>
                             <li><b>Nightmare season.</b> On the Championship tab: instead of drawing
                                 the calendar out of the hat, it picks the circuits that have gone
                                 <i>worst</i> for you &mdash; ranked by average finishing position, with
@@ -724,6 +732,12 @@
                     lap. Each circuit's page in <b>Explore &rarr; Circuits</b> names the
                     fastest car over a lap there, and the margins.
                 </div>
+            </div>
+            <div id="recap-screen" style="display: none;">
+                <h1 id="recap-title" style="margin: 0 0 4px; font-size: 24px;">The grid</h1>
+                <div id="recap-sub" style="font-size: 13px; opacity: 0.7; margin-bottom: 14px;"></div>
+                <div id="recap-body"></div>
+                <button id="recap-start-btn" style="margin-top: 16px;">Start the race</button>
             </div>
             <div id="gp-preview" style="display: none;">
                 <h1 id="gp-title" style="margin: 0 0 2px; font-size: 24px;">Round 1</h1>
@@ -939,12 +953,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom25"></script>
-    <script src="track.js?v=zoom25"></script>
-    <script src="lines.js?v=zoom25"></script>
-    <script src="car.js?v=zoom25"></script>
-    <script src="ai.js?v=zoom25"></script>
-    <script src="audio.js?v=zoom25"></script>
+    <script src="racelog.js?v=zoom26"></script>
+    <script src="track.js?v=zoom26"></script>
+    <script src="lines.js?v=zoom26"></script>
+    <script src="car.js?v=zoom26"></script>
+    <script src="ai.js?v=zoom26"></script>
+    <script src="audio.js?v=zoom26"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1038,6 +1052,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom25"></script>
+    <script src="main.js?v=zoom26"></script>
 </body>
 </html>

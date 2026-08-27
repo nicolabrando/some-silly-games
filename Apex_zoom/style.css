@@ -59,7 +59,7 @@ canvas {
 /* Every centred panel must be listed here: #ui-layer is pointer-events:none,
    so a panel left out of this rule renders unstyled AND its buttons are dead. */
 #menu, #game-over, #championship-final, #quali-screen, #gp-preview, #tyre-screen,
-#chassis-screen, #explore-tracks, #explore-drivers, #explore-seasons {
+#chassis-screen, #explore-tracks, #explore-drivers, #explore-seasons, #recap-screen {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -2012,3 +2012,47 @@ button.menu-danger {
 .ex-hof-gold { color: #ffd54f; }
 .ex-hof-table { min-width: 700px; }
 .ex-hof .ex-note { margin-top: 8px; }
+
+/* remaining tyre, next to the compound pip in the tower */
+.tt-wear {
+    display: inline-block;
+    width: 16px;
+    height: 5px;
+    margin-left: 3px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.14);
+    overflow: hidden;
+    vertical-align: middle;
+    flex: 0 0 16px;
+}
+.tt-wear i { display: block; height: 100%; border-radius: 2px; }
+
+/* --- the grid recap, between the tyre choice and the lights -------------- */
+#recap-screen { min-width: 520px; }
+.recap-table {
+    border-collapse: collapse;
+    margin: 0 auto;
+    font-size: 13px;
+}
+.recap-table th {
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    opacity: 0.6;
+    padding: 4px 10px;
+}
+.recap-table td { padding: 4px 10px; text-align: center; }
+.recap-table tr.rc-me td { background: rgba(255, 255, 255, 0.08); font-weight: bold; }
+.recap-table .tt-chip { display: inline-block; vertical-align: middle; }
+.recap-table .rc-none { opacity: 0.4; }
+/* the pips reuse the tower's look, but the tower's rules are scoped to it */
+.recap-table .tt-tyre, .recap-table .ch-pip {
+    display: inline-block;
+    min-width: 26px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 900;
+    color: #111;
+    text-align: center;
+}

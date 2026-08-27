@@ -474,7 +474,15 @@ let qualiQueue = [];        // AI participants still waiting for a lap
 let qualiTimes = [];        // { p, lap } once simulated
 let qualiTrack = null;      // the track object the session is running on
 let qualiTrackType = null;
+let recapHold = false;      // the grid recap is up; the countdown waits
+let raceRecap = null;       // what it shows - built by initCars
 let pendingGrid = null;     // participant order handed to the next startGame
+let pendingQualiInfo = null;// and, from a REAL session only, each driver's lap
+                            // and the compound it was set on - the recap screen
+                            // is the only reader. A simulated grid has neither:
+                            // AI.qualifyingPace returns a pace factor, not a
+                            // time, and inventing 'quali times' from it would
+                            // put numbers on the recap that nobody ever drove.
 let pendingWeather = null;  // weather chosen at qualifying, reused for the race
 let pendingWetLevel = null; // 'damp' | 'soaked', pinned with it
 let wetLevel = null;        // the live one, read by car.js and ai.js
@@ -1108,8 +1116,58 @@ function setMenuMode(mode) {
 // that has to tell you about a season waiting in storage, and it used to be
 // told only at boot and when a save was written - so the banner was correct
 // by luck rather than by construction. One door, one refresh.
+function showRaceRecap(gridSource) {
+    const scr = document.getElementById('recap-screen');
+    const body = document.getElementById('recap-body');
+    if (!scr || !body || !raceRecap) { recapHold = false; return; }
+    const anyQ = raceRecap.some(r => r.qLap !== null || r.qTyre);
+    const tyrePip = (key) => {
+        const t = key && TYRES[key];
+        return t ? '<span class="tt-tyre" style="background:' + t.colour + ';" title="' +
+                   t.label + '">' + t.short + '</span>' : '<span class="rc-none">&mdash;</span>';
+    };
+    document.getElementById('recap-title').innerText = 'The grid — ' + trackLabel(currentTrackKey);
+    document.getElementById('recap-sub').innerHTML =
+        (isRaining ? (wetLevel === 'soaked' ? 'Soaked 🌧️' : 'Damp 🌦️') : 'Dry ☀️') +
+        ' &nbsp;·&nbsp; ' + TOTAL_LAPS + ' laps &nbsp;·&nbsp; grid from ' +
+        (gridSource || 'qualifying') +
+        (anyQ ? '' : ' — no session was driven, so there are no qualifying times to show');
+    body.innerHTML = '<table class="recap-table"><thead><tr>' +
+        '<th></th><th style="text-align:left;">Driver</th><th>Car</th>' +
+        (anyQ ? '<th title="the compound the qualifying time was set on">Q tyre</th>' +
+                '<th title="qualifying time">Q time</th>' : '') +
+        '<th title="the compound they START the race on">Race tyre</th>' +
+        '</tr></thead><tbody>' +
+        raceRecap.map(r => {
+            const ch = CHASSIS[r.chassis] || CHASSIS[CHASSIS_DEFAULT];
+            return '<tr' + (r.isPlayer ? ' class="rc-me"' : '') + '>' +
+                '<td>' + r.pos + '</td>' +
+                '<td style="text-align:left;white-space:nowrap;">' +
+                '<span class="tt-chip" style="background:' + r.color + ';"></span> ' +
+                r.name + '</td>' +
+                '<td><span class="ch-pip" style="background:' + ch.accent + ';">' +
+                ch.short + '</span></td>' +
+                (anyQ ? '<td>' + tyrePip(r.qTyre) + '</td>' +
+                        '<td>' + (r.qLap !== null ? (r.qLap / 1000).toFixed(3)
+                                                  : '<span class="rc-none">no time</span>') + '</td>'
+                      : '') +
+                '<td>' + tyrePip(r.tyre) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+    scr.style.display = 'block';
+    const btn = document.getElementById('recap-start-btn');
+    if (btn) btn.focus();
+}
+
+function dismissRaceRecap() {
+    const scr = document.getElementById('recap-screen');
+    if (scr) scr.style.display = 'none';
+    recapHold = false;
+}
+
 function showMenu() {
     menu.style.display = 'block';
+    // quitting under the recap must not leave the countdown frozen forever
+    dismissRaceRecap();
     if (typeof refreshChampResume === 'function') refreshChampResume();
     // the record book may have moved since you were last here
     if (typeof refreshNightmareHint === 'function') refreshNightmareHint();
@@ -1118,6 +1176,9 @@ function showMenu() {
 // The line under Nightmare season names the circuits it would pick, so it is
 // redrawn whenever the answer can have changed: the tick itself, and how many
 // rounds the season is.
+const recapStartBtn = document.getElementById('recap-start-btn');
+if (recapStartBtn) recapStartBtn.addEventListener('click', dismissRaceRecap);
+
 const nightmareBox = document.getElementById('nightmare-checkbox');
 if (nightmareBox) nightmareBox.addEventListener('change', refreshNightmareHint);
 const roundsBox = document.getElementById('rounds-select');
@@ -1137,7 +1198,7 @@ setMenuMode('champ');
 startBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'race';
-    pendingGrid = null;
+    pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
     // The car is chosen on the same screen a season uses, and asked once for
@@ -1168,7 +1229,7 @@ champBtn.addEventListener('click', () => {
     disarmChampWipe();
     isChampionship = true;
     raceMode = 'championship';
-    pendingGrid = null;
+    pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
     startChampionship();
 });
@@ -1182,7 +1243,7 @@ if (champResumeBtn) champResumeBtn.addEventListener('click', resumeChampionship)
 practiceBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'practice';
-    pendingGrid = null;
+    pendingGrid = null; pendingQualiInfo = null;
     // A fresh roll of the weather, as for a race: without this a practice
     // run after a wet weekend inherited that weekend's rain.
     pendingWeather = null; pendingWetLevel = null;
@@ -1666,7 +1727,7 @@ qualiRaceBtn.addEventListener('click', () => {
 
 qualiMenuBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
-    pendingGrid = null;
+    pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
     isChampionship = false;
     weekendChassisAsked = false;   // a new weekend, a new choice of car
@@ -1675,7 +1736,7 @@ qualiMenuBtn.addEventListener('click', () => {
 
 restartBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
-    pendingGrid = null;
+    pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
     skipMode = false;
     skipPlayer = null;
@@ -1717,7 +1778,7 @@ quitBtn.addEventListener('click', () => {
     // waiting to be applied to whatever is started next.
     qualiQueue = [];
     qualiTimes = [];
-    pendingGrid = null;
+    pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
     skipMode = false;
     skipPlayer = null;
@@ -3238,9 +3299,9 @@ function exHofHtml() {
             '<td>' + (d.best === null ? '&mdash;' : 'P' + d.best) + '</td>' +
             '<td><b>' + d.points + '</b></td></tr>').join('') +
         '</tbody></table></div>' +
-        '<div class="ex-note">Counted from every archived season, played or imported, finished ' +
-        'or abandoned &mdash; a win still happened even if its season was never finished. ' +
-        'Titles and 2nds come from finished seasons only.</div></div>';
+        '<div class="ex-note">Counted from FINISHED seasons only, played or imported &mdash; ' +
+        'single races are never filed, and a season you walked away from counts for nothing ' +
+        'until it is picked up and finished. Average finish excludes retirements.</div></div>';
     return html;
 }
 
@@ -3538,7 +3599,7 @@ function resumeChampionship() {
     ensureSeasonId(championshipState);   // saves written before the archive existed
     isChampionship = true;
     raceMode = 'championship';
-    pendingGrid = null;
+    pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
     skipMode = false; skipPlayer = null; skipPlayers = [];
     const ch = championshipState.chassis || (championshipState.chassis = {});
@@ -3575,6 +3636,16 @@ function ensureSeasonId(state) {
     if (!state.id) state.id = seasonId();
     if (!state.startedAt) state.startedAt = Date.now();
     return state.id;
+}
+
+// What the STATISTICS read - the Hall of Fame, the circuit pages, the career
+// strip, the Nightmare ranking. Complete seasons only, by request: an
+// abandoned season is a story without an ending, and Nicola does not want its
+// rounds counted anywhere. (Single races were never archived at all, so they
+// were never in.) The ARCHIVE itself still lists incomplete seasons - that is
+// where Resume lives - it is only the aggregations that skip them.
+function seasonsForStats() {
+    return seasonsLoad().filter(e => e.complete);
 }
 
 function seasonsLoad() {
@@ -3842,7 +3913,7 @@ function circuitStatsAll() {
         posSum: 0, posN: 0, wetRaces: 0, wetWins: 0
     }));
 
-    for (const e of seasonsLoad()) {
+    for (const e of seasonsForStats()) {
         const info = {};
         for (const p of (e.participants || [])) {
             info[p.color] = { name: (p.isPlayer ? 'You' : (p.driverName || p.color)),
@@ -3925,7 +3996,7 @@ function hallOfFame() {
         dnf: 0, dns: 0, points: 0, best: null, posSum: 0, posN: 0
     });
     const roll = [];
-    for (const e of seasonsLoad()) {
+    for (const e of seasonsForStats()) {
         const rows = seasonTally(e);
         const raced = (e.results || []).length > 0;
         rows.forEach((r, i) => {
@@ -4596,8 +4667,9 @@ function exTrackHistoryHtml(key) {
     const p = circuitStats(key);
     if (!p || !p.races) {
         return '<div class="ex-hist"><div class="ex-rec-h">Your record here</div>' +
-            '<div class="ex-empty">No championship round has been run at ' + trackLabel(key) +
-            ' yet. Single races are not filed &mdash; the history is built from season rounds.</div></div>';
+            '<div class="ex-empty">No finished season has visited ' + trackLabel(key) +
+            ' yet. Single races are never filed and abandoned seasons do not count &mdash; ' +
+            'the history here is built from completed championships.</div></div>';
     }
     const me = p.me;
     const pct = (n, d) => (d ? Math.round(100 * n / d) + '%' : '—');
@@ -4806,10 +4878,14 @@ function exRenderSeasons() {
         return;
     }
 
-    const c = careerTally(list);
+    // The strip counts COMPLETE seasons only, same rule as every statistic in
+    // the game now; the list itself still shows everything, because Resume
+    // lives there and an unfinished season has to be findable to be resumed.
+    const c = careerTally(list.filter(e => e.complete));
     if (sub) {
         sub.textContent = list.length + (list.length === 1 ? ' season' : ' seasons') +
-            ' on record, ' + c.complete + ' run to the end. Pick one to open it.';
+            ' on record, ' + c.complete + ' run to the end \u2014 only those count in the stats. ' +
+            'Pick one to open it.';
     }
     if (career) {
         const rate = c.races ? (100 * c.wins / c.races) : 0;
@@ -5416,6 +5492,8 @@ function endQualifying() {
 
     const rows = qualiOrder();
     pendingGrid = rows.map(r => r.p).filter(Boolean);
+    pendingQualiInfo = rows.filter(r => r.p)
+        .map(r => ({ p: r.p, lap: r.lap, tyre: r.tyre || null }));
 
     // A driver who never set a time still has to start somewhere: they keep
     // the back of the grid, which is exactly what qualiOrder already did.
@@ -5613,6 +5691,11 @@ function startGame(forceTrackType = null) {
     
     let currentParticipants = [];
     let gridSource = 'simulated qualifying';
+    // Declared BEFORE the grid decision: the simulated-qualifying branch below
+    // writes it, the consumption point after the branch reads it, and a `let`
+    // between the two would be the same temporal-dead-zone trap this file has
+    // already been bitten by twice (the resume banner, racePenaltyS).
+    let recapQuali = null;
 
     if (isPractice) {
         // Free practice with nobody driving would be an empty track, so a
@@ -5646,27 +5729,39 @@ function startGame(forceTrackType = null) {
     } else {
         currentParticipants = buildField();
 
-        // 3. Simulated qualifying.
-        // Each AI sets a notional flying lap (pace + the variance a single lap
-        // really has) and the grid is the qualifying order. The player is
-        // slotted mid-grid: they didn't drive a lap, so they neither gain nor
-        // lose one.
+        // 3. Simulated qualifying - with the REAL physics, not the notional
+        // pace formula. AI.qualifyingPace was a hand-made estimate (60% corner,
+        // 40% straight, a variance term), and measured against the genuine
+        // simulator it had drifted into caricature: Prost took 47% of all
+        // poles and the order it produced was nearly the REVERSE of the real
+        // laps' order. Sessions already simulate every AI's flying lap with
+        // the real engine (qualiTick); a single race now builds its grid the
+        // same way, so the two kinds of race weekend cannot disagree about who
+        // is quick. Costs a few hundred milliseconds at the start button, once.
+        // The laps and compounds are kept: the grid recap shows them.
         const aiDifficulty = isChampionship ? championshipState.difficulty : difficulty;
+        const qTrackSim = makeTrack(trackType);
+        qTrackSim.getRacingLine();
         const qualified = currentParticipants
             .filter(p => !p.isPlayer)
-            .map(p => ({
-                p: p,
-                lap: AI.qualifyingPace(p.driverName, aiDifficulty, p.skillVariation,
-                                       isRaining, p.isPlayer ? seatChassis(p.playerIndex || 1) : p.chassis)
-            }))
-            .sort((a, b) => a.lap - b.lap)
-            .map(x => x.p);
+            .map(p => {
+                const ran = {};
+                const lap = simulateQualifyingLap(qTrackSim, p.driverName, aiDifficulty,
+                                                  p.skillVariation, isRaining, p.chassis, ran);
+                return { p: p, lap: lap === null ? Infinity : lap, tyre: ran.tyre || null };
+            })
+            .sort((a, b) => a.lap - b.lap);
 
         const players = currentParticipants.filter(p => p.isPlayer);
+        currentParticipants = qualified.map(x => x.p);
         if (players.length) {
-            qualified.splice(Math.floor(qualified.length / 2), 0, ...players);
+            currentParticipants.splice(Math.floor(currentParticipants.length / 2), 0, ...players);
         }
-        currentParticipants = qualified;
+        // hand the laps to the recap unless a real session already did
+        if (!recapQuali) {
+            recapQuali = qualified.filter(x => isFinite(x.lap))
+                .map(x => ({ p: x.p, lap: Math.round(x.lap), tyre: x.tyre }));
+        }
     }
 
     // Skipped Grand Prix: you are not on the grid at all. The AI race that
@@ -5678,7 +5773,8 @@ function startGame(forceTrackType = null) {
     twoPlayer = currentParticipants.filter(p => p.isPlayer).length > 1;
 
     // Consumed: the next race builds its own grid unless it too is qualified for.
-    pendingGrid = null;
+    if (!recapQuali) recapQuali = pendingQualiInfo;
+    pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
 
     racePoleColor = currentParticipants.length ? currentParticipants[0].color : null;
@@ -5824,6 +5920,38 @@ function startGame(forceTrackType = null) {
     countdownTimer = 0;
     lightState = 0;
     goDelay = rollGoDelay();
+
+    // ---- THE GRID RECAP -------------------------------------------------
+    // One screen between the tyre choice and the lights: every starter, the
+    // car they are in, the compound and time their grid slot was earned on,
+    // and the compound they are STARTING on. The last column is the one that
+    // matters - it is the only place the field's race rubber can be read
+    // before turn one, and reading it is how you plan the first stint.
+    //
+    // Held on `recapHold`: the countdown branch freezes its clock (and the
+    // jumped-start rule) while this is up, exactly the way a false-start
+    // reset freezes it. Not in free practice (no start procedure), not in a
+    // skipped Grand Prix (nobody is watching), not as a spectator (the race
+    // belongs to the tower), and never on the grid RESET after a false start
+    // - initCars does not run again there, so this cannot either.
+    recapHold = false;
+    if (!isPractice && !skipMode && humanSeats().length && cars.length > 1) {
+        raceRecap = cars.map((c, i) => {
+            const part = currentParticipants[i];
+            const q = recapQuali ? recapQuali.find(x => x.p === part) : null;
+            return {
+                pos: i + 1, color: c.color,
+                name: c.isPlayer ? humanLabel(c) : (c.driverName || c.color),
+                isPlayer: !!c.isPlayer,
+                chassis: c.chassisKey,
+                qTyre: q ? q.tyre : null,
+                qLap: q && q.lap !== null && q.lap !== undefined ? q.lap : null,
+                tyre: (c.tyre && c.tyre.key) || null
+            };
+        });
+        recapHold = true;
+        showRaceRecap(gridSource);
+    }
 
     // ---- FREE PRACTICE HAS NO START PROCEDURE ---------------------------
     // It used to run the full one: five red lights, a random hold, and the
@@ -7008,6 +7136,17 @@ function updateHUD() {
                   `opacity:${(0.35 + 0.65 * tw).toFixed(2)};" title="${c.tyre.label}">` +
                   `${c.tyre.short}</span>`
                 : '<span class="tt-tyre" style="opacity:0;">-</span>';
+            // And how much of it is LEFT, as a bar rather than a fade: the
+            // pip's opacity said the same thing, and nobody could read it -
+            // an 80% pip and a 40% pip look like a bright one and a dim one,
+            // not like a number. Green while there is tyre, amber in the
+            // last half, red in the last quarter - the same thresholds the
+            // player's own wear bar uses in the corner of the HUD.
+            const wearBar = c.tyre
+                ? `<span class="tt-wear" title="tyre ${Math.round(tw * 100)}% left">` +
+                  `<i style="width:${Math.round(tw * 100)}%;background:${
+                      tw > 0.5 ? '#66bb6a' : (tw > 0.25 ? '#ffca28' : '#ef5350')};"></i></span>`
+                : '';
             // and which car they are in, immediately to its right
             const ch = c.chassis || CHASSIS[CHASSIS_DEFAULT];
             const chPip = `<span class="tt-ch" style="background:${ch.accent};" ` +
@@ -7040,7 +7179,7 @@ function updateHUD() {
                 `<div class="tt-top">` +
                 `<span class="tt-pos">${i + 1}</span>` +
                 `<span class="tt-name"${(c.isBroken && !c.finished) ? ' style="opacity:.45;"' : ''}>${name}</span>` +
-                tyrePip + chPip +
+                tyrePip + wearBar + chPip +
                 `</div>` +
                 `<div class="tt-gap">${gap}</div>` +
                 `</div>`);
@@ -7714,7 +7853,13 @@ function gameLoop(timestamp) {
         // AFTER that branch closes, and during a grid reset the branch is
         // skipped - which left this undefined and threw on every frame.
         const wasLit = lightState;
-        if (!isFalseStartResetting) {
+        // the grid recap is up: the clock, the lights and the jumped-start
+        // rule all wait for it. Everything else in the branch - the HUD, the
+        // camera, the drawing - carries on underneath the screen, so
+        // dismissing it starts the sequence over a live grid, not a stale
+        // frame. Guarded exactly like a false-start reset because it IS one,
+        // dramatically speaking: a countdown that has not been allowed to run.
+        if (!isFalseStartResetting && !recapHold) {
             countdownTimer += dt;
             
             if (countdownTimer < 0.5) lightState = 0;
@@ -7761,7 +7906,7 @@ function gameLoop(timestamp) {
             // Every offence counts. The old guard was "!car.jumpStartPenalty",
             // so once a car had been penalised it could jump every subsequent
             // restart completely free of charge.
-            if ((car.inputs.up || hasMoved) && lightState < 6 && !isFalseStartResetting) {
+            if ((car.inputs.up || hasMoved) && lightState < 6 && !isFalseStartResetting && !recapHold) {
                 car.jumpStartPenalties = (car.jumpStartPenalties || 0) + 1;
                 car.jumpStartPenalty = true;
                 // Each offence costs the same again. The total is carried on
@@ -7870,7 +8015,7 @@ function gameLoop(timestamp) {
             // banner, so the offender (and anyone else already rolling, the
             // player included, who is still holding the throttle) slid a long
             // way down the circuit before the grid was reset.
-            if (isFalseStartResetting) {
+            if (isFalseStartResetting || recapHold) {
                 car.velocity.x = 0;
                 car.velocity.y = 0;
                 car.inputs.up = false;
