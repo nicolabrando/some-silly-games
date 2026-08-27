@@ -3180,9 +3180,75 @@ function exRenderDrivers() {
     grid.innerHTML = head + EX_DRIVER_NAMES.map(exDriverCardHtml).join('');
 }
 
+// The Hall of Fame block at the top of the drivers screen: the roll of
+// champions, then the career table. All of it from the season archive, so it
+// is empty-but-honest until the first championship is on file.
+function exHofHtml() {
+    const h = hallOfFame();
+    const anyRaces = h.table.some(d => d.races || d.dns);
+    let html = '<div class="ex-hof"><div class="ex-rec-h">Hall of Fame</div>';
+    if (!h.roll.length && !anyRaces) {
+        return html + '<div class="ex-empty">Nothing on file yet. Championship rounds are ' +
+            'archived as they are run &mdash; finish a season (or import a race log) and the ' +
+            'roll of champions starts here.</div></div>';
+    }
+    if (h.roll.length) {
+        html += '<div class="ex-hof-roll">' + h.roll.map(r =>
+            '<div class="ex-hof-line">' +
+            '<span class="ex-sml ex-hof-date">' + exDate(r.when) + '</span>' +
+            '<span class="ex-hof-season">' + (r.seed ? 'season <b>' + r.seed + '</b>' : 'season') +
+                ' &middot; ' + r.rounds + ' rounds' +
+                (r.nightmare ? ' <span class="ex-nightmare">nightmare</span>' : '') +
+                (r.fromLog ? ' <span class="ex-sml">from a log</span>' : '') + '</span>' +
+            '<span class="ex-hof-champ' + (r.champIsPlayer ? ' ex-hof-you' : '') + '">' +
+                r.champion + '</span>' +
+            '<span class="ex-sml">' + r.pts + ' pts' +
+                (r.second ? ' &nbsp;&middot;&nbsp; ' + r.second + ' ' + r.secondPts : '') +
+            '</span></div>').join('') + '</div>';
+    } else {
+        html += '<div class="ex-empty">No season has been FINISHED yet, so the roll of ' +
+            'champions is still blank; the career numbers below already count every round run.</div>';
+    }
+    const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : '&mdash;';
+    html += '<div class="ex-scroll"><table class="ex-seasons ex-standings ex-hof-table"><thead><tr>' +
+        '<th></th><th>Driver</th><th title="seasons entered, finished or not">Seasons</th>' +
+        '<th title="championships won (finished seasons only)">Titles</th>' +
+        '<th title="second in a finished season\'s standings">2nd</th>' +
+        '<th title="races started">Starts</th><th>Wins</th>' +
+        '<th title="share of starts won">Win %</th><th>Podiums</th>' +
+        '<th title="pole positions">Poles</th><th title="fastest laps">FL</th>' +
+        '<th title="Grand Chelems: pole, win, fastest lap, every lap led">&#9733;</th>' +
+        '<th title="retirements">DNF</th>' +
+        '<th title="average finishing position; retirements and skipped rounds excluded">Avg</th>' +
+        '<th title="best finishing position">Best</th>' +
+        '<th title="career points, bonuses included">Points</th>' +
+        '</tr></thead><tbody>' +
+        h.table.map((d, i) => '<tr' + (d.isPlayer ? ' class="ex-me"' : '') + '>' +
+            '<td>' + (i + 1) + '</td>' +
+            '<td style="text-align:left;white-space:nowrap;">' + d.name + '</td>' +
+            '<td>' + d.seasons + '</td>' +
+            '<td>' + (d.titles ? '<b class="ex-hof-gold">' + d.titles + '</b>' : '&mdash;') + '</td>' +
+            '<td>' + (d.runnerUp || '&mdash;') + '</td>' +
+            '<td>' + d.races + '</td><td>' + (d.wins || '') + '</td>' +
+            '<td>' + pct(d.wins, d.races) + '</td>' +
+            '<td>' + (d.podiums || '') + '</td><td>' + (d.poles || '') + '</td>' +
+            '<td>' + (d.fl || '') + '</td><td>' + (d.chelem || '') + '</td>' +
+            '<td>' + (d.dnf || '') + '</td>' +
+            '<td>' + (d.posN ? 'P' + (d.posSum / d.posN).toFixed(1) : '&mdash;') + '</td>' +
+            '<td>' + (d.best === null ? '&mdash;' : 'P' + d.best) + '</td>' +
+            '<td><b>' + d.points + '</b></td></tr>').join('') +
+        '</tbody></table></div>' +
+        '<div class="ex-note">Counted from every archived season, played or imported, finished ' +
+        'or abandoned &mdash; a win still happened even if its season was never finished. ' +
+        'Titles and 2nds come from finished seasons only.</div></div>';
+    return html;
+}
+
 function showExploreDrivers() {
     menu.style.display = 'none';
     document.getElementById('explore-drivers').style.display = 'block';
+    const hof = document.getElementById('ex-hof');
+    if (hof) hof.innerHTML = exHofHtml();
     exRenderDrivers();
     exMeasureWet();
 }
@@ -3530,6 +3596,7 @@ function seasonEntryOk(e) {
 
 function seasonsSave(list) {
     _circuitStats = null;         // the per-circuit counts are read from this
+    _hof = null;                  // and so is the Hall of Fame
     // Newest first and capped: a ten-round season is a few kilobytes, and
     // localStorage is a shelf, not a database. If the write still will not
     // fit, the oldest go one at a time until it does rather than the whole
@@ -3717,7 +3784,8 @@ function seasonTally(entry) {
     const get = (c) => (by[c] || (by[c] = {
         color: c, name: c, chassis: null, isPlayer: false,
         races: 0, wins: 0, podiums: 0, poles: 0, fl: 0, chelem: 0,
-        dnf: 0, dns: 0, best: null, racePts: 0, extra: 0, total: 0
+        dnf: 0, dns: 0, best: null, racePts: 0, extra: 0, total: 0,
+        posSum: 0, posN: 0
     }));
     for (const p of entry.participants || []) {
         const d = get(p.color);
@@ -3740,6 +3808,7 @@ function seasonTally(entry) {
             if (o.pos === 1) d.wins++;
             if (o.pos && o.pos <= 3) d.podiums++;
             if (o.pos && (d.best === null || o.pos < d.best)) d.best = o.pos;
+            if (o.pos) { d.posSum += o.pos; d.posN++; }
         }
     }
     // The season's own points table is what the standings showed, so it is
@@ -3827,6 +3896,69 @@ function circuitStatsAll() {
 }
 function circuitStats(key) {
     return circuitStatsAll()[key] || null;
+}
+
+// ---------------------------------------------------------------------------
+//  THE HALL OF FAME
+//  The archive read the third way round: not by season, not by circuit, but
+//  by DRIVER, across everything on file. Two products from one pass: the roll
+//  of champions (one line per FINISHED season - an unfinished season has no
+//  champion, and neither does a finished one whose results list is empty),
+//  and a career table with one row per name.
+//
+//  Counted by name for the same reason circuitStatsAll() is: a colour is an
+//  identity inside one season - the same driver races blue one year and
+//  orange the next, and log-rebuilt seasons have colours that were assigned
+//  rather than raced. The player is filed as "You" whatever the seat colour.
+//
+//  Titles come only from complete seasons; starts, wins and the rest count
+//  every archived round, finished season or not, because a win in round 4 of
+//  a season you abandoned at round 5 still happened.
+// ---------------------------------------------------------------------------
+let _hof = null;
+function hallOfFame() {
+    if (_hof) return _hof;
+    const by = {};
+    const driver = (name) => by[name] || (by[name] = {
+        name: name, isPlayer: false, seasons: 0, titles: 0, runnerUp: 0,
+        races: 0, wins: 0, podiums: 0, poles: 0, fl: 0, chelem: 0,
+        dnf: 0, dns: 0, points: 0, best: null, posSum: 0, posN: 0
+    });
+    const roll = [];
+    for (const e of seasonsLoad()) {
+        const rows = seasonTally(e);
+        const raced = (e.results || []).length > 0;
+        rows.forEach((r, i) => {
+            const d = driver(r.isPlayer ? 'You' : r.name);
+            d.isPlayer = d.isPlayer || r.isPlayer;
+            d.seasons++;
+            if (e.complete && raced) {
+                if (i === 0) d.titles++;
+                if (i === 1) d.runnerUp++;
+            }
+            d.races += r.races; d.wins += r.wins; d.podiums += r.podiums;
+            d.poles += r.poles; d.fl += r.fl; d.chelem += r.chelem;
+            d.dnf += r.dnf; d.dns += r.dns; d.points += r.total;
+            d.posSum += r.posSum || 0; d.posN += r.posN || 0;
+            if (r.best !== null && (d.best === null || r.best < d.best)) d.best = r.best;
+        });
+        if (e.complete && raced && rows[0]) {
+            roll.push({
+                id: e.id, when: e.startedAt || e.updatedAt || 0,
+                seed: e.seed || null, nightmare: !!e.nightmare,
+                fromLog: !!e.fromLog, rounds: e.rounds,
+                champion: rows[0].isPlayer ? 'You' : rows[0].name,
+                champIsPlayer: rows[0].isPlayer, pts: rows[0].total,
+                second: rows[1] ? (rows[1].isPlayer ? 'You' : rows[1].name) : null,
+                secondPts: rows[1] ? rows[1].total : null
+            });
+        }
+    }
+    roll.sort((a, b) => (b.when || 0) - (a.when || 0));
+    const table = Object.keys(by).map(k => by[k])
+        .sort((a, b) => (b.titles - a.titles) || (b.points - a.points) || (b.wins - a.wins));
+    _hof = { roll: roll, table: table };
+    return _hof;
 }
 
 // And across all of them.

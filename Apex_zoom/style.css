@@ -1984,3 +1984,31 @@ button.menu-danger {
     flex: 0 0 8px;
 }
 .ex-pace { margin-top: 8px; }
+
+/* --- the Hall of Fame, at the top of the drivers screen ------------------ */
+.ex-hof { margin: 4px 0 20px; text-align: left; }
+.ex-hof-roll {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 8px 0 12px;
+    /* forty archived seasons must not bury the career table */
+    max-height: 176px;
+    overflow-y: auto;
+    padding-right: 6px;
+}
+.ex-hof-line {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    font-size: 12px;
+    flex-wrap: wrap;
+}
+.ex-hof-date { flex: 0 0 84px; }
+.ex-hof-season { opacity: 0.78; flex: 1 1 auto; }
+/* it is an albo d'ORO: the champion's name is the gold on the page */
+.ex-hof-champ { font-weight: 900; letter-spacing: 0.4px; color: #ffd54f; }
+.ex-hof-champ.ex-hof-you { color: #69f0ae; }
+.ex-hof-gold { color: #ffd54f; }
+.ex-hof-table { min-width: 700px; }
+.ex-hof .ex-note { margin-top: 8px; }
