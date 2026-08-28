@@ -3782,3 +3782,160 @@ class RivieraTrack extends SegmentedTrack {
         for (const b of this.boats) { b.x += o.x; b.y += o.y; }
     }
 }
+
+
+// =============================================================================
+//  THE PLAIN TRIO - Onda, Dedalo, Vallone. No bridges, no water, no gimmicks:
+//  three XLs that are nothing but road, asked to treat the four chassis
+//  ROUGHLY alike (Nicola's brief: "grossomodo bilanciati" - no monocultures,
+//  no decimal-chasing). The shared recipe, learned from Marathon (spread
+//  0.5%, the calendar's most even circuit): plenty of MEDIUM corners,
+//  straights that end before the engine settles the argument, and a little
+//  of everything - slow stuff for the Aero and the Torque, fast sweeps for
+//  the Ridge, enough full throttle that the Bolt is not ballast.
+//
+//  All three built by /root/tools/design_trio.js - same turtle discipline as
+//  the other XLs, last curve computed from the actual heading, closure
+//  solved to the pixel; Vallone's proportions were picked by a coarse grid
+//  search over its lengths and angles after hand-tuning thrashed. Edit that
+//  tool, not these numbers.
+// =============================================================================
+
+//  ONDA, XL. Anticlockwise - the calendar's third left-hander - and a rhythm
+//  circuit: two trains of alternating medium sweeps (the waves), a
+//  hairpin-ish anchor at the far end, one honest straight in the middle,
+//  5300px of lap that never quite goes straight and never quite stops.
+class OndaTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 2800;
+        this.worldH = 1980;
+        this.trackWidth = 60;
+        this.grassWidth = 80;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 700, y2: 0 },
+            { type: 'arc', cx: 700, cy: -130, r: 130, start: 1.5708, end: 0.08727, ccw: true },
+            { type: 'line', x1: 829.51, y1: -118.67, x2: 846.94, y2: -317.91 },
+            { type: 'arc', cx: 996.37, cy: -304.84, r: 150, start: -3.05433, end: -1.90241, ccw: false },
+            { type: 'line', x1: 947.53, y1: -446.66, x2: 1004.26, y2: -466.2 },
+            { type: 'arc', cx: 955.43, cy: -608.02, r: 150, start: 1.23918, end: 0.08727, ccw: true },
+            { type: 'line', x1: 1104.86, y1: -594.95, x2: 1115.31, y2: -714.49 },
+            { type: 'arc', cx: 1274.71, cy: -700.55, r: 160, start: -3.05433, end: -1.8326, ccw: false },
+            { type: 'line', x1: 1233.29, y1: -855.1, x2: 1291.25, y2: -870.63 },
+            { type: 'arc', cx: 1249.84, cy: -1025.18, r: 160, start: 1.309, end: 0.20944, ccw: true },
+            { type: 'line', x1: 1406.34, y1: -991.91, x2: 1495.74, y2: -1412.51 },
+            { type: 'arc', cx: 1409.67, cy: -1430.81, r: 88, start: 0.20944, end: -1.88496, ccw: true },
+            { type: 'line', x1: 1382.47, y1: -1514.5, x2: 887.92, y2: -1353.81 },
+            { type: 'arc', cx: 925.01, cy: -1239.69, r: 120, start: -1.88496, end: -3.10669, ccw: true },
+            { type: 'line', x1: 805.08, y1: -1243.87, x2: 799.84, y2: -1093.97 },
+            { type: 'arc', cx: 659.93, cy: -1098.85, r: 140, start: -6.24828, end: -5.06145, ccw: false },
+            { type: 'line', x1: 707.81, y1: -967.29, x2: 651.43, y2: -946.77 },
+            { type: 'arc', cx: 699.31, cy: -815.22, r: 140, start: -1.91986, end: -2.89725, ccw: true },
+            { type: 'line', x1: 563.47, y1: -849.09, x2: 542.91, y2: -766.61 },
+            { type: 'arc', cx: 348.85, cy: -815, r: 200, start: -6.03884, end: -4.99164, ccw: false },
+            { type: 'line', x1: 403.98, y1: -622.74, x2: 355.91, y2: -608.96 },
+            { type: 'line', x1: 355.91, y1: -608.96, x2: -31.35, y2: -497.92 },
+            { type: 'arc', cx: 10, cy: -353.73, r: 150, start: -1.85005, end: -3.14159, ccw: true },
+            { type: 'line', x1: -140, y1: -353.73, x2: -140, y2: -140 },
+            { type: 'arc', cx: 0, cy: -140, r: 140, start: -3.14159, end: -4.71239, ccw: true }
+        ];
+
+        this.startX = 300;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+//  DEDALO, XL. Clockwise and technical: switch-corners at club radii pinch
+//  the east side twice, an esse breaks the west run home, and the breather
+//  straight is the only rest anybody gets. 5255px.
+class DedaloTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 2400;
+        this.worldH = 1800;
+        this.trackWidth = 58;
+        this.grassWidth = 80;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 560, y2: 0 },
+            { type: 'arc', cx: 560, cy: 135, r: 135, start: -1.5708, end: -0.03491, ccw: false },
+            { type: 'line', x1: 694.92, y1: 130.29, x2: 700.15, y2: 280.2 },
+            { type: 'arc', cx: 820.08, cy: 276.01, r: 120, start: 3.10669, end: 1.18682, ccw: true },
+            { type: 'line', x1: 865.03, y1: 387.27, x2: 976.29, y2: 342.32 },
+            { type: 'arc', cx: 1028.74, cy: 472.12, r: 140, start: -1.95477, end: -0.73304, ccw: false },
+            { type: 'line', x1: 1132.78, y1: 378.45, x2: 1233.15, y2: 489.92 },
+            { type: 'arc', cx: 1010.21, cy: 690.66, r: 300, start: -0.73304, end: 0, ccw: false },
+            { type: 'line', x1: 1310.21, y1: 690.66, x2: 1310.21, y2: 1120.66 },
+            { type: 'arc', cx: 1215.21, cy: 1120.66, r: 95, start: 0, end: 2.0944, ccw: false },
+            { type: 'line', x1: 1167.71, y1: 1202.93, x2: 1063.78, y2: 1142.93 },
+            { type: 'arc', cx: 998.78, cy: 1255.51, r: 130, start: 5.23599, end: 3.35103, ccw: true },
+            { type: 'line', x1: 871.62, y1: 1228.48, x2: 850.83, y2: 1326.3 },
+            { type: 'arc', cx: 733.45, cy: 1301.35, r: 120, start: 0.20944, end: 1.22173, ccw: false },
+            { type: 'line', x1: 774.5, y1: 1414.11, x2: 671.13, y2: 1451.73 },
+            { type: 'arc', cx: 565.1, cy: 1160.43, r: 310, start: 1.22173, end: 1.74533, ccw: false },
+            { type: 'line', x1: 511.27, y1: 1465.72, x2: 393.1, y2: 1444.88 },
+            { type: 'arc', cx: 448.66, cy: 1129.74, r: 320, start: 1.74533, end: 2.02458, ccw: false },
+            { type: 'line', x1: 308.39, y1: 1417.36, x2: -23.14, y2: 1255.66 },
+            { type: 'arc', cx: 38.23, cy: 1129.83, r: 140, start: 2.02458, end: 3.14159, ccw: false },
+            { type: 'line', x1: -101.77, y1: 1129.83, x2: -101.77, y2: 330 },
+            { type: 'arc', cx: -281.77, cy: 330, r: 180, start: 6.28319, end: 5.75959, ccw: true },
+            { type: 'arc', cx: 30, cy: 150, r: 180, start: 2.61799, end: 3.14159, ccw: false },
+            { type: 'arc', cx: 0, cy: 150, r: 150, start: 3.14159, end: 4.71239, ccw: false }
+        ];
+
+        this.startX = 290;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+//  VALLONE, XL. Clockwise, the grand-prix mix: a proper braking T1 off the
+//  long top straight, a fast falling valley side, the POCKET - a hairpin
+//  loop pushed up into the infield, the lap's signature - a south-west
+//  corner onto the climb, an esse on the way up, and the last curve home.
+//  6399px. Its proportions came out of a grid search: the ones where both
+//  solved straights close the lap AND the lap lands nearest 6400.
+class ValloneTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 2750;
+        this.worldH = 1750;
+        this.trackWidth = 62;
+        this.grassWidth = 80;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 600, y2: 0 },
+            { type: 'arc', cx: 600, cy: 120, r: 120, start: -1.5708, end: -0.34907, ccw: false },
+            { type: 'line', x1: 712.76, y1: 78.96, x2: 825.63, y2: 389.06 },
+            { type: 'arc', cx: 628.29, cy: 460.88, r: 210, start: -0.34907, end: 0.41888, ccw: false },
+            { type: 'line', x1: 820.14, y1: 546.3, x2: 689.98, y2: 838.63 },
+            { type: 'arc', cx: 571.22, cy: 785.75, r: 130, start: 0.41888, end: 1.43117, ccw: false },
+            { type: 'line', x1: 589.31, y1: 914.49, x2: 292.23, y2: 956.24 },
+            { type: 'arc', cx: 281.8, cy: 881.97, r: 75, start: 1.43117, end: 3.7001, ccw: false },
+            { type: 'line', x1: 218.19, y1: 842.23, x2: 398.37, y2: 553.89 },
+            { type: 'arc', cx: 296.6, cy: 490.3, r: 120, start: 6.84169, end: 3.78736, ccw: true },
+            { type: 'line', x1: 200.76, y1: 418.08, x2: -16.49, y2: 706.39 },
+            { type: 'arc', cx: -104.34, cy: 640.19, r: 110, start: 0.64577, end: 2.14675, ccw: false },
+            { type: 'line', x1: -164.25, y1: 732.44, x2: -399.08, y2: 579.94 },
+            { type: 'arc', cx: -469.88, cy: 688.97, r: 130, start: 5.28835, end: 4.41568, ccw: true },
+            { type: 'arc', cx: -545.9, cy: 440.33, r: 130, start: 1.27409, end: 2.14675, ccw: false },
+            { type: 'line', x1: -616.7, y1: 549.36, x2: -667.02, y2: 516.68 },
+            { type: 'arc', cx: -503.63, cy: 265.08, r: 300, start: 2.14675, end: 2.49582, ccw: false },
+            { type: 'line', x1: -743.22, y1: 445.62, x2: -846.75, y2: 308.24 },
+            { type: 'arc', cx: -734.94, cy: 223.98, r: 140, start: 2.49582, end: 4.71239, ccw: false },
+            { type: 'line', x1: -734.94, y1: 83.98, x2: -203.91, y2: 83.98 },
+            { type: 'arc', cx: -203.91, cy: -56.02, r: 140, start: 7.85398, end: 7.19076, ccw: true },
+            { type: 'line', x1: -117.71, y1: 54.3, x2: -86.19, y2: 29.68 },
+            { type: 'arc', cx: 0, cy: 140, r: 140, start: 4.04916, end: 4.71239, ccw: false }
+        ];
+
+        this.startX = 330;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}

@@ -2021,6 +2021,9 @@ function makeTrackRaw(trackType) {
         case 'suzuka':       return new SuzukaTrack();
         case 'lungolago':    return new LungolagoTrack();
         case 'riviera':      return new RivieraTrack();
+        case 'onda':         return new OndaTrack();
+        case 'dedalo':       return new DedaloTrack();
+        case 'vallone':      return new ValloneTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2942,7 +2945,10 @@ const CHASSIS_PACE = {
     spa: { best: 'bolt', g: '1t6n78m', pct: { aero: 2.8, bolt: 0, ridge: 0.4, torque: 0.7 } },
     suzuka: { best: 'bolt', g: '1tp2v7z', pct: { aero: 2.6, bolt: 0, ridge: 0.9, torque: 0.9 } },
     lungolago: { best: 'bolt', g: '1czseru', pct: { aero: 4, bolt: 0, ridge: 1, torque: 0.9 } },
-    riviera: { best: 'bolt', g: '1f11lcf', pct: { aero: 5.3, bolt: 0, ridge: 2.5, torque: 1.9 } }
+    riviera: { best: 'bolt', g: '1f11lcf', pct: { aero: 5.3, bolt: 0, ridge: 2.5, torque: 1.9 } },
+    onda: { best: 'ridge', g: '1b4f6sm', pct: { aero: 0.7, bolt: 0.4, ridge: 0, torque: 0.4 } },
+    dedalo: { best: 'bolt', g: '1ecq16x', pct: { aero: 1.9, bolt: 0, ridge: 0.1, torque: 0.4 } },
+    vallone: { best: 'ridge', g: '1nxegx', pct: { aero: 0.9, bolt: 0.1, ridge: 0, torque: 0.4 } }
 };
 
 function chassisPaceFor(key) {
@@ -2966,7 +2972,8 @@ const TRACK_LABELS = {
     harbour: 'Harbour', crossover: 'Crossover', kart: 'Kart',
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown',
     maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka',
-    lungolago: 'Lungolago', riviera: 'Riviera'
+    lungolago: 'Lungolago', riviera: 'Riviera',
+    onda: 'Onda', dedalo: 'Dedalo', vallone: 'Vallone'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -2983,7 +2990,8 @@ const TRACK_CODES = {
     harbour: 'HAR', crossover: 'CRS', kart: 'KAR',
     pettine: 'COM', thunder: 'THU', crown: 'CRW',
     maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ',
-    lungolago: 'LUN', riviera: 'RIV'
+    lungolago: 'LUN', riviera: 'RIV',
+    onda: 'OND', dedalo: 'DED', vallone: 'VAL'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -8447,7 +8455,11 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      // Lungolago wraps a lake clockwise; Riviera runs its
                      // sea-front anticlockwise, so the water pair splits the
                      // handedness between them.
-                     'maratona', 'colosso', 'spa', 'suzuka', 'lungolago', 'riviera'];
+                     // The plain trio: Onda turns left, Dedalo and Vallone
+                     // right, and none of them owns a gimmick - they are the
+                     // calendar's road-and-nothing-but circuits.
+                     'maratona', 'colosso', 'spa', 'suzuka', 'lungolago', 'riviera',
+                     'onda', 'dedalo', 'vallone'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:
