@@ -1668,6 +1668,31 @@ tr.ex-season-row { cursor: pointer; }
 tr.ex-season-row:hover td { background: rgba(255, 255, 255, 0.07); }
 tr.ex-season-row td { border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
 .ex-seed { font-weight: 700; color: #eceff1; }
+/* the player's margin note: shown small under the seed in the list... */
+.ex-note-preview {
+    font-weight: 400; font-style: italic; font-size: 11px;
+    color: #90a4ae; max-width: 180px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* ...and edited in the season's own page */
+.ex-note-edit { margin: 10px 0 4px; }
+.ex-note-edit textarea {
+    display: block; width: 100%; box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px; color: #eceff1;
+    font: italic 13px/1.45 inherit; font-family: inherit;
+    padding: 8px 10px; resize: vertical; min-height: 44px;
+}
+.ex-note-edit textarea:focus {
+    outline: none; border-color: rgba(255, 213, 79, 0.55);
+    background: rgba(255, 255, 255, 0.09);
+}
+.ex-note-edit textarea::placeholder { color: #78909c; font-style: italic; }
+#ex-note-state { display: inline-block; min-width: 44px; color: #66bb6a; }
+/* start and finish stacked in one column, the finish a shade quieter */
+.ex-when span { display: block; white-space: nowrap; }
+.ex-when .ex-when-end { color: #90a4ae; font-size: 11px; }
 .ex-state { font-size: 11px; opacity: 0.6; }
 /* your own row in a season's standings */
 tr.ex-me td { background: rgba(255, 213, 79, 0.09); }

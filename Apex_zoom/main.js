@@ -3749,11 +3749,18 @@ function archiveSeason(state, complete) {
     if (!state || !Array.isArray(state.tracks)) return;
     ensureSeasonId(state);
     const list = seasonsLoad();
+    // The snapshot REPLACES the old entry, so anything the player attached to
+    // the archive itself - their note, the recorded finish time - has to be
+    // carried across by hand or a played round would quietly erase it.
+    const prev = list.find(x => x.id === state.id);
     const entry = {
         id: state.id,
         startedAt: state.startedAt || Date.now(),
         updatedAt: Date.now(),
         complete: !!complete,
+        note: (prev && prev.note) || null,
+        // stamped once, the first time the season is archived as finished
+        endedAt: complete ? ((prev && prev.endedAt) || Date.now()) : null,
         seed: state.seed || null,
         difficulty: state.difficulty || null,
         nightmare: !!state.nightmare,
@@ -3886,6 +3893,19 @@ function deleteSeason(id) {
     return true;
 }
 
+// The player's note on an archived season. Trimmed, capped, nulled when
+// emptied; deliberately does NOT bump updatedAt (see the caller in
+// exShowSeason for why).
+function exSetSeasonNote(id, text) {
+    const list = seasonsLoad();
+    const e = list.find(x => x.id === id);
+    if (!e) return false;
+    const t = String(text || '').trim();
+    e.note = t ? t.slice(0, 400) : null;
+    seasonsSave(list);
+    return true;
+}
+
 // Merge, never replace: importing a file must not cost you the seasons you
 // already had. Same id wins by whichever snapshot is newer, which is also
 // what makes importing the same file twice a no-op.
@@ -3898,7 +3918,15 @@ function seasonsMerge(incoming) {
         if (!seasonEntryOk(e)) { skipped++; continue; }
         const cur = byId[e.id];
         if (!cur) { byId[e.id] = e; added++; }
-        else if ((e.updatedAt || 0) > (cur.updatedAt || 0)) { byId[e.id] = e; updated++; }
+        else if ((e.updatedAt || 0) > (cur.updatedAt || 0)) {
+            // The newer snapshot wins, but a note typed HERE outlives an
+            // import that does not carry one - editing a note deliberately
+            // does not touch updatedAt (it would reshuffle the list), so
+            // without this a fresher file would silently eat it.
+            if (cur.note && !e.note) e.note = cur.note;
+            if (cur.endedAt && !e.endedAt) e.endedAt = cur.endedAt;
+            byId[e.id] = e; updated++;
+        }
     }
     seasonsSave(Object.keys(byId).map(k => byId[k]));
     return { added, updated, skipped };
@@ -4905,6 +4933,30 @@ function exDate(ts) {
         { year: 'numeric', month: 'short', day: 'numeric' }); }
     catch (e) { return '—'; }
 }
+// Date AND clock, for the season timestamps: "when was it started" is a day,
+// but "was that before or after dinner" is what a person actually remembers.
+function exDateTime(ts) {
+    if (!ts) return '—';
+    try {
+        const d = new Date(ts);
+        return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) +
+            ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return '—'; }
+}
+// Season notes are the first free text a player types that gets rendered
+// back as HTML, so they are the first thing that has to be escaped.
+function exEsc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// When a finished season actually finished: recorded at completion since
+// zoom33; for seasons archived before that, the last snapshot's save time IS
+// the completion time, because completing is what wrote the snapshot.
+function seasonEndedAt(e) {
+    if (!e || !e.complete) return null;
+    return e.endedAt || e.updatedAt || null;
+}
 function exCell(k, v, title) {
     return '<div class="ex-cell"' + (title ? ' title="' + title + '"' : '') + '>' +
            '<div class="ex-k">' + k + '</div><div class="ex-v">' + v + '</div></div>';
@@ -4973,7 +5025,9 @@ function exRenderSeasons() {
     }
 
     host.innerHTML = '<div class="ex-scroll"><table class="ex-seasons"><thead><tr>' +
-        '<th>Season</th><th>Started</th><th>Rounds</th><th>Champion</th>' +
+        '<th>Season</th>' +
+        '<th title="when the first Grand Prix weekend was opened, and when the last one ended">' +
+        'Started &middot; Finished</th><th>Rounds</th><th>Champion</th>' +
         '<th>You</th><th title="the share of the races you started that you won">Win rate</th>' +
         '<th></th><th></th></tr></thead><tbody>' +
         list.map(e => {
@@ -4993,11 +5047,17 @@ function exRenderSeasons() {
                 ? '<b>' + Math.round(100 * me.wins / me.races) + '%</b>' +
                   '<span class="ex-sml"> ' + me.wins + '/' + me.races + '</span>'
                 : '<span class="pbk-none">—</span>';
+            const ended = seasonEndedAt(e);
             return '<tr class="ex-season-row" data-id="' + e.id + '">' +
                 '<td class="ex-seed">' + (e.seed || '—') +
                 (e.nightmare ? ' <span class="ex-nightmare" title="the calendar was your ' +
-                    'worst circuits, not a random draw">nightmare</span>' : '') + '</td>' +
-                '<td>' + exDate(e.startedAt) + '</td>' +
+                    'worst circuits, not a random draw">nightmare</span>' : '') +
+                (e.note ? '<div class="ex-note-preview" title="' + exEsc(e.note) + '">' +
+                    exEsc(e.note.length > 44 ? e.note.slice(0, 43) + '…' : e.note) +
+                    '</div>' : '') + '</td>' +
+                '<td class="ex-when"><span>' + exDateTime(e.startedAt) + '</span>' +
+                '<span class="ex-when-end">' + (ended ? exDateTime(ended) : '—') +
+                '</span></td>' +
                 '<td>' + e.done + ' / ' + e.rounds + '</td>' +
                 '<td>' + (champ ? '<span class="tt-chip" style="background:' + champ.color +
                     ';"></span> ' + champ.name : '—') + '</td>' +
@@ -5109,8 +5169,10 @@ function exShowSeason(id) {
     const me = rows.find(r => r.isPlayer);
     const wet = (entry.results || []).filter(r => r.wet).length;
 
+    const endedTs = seasonEndedAt(entry);
     let html = '<div class="ex-d-head"><h2>Season ' + (entry.seed || '') + '</h2>' +
-        '<span class="ex-sml">' + exDate(entry.startedAt) + ' &nbsp;·&nbsp; ' +
+        '<span class="ex-sml">' + exDateTime(entry.startedAt) +
+        (endedTs ? ' &rarr; ' + exDateTime(endedTs) : '') + ' &nbsp;·&nbsp; ' +
         (entry.fromLog ? 'rebuilt from a race log'
                        : (entry.complete ? 'finished' : 'left after round ' + entry.done)) +
         '</span></div>';
@@ -5120,6 +5182,14 @@ function exShowSeason(id) {
               (entry.done + 1) + '</button>' : '') +
         '<button type="button" class="ex-del" data-del="' + entry.id + '">Delete this season</button>' +
         '</div>';
+    // The season's own margin note. Typed here, saved with the season, shown
+    // under its seed in the list, and carried through export and import.
+    html += '<div class="ex-note-edit">' +
+        '<textarea id="ex-season-note" rows="2" maxlength="400" ' +
+        'placeholder="A note on this season — whatever is worth remembering. ' +
+        'It is saved with the season and travels with the file.">' +
+        exEsc(entry.note || '') + '</textarea>' +
+        '<span class="ex-sml" id="ex-note-state"></span></div>';
     if (entry.fromLog) {
         html += '<div class="ex-note">Read back out of a downloaded race log rather than saved by ' +
             'the game. Everything here was counted from the classifications in that file &mdash; ' +
@@ -5180,6 +5250,25 @@ function exShowSeason(id) {
     // the same grid the end-of-season screen draws, from the archived season
     renderSeasonRecap(entry, document.getElementById('ex-season-grid'), 'Round by round');
     exWireSeasonActions(host);
+
+    // the note saves itself as it is typed - debounced, and WITHOUT touching
+    // updatedAt: bumping it would hoist a three-month-old season to the top
+    // of the list because you fixed a typo in its margin note
+    const noteEl = document.getElementById('ex-season-note');
+    if (noteEl) {
+        let t = null;
+        const stateEl = document.getElementById('ex-note-state');
+        noteEl.addEventListener('input', () => {
+            if (stateEl) stateEl.textContent = '…';
+            if (t) clearTimeout(t);
+            t = setTimeout(() => {
+                exSetSeasonNote(entry.id, noteEl.value);
+                if (stateEl) stateEl.textContent = 'saved';
+            }, 450);
+        });
+        // a click in the textarea must not bubble into anything above it
+        noteEl.addEventListener('click', (ev) => ev.stopPropagation());
+    }
 
     // The career strip belongs to the list: with a season open it is 150px of
     // numbers about something else, pushing the season down the screen.
@@ -5445,6 +5534,8 @@ function parseLogSeasons(text) {
             id: logSeasonId(s.seed, first, s.races.map(r => r.track)),
             startedAt: first || Date.now(),
             updatedAt: s.races[s.races.length - 1].when || first || Date.now(),
+            // the last race in the file is when this season ended
+            endedAt: s.races[s.races.length - 1].when || null,
             // What the log holds is what was played, so it is reported as a
             // finished season - with fromLog set, because "ten rounds" here
             // means ten rounds ARE IN THE FILE, not that the calendar was ten.
