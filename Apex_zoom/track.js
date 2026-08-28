@@ -1955,6 +1955,22 @@ class SegmentedTrack {
                 }
                 if (!ok) continue;
 
+                // 4. and on dry land - ALL of it, not just the centre post.
+                // Checking only (cx, cy) shipped stands with a corner in the
+                // marina: a stand is a rectangle, and a rectangle can stand
+                // on the beach with one foot in the water.
+                if (this.water) {
+                    const hl2 = len / 2 + 8, hd2 = depth / 2 + 8;
+                    const ca = Math.cos(ang), sa = Math.sin(ang);
+                    let wet = this._inWater(cx, cy);
+                    for (const c2 of [[hl2, hd2], [hl2, -hd2], [-hl2, hd2], [-hl2, -hd2]]) {
+                        if (wet) break;
+                        wet = this._inWater(cx + c2[0] * ca - c2[1] * sa,
+                                            cy + c2[0] * sa + c2[1] * ca);
+                    }
+                    if (wet) continue;
+                }
+
                 stands.push({
                     x: cx, y: cy, angle: ang, len: len, depth: depth,
                     fill: 0.55 + rand() * 0.45,     // how full this stand is
@@ -2156,8 +2172,97 @@ class SegmentedTrack {
         ctx.restore();
     }
 
+    // --- Water -----------------------------------------------------------
+    // Circuits with a `water` property (arrays of polygon points, set up by
+    // their constructors) get it painted UNDER everything else: a sand rim,
+    // the deep fill, a shoreline shimmer, seeded static ripples, and any
+    // `boats`. It lives in the baked track layer, so it costs nothing per
+    // frame - which is also why the ripples are still: the bake redraws only
+    // when the track changes, not on a clock.
+    _inWater(x, y) {
+        if (!this.water) return false;
+        for (const poly of this.water) {
+            let inside = false;
+            for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+                if ((poly[i].y > y) !== (poly[j].y > y) &&
+                    x < (poly[j].x - poly[i].x) * (y - poly[i].y) /
+                        (poly[j].y - poly[i].y) + poly[i].x) inside = !inside;
+            }
+            if (inside) return true;
+        }
+        return false;
+    }
+
+    drawWater(ctx) {
+        if (!this.water) return;
+        const path = (poly) => {
+            ctx.beginPath();
+            ctx.moveTo(poly[0].x, poly[0].y);
+            for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+            ctx.closePath();
+        };
+        for (const poly of this.water) {
+            // the beach: a sand band straddling the shoreline; the fill then
+            // covers its inner half, leaving a rim on the outside
+            path(poly);
+            ctx.strokeStyle = '#d3bf8d';
+            ctx.lineWidth = 16;
+            ctx.lineJoin = 'round';
+            ctx.stroke();
+            ctx.fillStyle = '#175d87';
+            ctx.fill();
+            // shoreline foam
+            path(poly);
+            ctx.strokeStyle = 'rgba(140, 205, 235, 0.5)';
+            ctx.lineWidth = 5;
+            ctx.stroke();
+            // seeded ripples, deterministic so the bake is stable
+            let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+            for (const p of poly) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+                                    y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+            let rnd = Math.round(Math.abs(x0 + y0) + poly.length);
+            const rr = () => { rnd = (rnd * 1103515245 + 12345) % 2147483648; return rnd / 2147483648; };
+            const n = Math.min(60, Math.round((x1 - x0) * (y1 - y0) / 26000));
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.10)';
+            ctx.lineWidth = 1.6;
+            for (let k = 0; k < n; k++) {
+                const rx = x0 + rr() * (x1 - x0), ry = y0 + rr() * (y1 - y0);
+                if (!this._inWater(rx, ry)) continue;
+                const rad = 5 + rr() * 10, a0 = rr() * Math.PI * 2;
+                ctx.beginPath();
+                ctx.arc(rx, ry, rad, a0, a0 + 1.9);
+                ctx.stroke();
+            }
+        }
+        // boats: a wake (only for boats under way - a moored boat trailing
+        // one was poking painted water out over the marina beach), a hull,
+        // a deck stripe
+        for (const b of (this.boats || [])) {
+            ctx.save();
+            ctx.translate(b.x, b.y);
+            ctx.rotate(b.a);
+            if (!b.m) {
+                ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                ctx.beginPath();                   // wake
+                ctx.moveTo(-14, 0); ctx.lineTo(-30, -4); ctx.lineTo(-30, 4);
+                ctx.closePath(); ctx.fill();
+            }
+            ctx.fillStyle = '#f4f1e8';             // hull
+            ctx.beginPath();
+            ctx.moveTo(13, 0); ctx.lineTo(4, -5); ctx.lineTo(-11, -5);
+            ctx.lineTo(-11, 5); ctx.lineTo(4, 5);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#8a6f4d';             // deck
+            ctx.fillRect(-7, -2.5, 9, 5);
+            ctx.restore();
+        }
+    }
+
     draw(ctx) {
-        // Stands first: they sit outside the barriers, behind everything else.
+        // Water first, under everything else - see drawWater.
+        this.drawWater(ctx);
+
+        // Stands next: they sit outside the barriers, behind the racing.
         this.drawStands(ctx);
 
         ctx.lineCap = 'butt'; // Crucial for segmented drawing without huge overlap
@@ -3507,5 +3612,173 @@ class SuzukaTrack extends SegmentedTrack {
         this.startY = 0;
 
         this.waypoints = this.generateWaypoints();
+    }
+}
+
+
+// =============================================================================
+//  LUNGOLAGO, XL. The lake circuit.
+//
+//  A clockwise ring laid around a lake, and for half the lap the road IS the
+//  shore. The reading: a 1200px pit straight into T1; the east side now
+//  EARNS its speed - the terraces esse (two 32-degree lift-and-turns), the
+//  330R sweep, then a flowing S right on the waterline - before the
+//  south-east hook; the south run is a CAUSEWAY, lake past one wall, lagoon
+//  past the other, with an esse flick at its exit; the south-west corner
+//  opens the west climb, where the road walks out onto a HEADLAND and wraps
+//  its tip through 144 degrees with water on three sides; a kink and a
+//  70-degree last curve bring it home. 6244px, fifteen corners, 2950x1900.
+//
+//  Built by /root/tools/design_water.js - turtle construction, the last
+//  curve computed from the turtle's actual heading, the run home solved to
+//  close to the pixel. The water is BUILT FROM the road: shorelines are the
+//  centreline offset 112px sideways, stitched with hand-set deep-water
+//  anchors. The east esse and shore S were added on Nicola's call - the
+//  first cut was a bolt monoculture (+4% on the aero) - so the fast side
+//  now demands two real changes of direction. Edit that tool, not these
+//  numbers.
+// =============================================================================
+class LungolagoTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 2950;
+        this.worldH = 1900;
+        this.trackWidth = 60;
+        this.grassWidth = 80;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 620, y2: 0 },
+            { type: 'arc', cx: 620, cy: 145, r: 145, start: -1.5708, end: -0.06981, ccw: false },
+            { type: 'line', x1: 764.65, y1: 134.89, x2: 773.72, y2: 264.57 },
+            { type: 'arc', cx: 983.2, cy: 249.92, r: 210, start: 3.07178, end: 2.51327, ccw: true },
+            { type: 'line', x1: 813.31, y1: 373.35, x2: 860.33, y2: 438.08 },
+            { type: 'arc', cx: 690.44, cy: 561.51, r: 210, start: -0.62832, end: -0.06981, ccw: false },
+            { type: 'line', x1: 899.93, y1: 546.86, x2: 909, y2: 676.55 },
+            { type: 'arc', cx: 579.8, cy: 699.57, r: 330, start: -0.06981, end: 0.38397, ccw: false },
+            { type: 'line', x1: 885.77, y1: 823.19, x2: 840.82, y2: 934.45 },
+            { type: 'arc', cx: 609.02, cy: 840.8, r: 250, start: 0.38397, end: 0.83776, ccw: false },
+            { type: 'arc', cx: 943.59, cy: 1212.37, r: 250, start: 3.97935, end: 3.52557, ccw: true },
+            { type: 'line', x1: 711.79, y1: 1118.72, x2: 666.84, y2: 1229.98 },
+            { type: 'arc', cx: 527.76, cy: 1173.79, r: 150, start: 0.38397, end: 1.5708, ccw: false },
+            { type: 'line', x1: 527.76, y1: 1323.79, x2: 307.76, y2: 1323.79 },
+            { type: 'line', x1: 307.76, y1: 1323.79, x2: -252.24, y2: 1323.79 },
+            { type: 'arc', cx: -252.24, cy: 1493.79, r: 170, start: 4.71239, end: 3.63028, ccw: true },
+            { type: 'line', x1: -402.34, y1: 1413.98, x2: -428.16, y2: 1462.54 },
+            { type: 'arc', cx: -578.26, cy: 1382.73, r: 170, start: 0.48869, end: 1.5708, ccw: false },
+            { type: 'line', x1: -578.26, y1: 1552.73, x2: -758.26, y2: 1552.73 },
+            { type: 'arc', cx: -758.26, cy: 1432.73, r: 120, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: -878.26, y1: 1432.73, x2: -878.26, y2: 1292.73 },
+            { type: 'arc', cx: -708.26, cy: 1292.73, r: 170, start: 3.14159, end: 4.39823, ccw: false },
+            { type: 'line', x1: -760.8, y1: 1131.05, x2: -656.18, y2: 1097.06 },
+            { type: 'arc', cx: -699.44, cy: 963.91, r: 140, start: 7.53982, end: 5.02655, ccw: true },
+            { type: 'line', x1: -656.18, y1: 830.76, x2: -760.8, y2: 796.77 },
+            { type: 'arc', cx: -708.26, cy: 635.09, r: 170, start: 1.88496, end: 3.14159, ccw: false },
+            { type: 'line', x1: -878.26, y1: 635.09, x2: -878.26, y2: 590.09 },
+            { type: 'arc', cx: -578.26, cy: 590.09, r: 300, start: 3.14159, end: 3.49066, ccw: false },
+            { type: 'line', x1: -860.17, y1: 487.48, x2: -715.07, y2: 88.83 },
+            { type: 'arc', cx: -588.21, cy: 135, r: 135, start: 3.49066, end: 4.71239, ccw: false },
+            { type: 'line', x1: -588.21, y1: 0, x2: 0, y2: 0 }
+        ];
+
+        // 310px past the turtle origin: the solved straight runs in behind
+        // the grid, and T1 is 310px ahead of pole.
+        this.startX = 310;
+        this.startY = 0;
+
+        // Water and boats live in the same frame as the segments and are
+        // translated with them after centreInArena has decided the offset.
+        // m: true = moored, drawn without a wake.
+        this.water = [
+            [{x:797,y:682},{x:798,y:693},{x:798,y:702},{x:797,y:711},{x:797,y:720},{x:796,y:729},{x:794,y:738},{x:793,y:747},{x:790,y:756},{x:788,y:764},{x:785,y:773},{x:781,y:782},{x:777,y:794},{x:772,y:806},{x:767,y:818},{x:762,y:831},{x:757,y:843},{x:752,y:855},{x:747,y:868},{x:742,y:880},{x:737,y:891},{x:734,y:899},{x:731,y:905},{x:728,y:911},{x:724,y:917},{x:720,y:923},{x:716,y:928},{x:711,y:934},{x:706,y:939},{x:699,y:945},{x:688,y:956},{x:676,y:969},{x:664,y:983},{x:652,y:997},{x:642,y:1012},{x:632,y:1028},{x:623,y:1044},{x:615,y:1060},{x:608,y:1075},{x:603,y:1089},{x:598,y:1101},{x:593,y:1114},{x:588,y:1126},{x:583,y:1139},{x:578,y:1151},{x:573,y:1163},{x:568,y:1176},{x:564,y:1186},{x:562,y:1191},{x:560,y:1194},{x:558,y:1197},{x:556,y:1200},{x:553,y:1202},{x:550,y:1204},{x:548,y:1206},{x:545,y:1208},{x:541,y:1209},{x:538,y:1210},{x:535,y:1211},{x:531,y:1212},{x:525,y:1212},{x:514,y:1212},{x:500,y:1212},{x:487,y:1212},{x:473,y:1212},{x:459,y:1212},{x:445,y:1212},{x:432,y:1212},{x:418,y:1212},{x:404,y:1212},{x:390,y:1212},{x:377,y:1212},{x:363,y:1212},{x:349,y:1212},{x:335,y:1212},{x:322,y:1212},{x:308,y:1212},{x:294,y:1212},{x:280,y:1212},{x:266,y:1212},{x:252,y:1212},{x:238,y:1212},{x:224,y:1212},{x:210,y:1212},{x:196,y:1212},{x:182,y:1212},{x:168,y:1212},{x:154,y:1212},{x:140,y:1212},{x:126,y:1212},{x:112,y:1212},{x:98,y:1212},{x:84,y:1212},{x:70,y:1212},{x:56,y:1212},{x:42,y:1212},{x:28,y:1212},{x:14,y:1212},{x:0,y:1212},{x:-14,y:1212},{x:-28,y:1212},{x:-42,y:1212},{x:-56,y:1212},{x:-70,y:1212},{x:-84,y:1212},{x:-98,y:1212},{x:-112,y:1212},{x:-126,y:1212},{x:-140,y:1212},{x:-154,y:1212},{x:-168,y:1212},{x:-182,y:1212},{x:-196,y:1212},{x:-210,y:1212},{x:-224,y:1212},{x:-238,y:1212},{x:-520,y:1265},{x:-766,y:1297},{x:-766,y:1288},{x:-766,y:1284},{x:-765,y:1279},{x:-763,y:1275},{x:-762,y:1271},{x:-760,y:1266},{x:-758,y:1262},{x:-755,y:1259},{x:-752,y:1255},{x:-749,y:1252},{x:-746,y:1249},{x:-742,y:1246},{x:-739,y:1243},{x:-735,y:1241},{x:-730,y:1239},{x:-724,y:1237},{x:-713,y:1233},{x:-700,y:1229},{x:-687,y:1225},{x:-674,y:1221},{x:-661,y:1216},{x:-648,y:1212},{x:-635,y:1208},{x:-619,y:1203},{x:-599,y:1195},{x:-577,y:1184},{x:-556,y:1171},{x:-537,y:1157},{x:-519,y:1140},{x:-503,y:1122},{x:-489,y:1102},{x:-476,y:1081},{x:-466,y:1059},{x:-458,y:1036},{x:-452,y:1012},{x:-449,y:988},{x:-447,y:964},{x:-449,y:940},{x:-452,y:915},{x:-458,y:892},{x:-466,y:869},{x:-476,y:847},{x:-489,y:826},{x:-503,y:806},{x:-519,y:788},{x:-537,y:771},{x:-556,y:757},{x:-577,y:744},{x:-599,y:733},{x:-619,y:725},{x:-635,y:720},{x:-648,y:716},{x:-661,y:711},{x:-674,y:707},{x:-687,y:703},{x:-700,y:699},{x:-713,y:695},{x:-724,y:691},{x:-730,y:689},{x:-735,y:687},{x:-739,y:685},{x:-742,y:682},{x:-746,y:679},{x:-749,y:676},{x:-752,y:673},{x:-755,y:669},{x:-758,y:665},{x:-760,y:661},{x:-762,y:657},{x:-763,y:653},{x:-765,y:649},{x:-766,y:644},{x:-767,y:635},{x:-660,y:520},{x:-240,y:430},{x:300,y:470},{x:640,y:560}],
+            [{x:528,y:1436},{x:514,y:1436},{x:500,y:1436},{x:487,y:1436},{x:473,y:1436},{x:459,y:1436},{x:445,y:1436},{x:432,y:1436},{x:418,y:1436},{x:404,y:1436},{x:390,y:1436},{x:377,y:1436},{x:363,y:1436},{x:349,y:1436},{x:335,y:1436},{x:322,y:1436},{x:308,y:1436},{x:294,y:1436},{x:280,y:1436},{x:266,y:1436},{x:252,y:1436},{x:238,y:1436},{x:224,y:1436},{x:210,y:1436},{x:196,y:1436},{x:182,y:1436},{x:168,y:1436},{x:154,y:1436},{x:140,y:1436},{x:126,y:1436},{x:112,y:1436},{x:98,y:1436},{x:84,y:1436},{x:70,y:1436},{x:56,y:1436},{x:42,y:1436},{x:28,y:1436},{x:14,y:1436},{x:0,y:1436},{x:-14,y:1436},{x:-28,y:1436},{x:-42,y:1436},{x:-56,y:1436},{x:-70,y:1436},{x:-84,y:1436},{x:-98,y:1436},{x:-112,y:1436},{x:-126,y:1436},{x:-140,y:1436},{x:-154,y:1436},{x:-168,y:1436},{x:-182,y:1436},{x:-196,y:1436},{x:-210,y:1436},{x:-224,y:1436},{x:-238,y:1436},{x:-300,y:1560},{x:40,y:1660},{x:380,y:1580},{x:470,y:1450}]
+        ];
+        this.boats = [
+            { x: 160, y: 760, a: 0.5 }, { x: 430, y: 640, a: 2.2 },
+            { x: -180, y: 620, a: 4.1 }, { x: 170, y: 1500, a: 1.1, m: true }
+        ];
+
+        this.waypoints = this.generateWaypoints();
+        const o = this.fitOffset || { x: 0, y: 0 };
+        for (const poly of this.water) for (const p of poly) { p.x += o.x; p.y += o.y; }
+        for (const b of this.boats) { b.x += o.x; b.y += o.y; }
+    }
+}
+
+// =============================================================================
+//  RIVIERA, XL. The sea circuit - and the calendar's left-handed XL.
+//
+//  Anticlockwise, the sea the whole length of the south side: the pit
+//  straight is a 1750px SEA-FRONT - the longest straight in the game - into
+//  a heavy 148-degree left hairpin wrapped around a rocky cove, the lap's
+//  big braking zone. The way home now works for a living: a climbing esse
+//  out of the hairpin, the old-town pair, the dip around the MARINA and its
+//  moored boats, a chicane off the flat-out kink, and a harbour esse feeding
+//  the last corner onto the sea again. 5215px, fifteen corners, 3150x1550.
+//
+//  Built by /root/tools/design_water.js, same discipline as Lungolago. The
+//  climbing esse, the chicane and the harbour esse were added on Nicola's
+//  call - the first cut read +4.4% for the aero, a straight-line monoculture
+//  - and the sea-front itself was left alone: its length IS the circuit's
+//  identity. Edit that tool, not these numbers.
+// =============================================================================
+class RivieraTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 3150;
+        this.worldH = 1550;
+        this.trackWidth = 62;
+        this.grassWidth = 80;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 1750, y2: 0 },
+            { type: 'arc', cx: 1750, cy: -85, r: 85, start: 1.5708, end: -1.01229, ccw: true },
+            { type: 'line', x1: 1795.04, y1: -157.08, x2: 1701.76, y2: -215.38 },
+            { type: 'arc', cx: 1765.35, cy: -317.14, r: 120, start: -4.15388, end: -3.36849, ccw: false },
+            { type: 'line', x1: 1648.42, y1: -290.15, x2: 1632.68, y2: -358.35 },
+            { type: 'arc', cx: 1515.75, cy: -331.36, r: 120, start: -0.22689, end: -1.01229, ccw: true },
+            { type: 'line', x1: 1579.34, y1: -433.12, x2: 1486.06, y2: -491.42 },
+            { type: 'arc', cx: 1565.55, cy: -618.62, r: 150, start: -4.15388, end: -3.49066, ccw: false },
+            { type: 'line', x1: 1424.59, y1: -567.32, x2: 1363.03, y2: -736.46 },
+            { type: 'arc', cx: 1259.66, cy: -698.84, r: 110, start: -0.34907, end: -1.5708, ccw: true },
+            { type: 'line', x1: 1259.66, y1: -808.84, x2: 1179.66, y2: -808.84 },
+            { type: 'arc', cx: 1179.66, cy: -668.84, r: 140, start: -1.5708, end: -2.40855, ccw: true },
+            { type: 'line', x1: 1075.62, y1: -762.52, x2: 988.63, y2: -665.91 },
+            { type: 'arc', cx: 899.46, cy: -746.21, r: 120, start: -5.55015, end: -3.87463, ccw: false },
+            { type: 'line', x1: 810.28, y1: -665.91, x2: 770.13, y2: -710.5 },
+            { type: 'arc', cx: 666.09, cy: -616.82, r: 140, start: -0.73304, end: -1.5708, ccw: true },
+            { type: 'line', x1: 666.09, y1: -756.82, x2: 606.09, y2: -756.82 },
+            { type: 'arc', cx: 606.09, cy: -1176.82, r: 420, start: -4.71239, end: -4.36332, ccw: false },
+            { type: 'arc', cx: 424.82, cy: -678.78, r: 110, start: -1.22173, end: -1.91986, ccw: true },
+            { type: 'line', x1: 387.2, y1: -782.15, x2: 335.52, y2: -763.34 },
+            { type: 'arc', cx: 297.89, cy: -866.71, r: 110, start: -5.06145, end: -4.36332, ccw: false },
+            { type: 'line', x1: 260.27, y1: -763.34, x2: 82.33, y2: -828.1 },
+            { type: 'arc', cx: 34.45, cy: -696.55, r: 140, start: -1.22173, end: -3.14159, ccw: true },
+            { type: 'line', x1: -105.55, y1: -696.55, x2: -105.55, y2: -295.39 },
+            { type: 'arc', cx: -235.55, cy: -295.39, r: 130, start: -6.28319, end: -5.68977, ccw: false },
+            { type: 'arc', cx: -20, cy: -150, r: 130, start: -2.54818, end: -3.14159, ccw: true },
+            { type: 'arc', cx: 0, cy: -150, r: 150, start: -3.14159, end: -4.71239, ccw: true }
+        ];
+
+        // 420px past the origin: room for the whole grid on the sea-front
+        // with the west corner well behind it.
+        this.startX = 420;
+        this.startY = 0;
+
+        this.water = [
+            [{x:-1400,y:112},{x:3600,y:112},{x:3600,y:2200},{x:-1400,y:2200}],
+            [{x:1759,y:112},{x:1782,y:109},{x:1813,y:102},{x:1842,y:89},{x:1869,y:72},{x:1892,y:51},{x:1912,y:27},{x:1928,y:-1},{x:1939,y:-31},{x:1946,y:-62},{x:1947,y:-94},{x:1943,y:-125},{x:1934,y:-156},{x:1920,y:-184},{x:1902,y:-210},{x:1886,y:-227},{x:1965,y:-175},{x:2075,y:-20},{x:2075,y:380},{x:1760,y:640}],
+            [{x:1001,y:-829},{x:993,y:-820},{x:984,y:-810},{x:975,y:-800},{x:967,y:-791},{x:958,y:-781},{x:949,y:-771},{x:940,y:-762},{x:932,y:-752},{x:923,y:-742},{x:916,y:-735},{x:913,y:-731},{x:911,y:-730},{x:909,y:-729},{x:907,y:-728},{x:905,y:-727},{x:903,y:-726},{x:901,y:-726},{x:898,y:-726},{x:896,y:-726},{x:894,y:-727},{x:892,y:-728},{x:890,y:-729},{x:888,y:-730},{x:886,y:-731},{x:883,y:-735},{x:877,y:-742},{x:869,y:-751},{x:861,y:-760},{x:852,y:-768},{x:870,y:-836}]
+        ];
+        this.boats = [
+            { x: 420, y: 320, a: 0.15 }, { x: 1080, y: 440, a: 3.3 },
+            { x: 1590, y: 270, a: 1.8 }, { x: 1965, y: 95, a: 2.6, m: true },
+            { x: 880, y: -800, a: 1.60, m: true }, { x: 922, y: -806, a: 1.55, m: true },
+            { x: 958, y: -800, a: 1.62, m: true }
+        ];
+
+        this.waypoints = this.generateWaypoints();
+        const o = this.fitOffset || { x: 0, y: 0 };
+        for (const poly of this.water) for (const p of poly) { p.x += o.x; p.y += o.y; }
+        for (const b of this.boats) { b.x += o.x; b.y += o.y; }
     }
 }

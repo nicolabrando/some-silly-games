@@ -2019,6 +2019,8 @@ function makeTrackRaw(trackType) {
         case 'colosso':      return new ColossoTrack();
         case 'spa':          return new SpaTrack();
         case 'suzuka':       return new SuzukaTrack();
+        case 'lungolago':    return new LungolagoTrack();
+        case 'riviera':      return new RivieraTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2938,7 +2940,9 @@ const CHASSIS_PACE = {
     maratona: { best: 'ridge', g: 'y3sw7f', pct: { aero: 0.2, bolt: 0.5, ridge: 0, torque: 0.5 } },
     colosso: { best: 'aero', g: '1c7w272', pct: { aero: 0, bolt: 0.8, ridge: 0.4, torque: 1 } },
     spa: { best: 'bolt', g: '1t6n78m', pct: { aero: 2.8, bolt: 0, ridge: 0.4, torque: 0.7 } },
-    suzuka: { best: 'bolt', g: '1tp2v7z', pct: { aero: 2.6, bolt: 0, ridge: 0.9, torque: 0.9 } }
+    suzuka: { best: 'bolt', g: '1tp2v7z', pct: { aero: 2.6, bolt: 0, ridge: 0.9, torque: 0.9 } },
+    lungolago: { best: 'bolt', g: '1czseru', pct: { aero: 4, bolt: 0, ridge: 1, torque: 0.9 } },
+    riviera: { best: 'bolt', g: '1f11lcf', pct: { aero: 5.3, bolt: 0, ridge: 2.5, torque: 1.9 } }
 };
 
 function chassisPaceFor(key) {
@@ -2961,7 +2965,8 @@ const TRACK_LABELS = {
     boomerang: 'Boomerang', zipper: 'Zipper', kettle: 'Kettle',
     harbour: 'Harbour', crossover: 'Crossover', kart: 'Kart',
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown',
-    maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka'
+    maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka',
+    lungolago: 'Lungolago', riviera: 'Riviera'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -2977,7 +2982,8 @@ const TRACK_CODES = {
     boomerang: 'BOO', zipper: 'ZIP', kettle: 'KET',
     harbour: 'HAR', crossover: 'CRS', kart: 'KAR',
     pettine: 'COM', thunder: 'THU', crown: 'CRW',
-    maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ'
+    maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ',
+    lungolago: 'LUN', riviera: 'RIV'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -8347,7 +8353,10 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      // Spa is the exception and stays right-handed: it is a
                      // portrait of a real, right-handed circuit, and mirroring
                      // it would be a portrait of somewhere else.
-                     'maratona', 'colosso', 'spa', 'suzuka'];
+                     // Lungolago wraps a lake clockwise; Riviera runs its
+                     // sea-front anticlockwise, so the water pair splits the
+                     // handedness between them.
+                     'maratona', 'colosso', 'spa', 'suzuka', 'lungolago', 'riviera'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:
