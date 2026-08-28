@@ -21,58 +21,18 @@
 //     aim direction.
 // =============================================================================
 
-// -----------------------------------------------------------------------------
-//  THE LADDER
-//
-//  Measured before it was refitted (median solo lap, sixteen circuits, tyre
-//  pinned so a compound lottery could not move the answer):
-//
-//      easy +59.8%   medium +15.5%   hard +3.7%   impossible 0
-//
-//  Three quarters of the range was in the bottom step and the top two rungs
-//  were the same rung - hard and impossible were three points apart, which is
-//  inside the race-to-race noise. After the refit, same measurement, four
-//  circuits (oval, triangle, f1, serpent):
-//
-//      easy +44.2%   medium +26.8%   hard +10.6%  impossible 0    alien 0
-//
-//  Steps of 10.6, 16.2 and 17.4 points instead of 3.7, 11.8 and 44.3. Not
-//  perfectly even - easy's mistake rate makes its median lap noisy, and the
-//  figure swings between 36% and 44% depending which circuits are in the set -
-//  but every rung is now a rung.
-//
-//  HOW EACH RUNG WAS MOVED matters as much as where it went:
-//
-//  * easy was not given more grip. It was given a better LINE, later braking,
-//    steadier hands and fewer mistakes - lineBlend 0.35 -> 0.70, brakeConfidence
-//    0.55 -> 0.80, radiusOptimism 0 -> 0.28, steerTau 0.11 -> 0.085, errorChance
-//    0.30 -> 0.16 - with cornerFactor untouched at 0.72. Scaling its pace
-//    instead would have put its corner speed above medium's 0.826, which is
-//    nonsense on paper even where it is not on the stopwatch: easy loses far
-//    more to the line it drives than to the grip it is allowed to use.
-//  * medium and hard had their two pace knobs scaled by 0.869 and 0.880,
-//    read off a measured response curve rather than guessed.
-//  * impossible was not touched, because there is nowhere for it to go. Sweeping
-//    its corner factor up by 4, 8 and 12% moved the lap by -1.6%, -1.2% and
-//    -0.7%: the AI is already at the limit of the car, not of its own nerve.
-//
-//  Which is why ALIEN is not a faster AI. It is the same pace with no weak
-//  cars in the field: skillFloor lifts the bottom of the skill range so every
-//  driver runs at the top of it, instead of a spread that hands the player a
-//  slow half of the grid. That, and the player's own damage handicap comes off.
-// -----------------------------------------------------------------------------
 const AI_PROFILES = {
     easy: {
         cornerFactor: 0.72,     // fraction of the attainable cornering speed
         straightFactor: 0.68,   // fraction of top speed on the straights
-        brakeConfidence: 0.80,  // lower => brakes earlier
-        lineBlend: 0.70,        // 0 = centre line, 1 = full racing line
-        radiusOptimism: 0.28,   // 0 = worst radius of the neighbourhood, 1 = local radius
+        brakeConfidence: 0.55,  // lower => brakes earlier
+        lineBlend: 0.35,        // 0 = centre line, 1 = full racing line
+        radiusOptimism: 0.0,    // 0 = worst radius of the neighbourhood, 1 = local radius
         lookBase: 58,
         lookSpeed: 0.26,
-        steerTau: 0.085,        // steering low-pass (s)
+        steerTau: 0.11,         // steering low-pass (s)
         reaction: [0.45, 0.90],
-        errorChance: 0.16,
+        errorChance: 0.30,
         errorMag: 0.20,
         overtake: 0.45,         // willingness to move off-line to pass
         safeGap: 38,            // px kept from the car ahead
@@ -86,8 +46,8 @@ const AI_PROFILES = {
         attackGain: 1.00
     },
     medium: {
-        cornerFactor: 0.826,    // 0.95 x 0.869, fitted to land 24% off impossible
-        straightFactor: 0.834,  // 0.96 x 0.869
+        cornerFactor: 0.95,
+        straightFactor: 0.96,
         brakeConfidence: 0.86,
         lineBlend: 0.85,
         radiusOptimism: 0.25,
@@ -102,12 +62,12 @@ const AI_PROFILES = {
         gapGain: 2.1,
         defend: 0.45,
         lineLevel: 'standard',
-        maxCorner: 0.869,
+        maxCorner: 1.00,
         attackGain: 1.00
     },
     hard: {
-        cornerFactor: 0.950,    // 1.08 x 0.880, fitted to land 12% off impossible
-        straightFactor: 0.880,
+        cornerFactor: 1.08,
+        straightFactor: 1.0,
         brakeConfidence: 1.02,
         lineBlend: 1.0,
         radiusOptimism: 0.55,
@@ -122,7 +82,7 @@ const AI_PROFILES = {
         gapGain: 2.5,
         defend: 0.75,
         lineLevel: 'standard',
-        maxCorner: 0.994,
+        maxCorner: 1.13,
         attackGain: 0.55
     },
     impossible: {
@@ -146,38 +106,7 @@ const AI_PROFILES = {
         defend: 0.95,
         lineLevel: 'fast',      // measured-optimal line, only at this level
         maxCorner: 1.19,
-        attackGain: 0.30,
-        skillFloor: 0.8         // the full skill range: some cars are weaker
-    },
-    // The top rung, and it is not a faster car - there is no faster car. What
-    // it removes is the weak half of the grid. skillVariation runs in [0.8,
-    // 1.1] and maps to a pace multiplier of 0.930 to 1.000, so at every other
-    // level a third of the field is up to 7% off its own best. Here the floor
-    // is 1.1: every car runs at the top of the range, so there is nobody to
-    // pick off on the way through. Measured over the logs, the player's margin
-    // came from exactly that - not from beating the leaders, but from passing
-    // the ones the ladder had already slowed down.
-    alien: {
-        cornerFactor: 1.14,
-        straightFactor: 1.0,
-        brakeConfidence: 1.12,
-        lineBlend: 1.0,
-        radiusOptimism: 1.0,
-        lookBase: 34,
-        lookSpeed: 0.155,
-        steerTau: 0.028,
-        reaction: [0.085, 0.120],
-        errorChance: 0.0,
-        errorMag: 0.0,
-        overtake: 1.0,
-        safeGap: 16,
-        gapGain: 2.9,
-        defend: 1.0,
-        lineLevel: 'fast',
-        maxCorner: 1.19,
-        attackGain: 0.30,
-        skillFloor: 1.1,        // no weak cars at all
-        noPlayerHandicap: true  // and the player pays full price for a shunt
+        attackGain: 0.30
     }
 };
 
@@ -250,18 +179,9 @@ const AI_DRIVER_STYLES = {
 };
 
 // Physics constants mirrored from car.js - keep in sync if the car changes.
-// These are the BASE car. Since the chassis choice moves all three of them,
-// nothing may read these directly any more: the AI asks the car it is driving
-// (aiSteerOf / aiTopOf / aiGripOf below). An AI reading the base numbers while
-// sitting in a different chassis is the worst of both worlds - it would brake
-// for corners its car could take flat, and aim at a top speed it does not have.
 const AI_MAX_STEER = Math.PI * 0.7;
 const AI_TOP_SPEED = 355;      // enginePower / baseFriction
 const AI_BASE_GRIP = 1200;
-const aiSteerOf = (car) => (car && car.maxSteer) || AI_MAX_STEER;
-const aiTopOf = (car) => (car && car.enginePower && car.baseFriction)
-    ? car.enginePower / car.baseFriction : AI_TOP_SPEED;
-const aiGripOf = (car) => (car && car.baseGrip) || AI_BASE_GRIP;
 const AI_CORNER_SAFETY = 0.90; // never ask for more than 90% of the theoretical limit
 const AI_START_CAUTION = 4.5;  // seconds of extra caution after the lights
 
@@ -287,20 +207,6 @@ const AI_ATTACK_GAP = 0.45;    // fraction the safe gap shrinks by at full attac
 // instruction to crash. Impossible runs a 16px gap; shrinking it another 45%
 // asked for 8.8px and produced better than one retirement per race.
 const AI_MIN_GAP = 21;
-// How close you have to be before pulling out of the queue is worth it.
-// Without this the trigger was the whole 140px following window, so every car
-// in a train offset itself from the one in front and the queue fanned out
-// across the road. Measured at Circle - one continuous corner, where the
-// outside line is nearly twice the distance of the inside - eight of the ten
-// cars spent 100% of the race in traffic lapping 19-26% off their own solo
-// pace, at a HIGHER average speed than the leaders: they were driving the long
-// way round. Inside this range a move is on; outside it, sit in the tow.
-const AI_PASS_RANGE = 72;
-// Virtual room added to the inside of a corner when choosing which way to go.
-// "The side with the most room" is always the outside, and the outside of a
-// corner is the long way round; this is what stops the AI from queueing up
-// around the outside of everything.
-const AI_INSIDE_BONUS = 40;
 
 function aiNormAngle(a) {
     while (a > Math.PI) a -= Math.PI * 2;
@@ -316,12 +222,10 @@ class AI {
         // Championship stores skillVariation in [0.8, 1.1]; map it to a mild
         // (+/- 3.5%) pace multiplier so drivers differ without blurring the
         // difficulty levels.
-        const prof = AI_PROFILES[this.difficulty];
-        const floor = prof.skillFloor === undefined ? 0.8 : prof.skillFloor;
         const raw = (skillVariation === null || skillVariation === undefined || !isFinite(skillVariation))
             ? 0.8 + Math.random() * 0.3
             : skillVariation;
-        this.skillVariation = Math.max(floor, Math.min(1.1, raw));
+        this.skillVariation = Math.max(0.8, Math.min(1.1, raw));
 
         this.p = AI.buildProfile(car.driverName, this.difficulty, this.skillVariation);
         // car.js reads this for the rain grip bonus.
@@ -376,48 +280,24 @@ class AI {
         const N = line.count;
         const car = this.car;
 
-        const scan = (from, count, directed) => {
-            let fall = -1, fallD = Infinity;
+        const scan = (from, count) => {
+            let best = -1, bestD = Infinity;
             for (let o = 0; o < count; o++) {
                 const i = (from + o + N * 4) % N;
                 const d = (car.x - nodes[i].cx) ** 2 + (car.y - nodes[i].cy) ** 2;
-                if (d < fallD) { fallD = d; fall = i; }
+                if (d < bestD) { bestD = d; best = i; }
             }
-            if (!directed) return { idx: fall, d2: fallD };
-
-            // A whole-lap scan only happens after a spin or a shunt, and on a
-            // circuit that crosses itself the nearest node can belong to the
-            // other road. Direction settles it - but ONLY between nodes that
-            // are equally close in space and far apart along the lap, which is
-            // what a crossing is. Preferring an aligned node outright would
-            // change how every other circuit reads.
-            const sp = Math.hypot(car.velocity.x, car.velocity.y);
-            const dx0 = sp > 25 ? car.velocity.x / sp : Math.cos(car.angle);
-            const dy0 = sp > 25 ? car.velocity.y / sp : Math.sin(car.angle);
-            const near = Math.sqrt(fallD) + 8;
-            const apart = 72;
-            let best = fall, bAlign = nodes[fall].tx * dx0 + nodes[fall].ty * dy0;
-            for (let o = 0; o < count; o++) {
-                const i = (from + o + N * 4) % N;
-                if (i === fall) continue;
-                const d = Math.hypot(car.x - nodes[i].cx, car.y - nodes[i].cy);
-                if (d > near) continue;
-                if (Math.abs(nodes[i].s - nodes[fall].s) < apart) continue;
-                const al = nodes[i].tx * dx0 + nodes[i].ty * dy0;
-                if (al > bAlign + 0.25) { bAlign = al; best = i; }
-            }
-            return { idx: best,
-                     d2: (car.x - nodes[best].cx) ** 2 + (car.y - nodes[best].cy) ** 2 };
+            return { idx: best, d2: bestD };
         };
 
         let res;
         if (this.nodeIdx < 0) {
-            res = scan(0, N, true);
+            res = scan(0, N);
         } else {
             const window = Math.max(40, Math.round(220 / line.ds));
-            res = scan(this.nodeIdx - 12, window, false);
+            res = scan(this.nodeIdx - 12, window);
             // Lost it (spun, punted, teleported after a false start): rescan.
-            if (res.d2 > 200 * 200) res = scan(0, N, true);
+            if (res.d2 > 200 * 200) res = scan(0, N);
         }
         this.nodeIdx = res.idx;
         return res.idx;
@@ -561,7 +441,7 @@ class AI {
 
         // Yaw rate the car can actually produce right now.
         const steerEff = Math.max(0.10, 1 - speed / 500);
-        const steerRate = aiSteerOf(car) * steerEff;
+        const steerRate = AI_MAX_STEER * steerEff;
         // Don't command a correction we would overshoot inside a single frame.
         const dead = Math.max(0.012, Math.min(0.22, steerRate * dt * 0.85));
         const release = dead * 0.45;   // hysteresis: kills the zig-zag
@@ -596,7 +476,7 @@ class AI {
         }
         if (onGrass) gripScale *= 0.3;
         else if (onKerb) gripScale *= 0.80;
-        const latLimit = aiGripOf(car) * gripScale * 0.85;
+        const latLimit = AI_BASE_GRIP * gripScale * 0.85;
 
         // Attack mode: a driver trying to force a way past leaves the braking
         // later and commits harder than they would in clean air.
@@ -614,22 +494,19 @@ class AI {
         const opt = this.p.radiusOptimism;
         const radiusOf = (nd) => nd.radius + (nd.radiusRaw !== undefined ? (nd.radiusRaw - nd.radius) * opt : 0);
 
-        // What the tyres are actually giving right now. Two numbers, because
-        // car.js has two: tyrePerf is the lateral grip, tyreSteer is the same
-        // thing with the compound's `bite` on the steering rate folded in. The
-        // AI has to aim to the same limits or it will keep entering corners at
-        // soft-tyre speed on a worn set of hards.
-        const tyreF = car.tyreSteer || car.tyrePerf || 1;
-        const tyreG = car.tyrePerf || 1;
+        // What the tyres are actually giving right now. car.js applies this to
+        // the steering rate; the AI has to aim to the same limit or it will
+        // keep entering corners at soft-tyre speed on a worn set of hards.
+        const tyreF = car.tyrePerf || 1;
 
         const cornerCap = (idx) => {
             const nd = nodes[idx];
             const R = radiusOf(nd);
             // vCorner is tabulated for nd.radius; rescale it for the radius we
             // are actually willing to commit to (v scales ~ with R here).
-            const steerRateNow = aiSteerOf(car) * tyreF;
+            const steerRateNow = AI_MAX_STEER * tyreF;
             const vSteer = steerRateNow / (1 / R + steerRateNow / 500);
-            const vGrip = Math.sqrt(latLimit * tyreG * R);
+            const vGrip = Math.sqrt(latLimit * R);
             const cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
                                 Math.max(this.p.cornerFactor, AI_ATTACK_CORNER_CAP));
             return Math.min(nd.vCorner * 1.35 * tyreF, vSteer, vGrip) * AI_CORNER_SAFETY * cf;
@@ -638,7 +515,7 @@ class AI {
         // Under the VSC everyone has the same reduced power, so the AI must
         // aim lower too rather than sitting at full throttle pointlessly.
         const vscF = (typeof vscPowerFactor !== 'undefined') ? vscPowerFactor : 1;
-        let vTop = aiTopOf(car) * this.p.straightFactor * condition * vscF;
+        let vTop = AI_TOP_SPEED * this.p.straightFactor * condition * vscF;
         if (car.draftStrength > 0) vTop *= 1 + 0.17 * car.draftStrength;
         if (onGrass) vTop = Math.min(vTop, 150);
         else if (onKerb) vTop *= 0.95;
@@ -720,14 +597,6 @@ class AI {
         // absolute (centre-line) targets must be converted before use.
         const lineLat = here.alpha * this.p.lineBlend;
 
-        // Which way the road is turning here, in the normal frame: the centre
-        // of the corner lies on the side the tangent is rotating towards, and
-        // that side is the short way round. +1 = inside is +n, -1 = inside is
-        // -n, 0 = straight.
-        const ahead4 = line.nodes[(i + 4) % line.count];
-        const insideSign = Math.sign((ahead4.tx - here.tx) * here.nx +
-                                     (ahead4.ty - here.ty) * here.ny) || 0;
-
         let desired = 0;
         let hasTarget = false;
         let inContact = false;
@@ -748,9 +617,6 @@ class AI {
 
             for (const other of cars) {
                 if (other === car || other.isBroken) continue;
-                // A car on the bridge and a car under it are not traffic for
-                // one another, however close they look from above.
-                if (track.sameLevel && !track.sameLevel(car, other)) continue;
 
                 const dx = other.x - car.x;
                 const dy = other.y - car.y;
@@ -762,24 +628,15 @@ class AI {
 
                 if (fwd > -4 && fwd < 140 && Math.abs(side) < 34) {
                     // ---- someone is in our path -------------------------
+                    hasTarget = true;
+
                     if (fwd < bestFwd) {
                         bestFwd = fwd;
 
-                        // Choose a side - but only if a move is actually on.
-                        // Beyond AI_PASS_RANGE we hold the racing line and use
-                        // the speed cap below, which is what keeps a queue a
-                        // queue instead of a fan.
-                        if (fwd < AI_PASS_RANGE) {
-                        hasTarget = true;
-                        // The side with the most room is the outside of the
-                        // corner, and the outside is the long way round. Give
-                        // the inside some virtual room, in proportion to how
-                        // tight the corner is - nothing on a straight, the
-                        // full bonus on a hairpin.
-                        const tight = Math.min(1, 700 / Math.max(1, here.radius || 1e6));
-                        const inside = insideSign * AI_INSIDE_BONUS * tight;
-                        const roomRight = lim - Math.max(otherLat, latCar) + Math.max(0, inside);
-                        const roomLeft = lim + Math.min(otherLat, latCar) + Math.max(0, -inside);
+                        // Choose the side with the most room, and stick to a
+                        // side once committed so we don't dither.
+                        const roomRight = lim - Math.max(otherLat, latCar);
+                        const roomLeft = lim + Math.min(otherLat, latCar);
                         let dir;
                         if (Math.abs(this.lateralOffset - (-lineLat)) > 10 && Math.abs(this.lateralOffset) > 6) {
                             dir = Math.sign(this.lateralOffset) || 1;
@@ -790,19 +647,7 @@ class AI {
                         if (dir < 0 && roomLeft < 20 && roomRight > roomLeft) dir = 1;
 
                         const step = 26 + 16 * this.p.overtake;
-                        // Aim beside them - but never further from the racing
-                        // line than one move is worth. The target used to be
-                        // purely relative to the car ahead, so in a queue the
-                        // offsets CASCADED: the second car pulled out from the
-                        // first, the third from the second's already-wide
-                        // position, and by the eighth the train was spread
-                        // across the whole road. Clamping to a lane either side
-                        // of the line makes them queue in two lanes instead of
-                        // fanning out.
-                        const passLim = Math.min(lim, step + 14);
-                        desired = Math.max(-passLim, Math.min(passLim,
-                                           (otherLat + dir * step) - lineLat));
-                        }
+                        desired = (otherLat + dir * step) - lineLat;
 
                         // ---- car following: never drive into their gearbox
                         if (fwd > -6 && Math.abs(side) < 30) {
@@ -970,25 +815,11 @@ class AI {
             }
         }
 
-        // The offset is measured from the RACING LINE, but the limit belongs to
-        // the TRACK, so it has to be clamped in centre-line terms. It used to be
-        // clamped as |desired| <= lim, which on a circuit whose line sits hard
-        // against the inside kerb - Circle has alpha at the full -60 the whole
-        // way round - allowed an aim point 120px from the middle of a road only
-        // 80px wide. Nobody actually drove off, the aim point simply dragged the
-        // queue out towards the outside of the corner, which is the long way
-        // round: the trapped cars were lapping 20% slower than the leaders at a
-        // HIGHER average speed.
-        const hi = lim - lineLat, lo = -lim - lineLat;
-        if (desired > hi) desired = hi;
-        if (desired < lo) desired = lo;
+        if (desired > lim) desired = lim;
+        if (desired < -lim) desired = -lim;
 
         // Rate-limited lateral movement -> smooth, believable weaving
         // (faster when we are actually rubbing against someone).
-        // Returning to the line stays slower than leaving it. Tried at 105 to
-        // pull the shuffled-wide cars back sooner: it did nothing for the pace
-        // (Circle 14.5% against 13.9%) and put two cars in the wall at the Oval,
-        // because a car snapping back onto the line lands on whoever is there.
         const rate = inContact ? 170 : (hasTarget ? 110 : 60);
         const delta = desired - this.lateralOffset;
         const maxStep = rate * dt;
@@ -1003,11 +834,7 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
     const base = AI_PROFILES[difficulty] ? AI_PROFILES[difficulty] : AI_PROFILES.medium;
     const p = Object.assign({}, base);
 
-    // skillFloor lifts the bottom of the skill range. Everywhere but Alien it
-    // is 0.8, the full spread; at Alien it is 1.1, so every car in the field
-    // runs at the top of it.
-    const floor = base.skillFloor === undefined ? 0.8 : base.skillFloor;
-    const sv = Math.max(floor, Math.min(1.1, isFinite(skillVariation) ? skillVariation : 0.95));
+    const sv = Math.max(0.8, Math.min(1.1, isFinite(skillVariation) ? skillVariation : 0.95));
     const skillMul = 0.930 + (sv - 0.8) * 0.233;
     p.cornerFactor *= skillMul;
     p.straightFactor *= skillMul;
@@ -1065,133 +892,23 @@ AI.chooseTyre = function (driverName, laps, raining) {
         want -= (s.steerTau - 1.0) * 0.30;     // smooth hands -> kinder on tyres
         want -= (s.cleanAir - 1.0) * 6.0;      // clean-air specialists play the long game
     }
-    // Race length used to push the whole field one way here - `(5 - laps) *
-    // 0.055`. It cannot: tyre life in car.js is a MULTIPLE OF THE RACE, so a
-    // soft ends every race at the same 1.11 of wear whether the race is two
-    // laps or twenty. The term was moving the field for no reason and is gone.
-    //
-    // What replaces it is the measured fact. Over a full solo stint the three
-    // compounds come out: soft +1.8%, medium +0.1%, hard +0.2% off the best,
-    // averaged over four circuits - the soft is simply the slow one. It starts
-    // 9% up on grip and ends 16% down, and grip is nearly free in this model
-    // because the binding cornering limit is the STEERING RATE, not grip
-    // (v = maxSteer / (1/R + maxSteer/500)), so the upside is muted and the
-    // cliff is not. The field was taking it 39% of the time and handing the
-    // player most of a second a lap for nothing.
-    //
-    // It is not removed - a gambler's choice is worth having, and it really is
-    // the quickest thing on the road for the first half - but it is now the
-    // minority call it deserves to be.
-    want -= 0.15;
+    // A long race eats a soft alive; a short one barely troubles it.
+    want += (5 - laps) * 0.055;
     // In the wet the cliff matters less: nobody is near the limit anyway.
     if (raining) want += 0.10;
 
     want += (Math.random() - 0.5) * 0.42;      // genuine spread, race to race
 
-    if (want > 0.66) return 'soft';
-    if (want < 0.36) return 'hard';
+    if (want > 0.62) return 'soft';
+    if (want < 0.38) return 'hard';
     return 'medium';
 };
 
-// ---------------------------------------------------------------------------
-//  CHASSIS CHOICE
-//  Picked once, for the whole season, before anyone knows which circuits will
-//  come up - so a driver chooses the car that suits the way they drive, not
-//  the car that suits the next race.
-//
-//  Each chassis gets a score per driver, and the pick is a weighted draw over
-//  those scores rather than "the best one". Two reasons: a deterministic rule
-//  puts the whole grid in the same car, which is the outcome this is meant to
-//  avoid; and a driver taking a car that does not flatter them is a perfectly
-//  ordinary thing to happen.
-//
-//  What each style is reacting to:
-//    corner vs straight  - the anti-correlated pace pair. A driver who makes
-//                          their time in the corners wants downforce; one who
-//                          makes it on the straights wants the low-drag car.
-//    steerTau            - smooth hands (>1). Smooth drivers get on with the
-//                          understeering car and look after its tyres.
-//    err                 - lives on the edge. The loose, powerful car suits
-//                          someone comfortable with a car that moves around.
-//    wet                 - a rain specialist values the lateral grip, which is
-//                          what is actually holding the car up in the wet.
-// ---------------------------------------------------------------------------
-AI.chooseChassis = function (driverName, rand) {
-    const rnd = rand || Math.random;
-    const s = AI_DRIVER_STYLES[driverName];
-    const score = { aero: 1, bolt: 1, ridge: 1 };
-
-    if (s) {
-        // where this driver makes their lap time
-        const cornerBias = (s.corner - 1) - (s.straight - 1);   // + = corner merchant
-        score.aero  += cornerBias * 34;
-        score.bolt  -= cornerBias * 34;
-
-        // hands
-        const smooth = s.steerTau - 1;                          // + = smooth
-        score.ridge += smooth * 0.85;
-        score.aero  += (-smooth) * 0.30;                        // sharp hands like the pointy car
-
-        // appetite for a car that moves around
-        score.bolt  += (s.err - 0.7) * 0.42;
-        score.ridge += (0.7 - s.err) * 0.38;
-
-        // rain
-        score.ridge += (s.wet - 1.005) * 26;
-
-        // late brakers want the brakes and the front end
-        score.aero  += (s.brake - 1) * 1.6;
-    }
-
-    for (const k of CHASSIS_KEYS) score[k] = Math.max(0.08, score[k]);
-
-    // weighted draw, with the weights squared so a real preference shows
-    // through but never becomes a certainty
-    const w = CHASSIS_KEYS.map(k => score[k] * score[k]);
-    const total = w.reduce((a, b) => a + b, 0);
-    let r = rnd() * total;
-    for (let i = 0; i < CHASSIS_KEYS.length; i++) {
-        r -= w[i];
-        if (r <= 0) return CHASSIS_KEYS[i];
-    }
-    return CHASSIS_KEYS[CHASSIS_KEYS.length - 1];
-};
-
-// The whole field, chosen at once. Left to themselves the ten draws can still
-// come out lopsided; this keeps drawing for anyone who landed in an
-// over-subscribed car until no chassis holds more than its share plus one, so
-// there is always something of each on the grid to look at and to race.
-AI.assignChassis = function (names, rand) {
-    const rnd = rand || Math.random;
-    const picks = names.map(n => AI.chooseChassis(n, rnd));
-    const cap = Math.ceil(names.length / CHASSIS_KEYS.length) + 1;
-    for (let pass = 0; pass < 40; pass++) {
-        const count = {};
-        for (const k of CHASSIS_KEYS) count[k] = 0;
-        for (const p of picks) count[p]++;
-        const over = CHASSIS_KEYS.filter(k => count[k] > cap);
-        if (!over.length) break;
-        const k = over[0];
-        const i = picks.lastIndexOf(k);
-        const under = CHASSIS_KEYS.filter(x => count[x] < cap)
-            .sort((a, b) => count[a] - count[b]);
-        picks[i] = under.length ? under[0] : picks[i];
-    }
-    return picks;
-};
-
-AI.qualifyingPace = function (driverName, difficulty, skillVariation, raining, chassis) {
+AI.qualifyingPace = function (driverName, difficulty, skillVariation, raining) {
     const p = AI.buildProfile(driverName, difficulty, skillVariation);
 
     // Roughly 60% of a lap is spent cornering, 40% flat out.
-    // The chassis enters exactly there: its steering rate sets the corner
-    // speed, its top speed the straight. Only an approximation - the real
-    // sessions run the real physics - but a skipped Grand Prix must not hand
-    // out a grid that pretends every car is identical.
-    const ch = (typeof CHASSIS !== 'undefined' && CHASSIS[chassis]) || null;
-    const cf = ch ? Math.pow(ch.steer, 0.55) : 1;
-    const sf = ch ? ch.top : 1;
-    let pace = 0.60 / (p.cornerFactor * cf) + 0.40 / (p.straightFactor * sf);
+    let pace = 0.60 / p.cornerFactor + 0.40 / p.straightFactor;
     pace /= Math.sqrt(p.cleanAir);               // qualifying is always clean air
     if (raining) pace /= Math.sqrt(p.wetSkill);  // grip enters the corner speed as a square root
 

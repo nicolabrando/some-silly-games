@@ -12,39 +12,6 @@ const TRACK_X0 = 210;
 // few enough that the per-frame containment test stays trivial.
 const PUDDLE_LOBES = 11;
 
-// Douglas-Peucker on a flat [x, y, x, y, ...] run. A wall is nearly all
-// smooth arc, so this is a large saving for no visible change.
-function simplifyRun(r, tol) {
-    const n = r.length / 2;
-    if (n < 3) return r;
-    const keep = new Uint8Array(n);
-    keep[0] = keep[n - 1] = 1;
-    const stack = [[0, n - 1]];
-    while (stack.length) {
-        const [a, b] = stack.pop();
-        if (b - a < 2) continue;
-        const ax = r[a * 2], ay = r[a * 2 + 1], bx = r[b * 2], by = r[b * 2 + 1];
-        const dx = bx - ax, dy = by - ay;
-        const len = Math.hypot(dx, dy) || 1;
-        let worst = -1, wi = -1;
-        for (let i = a + 1; i < b; i++) {
-            const px = r[i * 2], py = r[i * 2 + 1];
-            const d = Math.abs((px - ax) * dy - (py - ay) * dx) / len;
-            if (d > worst) { worst = d; wi = i; }
-        }
-        if (worst > tol) { keep[wi] = 1; stack.push([a, wi], [wi, b]); }
-    }
-    const out = [];
-    for (let i = 0; i < n; i++) if (keep[i]) out.push(r[i * 2], r[i * 2 + 1]);
-    return out;
-}
-
-// Is a lap position inside a window that may wrap past the start line?
-function inLapWindow(s, win, lapLen) {
-    if (win.from <= win.to) return s >= win.from && s <= win.to;
-    return s >= win.from || s <= win.to;      // the window straddles the line
-}
-
 class SegmentedTrack {
     constructor() {
         // To be overridden by subclasses
@@ -159,436 +126,17 @@ class SegmentedTrack {
         return { dist: minDist, projX: bestProj.x, projY: bestProj.y, segType: bestType, seg: bestSeg };
     }
 
-    // =====================================================================
-    //  THE BRIDGE
-    //  Only Crossover has one. Everything about it is DERIVED: find where two
-    //  stretches of the racing line that are far apart along the lap come
-    //  close together in space, and that is the crossing. The two clusters of
-    //  nodes there are the two roads; the one whose heading is more nearly
-    //  horizontal at that point is arbitrary, so the choice is made explicit
-    //  instead - `bridgeOverFirst` says whether the road that reaches the
-    //  crossing FIRST in the lap is the one on top.
-    //
-    //  Returned in the same units the cars carry: lapS, distance round the
-    //  lap from the start line. So "is this car under the bridge" is one
-    //  comparison, with no geometry at render time.
-    // =====================================================================
-    getBridge() {
-        if (!this.hasBridge) return null;
-        if (this._bridge !== undefined) return this._bridge;
-
-        const line = this.getRacingLine('standard');
-        const N = line.count, nodes = line.nodes, ds = line.length / N;
-        const apart = Math.ceil((this.trackWidth * 6) / ds);   // "far apart along the lap"
-
-        // the closest approach between two such stretches
-        let bi = -1, bj = -1, bd = Infinity;
-        for (let i = 0; i < N; i++) {
-            for (let j = i + 1; j < N; j++) {
-                if (Math.min(j - i, N - (j - i)) < apart) continue;
-                const d = Math.hypot(nodes[i].cx - nodes[j].cx, nodes[i].cy - nodes[j].cy);
-                if (d < bd) { bd = d; bi = i; bj = j; }
-            }
-        }
-        if (bd > this.trackWidth) { this._bridge = null; return null; }
-
-        const sStart = line.sStart || 0;
-        const L = line.length;
-        const lapSOf = (i) => (((nodes[i].s - sStart) % L) + L) % L;
-
-        // how far either side of the crossing the deck reaches: enough to
-        // cover the road underneath plus its verges
-        const half = this.grassWidth + 26;
-        const win = (i) => {
-            const w = Math.ceil(half / ds) + 2;
-            return { from: lapSOf((i - w + N) % N), to: lapSOf((i + w) % N) };
-        };
-
-        const overIdx = this.bridgeOverFirst === false ? bj : bi;
-        const underIdx = this.bridgeOverFirst === false ? bi : bj;
-        const o = nodes[overIdx], u = nodes[underIdx];
-
-        this._bridge = {
-            x: (o.cx + u.cx) / 2,
-            y: (o.cy + u.cy) / 2,
-            angle: Math.atan2(o.ty, o.tx),      // the deck runs along the upper road
-            half: half,                          // half its length, along the road
-            wide: this.trackWidth + 30,          // half its width
-            over: win(overIdx),
-            under: win(underIdx)
-        };
-        return this._bridge;
-    }
-
-    // Is this car on the road that goes OVER? Anything else at the crossing
-    // is underneath it, and must be drawn before the deck.
-    onBridge(car) {
-        const b = this.getBridge();
-        if (!b || car.lapS === undefined) return false;
-        return inLapWindow(car.lapS, b.over, this.getRacingLine('standard').length);
-    }
-    underBridge(car) {
-        const b = this.getBridge();
-        if (!b || car.lapS === undefined) return false;
-        return inLapWindow(car.lapS, b.under, this.getRacingLine('standard').length);
-    }
-
-    // Two cars at the same point are not necessarily in the same place: one
-    // may be on the bridge and the other under it. Collisions, the slipstream
-    // and the AI's idea of traffic all have to ask this first, or the crossing
-    // becomes a demolition derby between cars that never see each other.
-    sameLevel(a, b) {
-        if (!this.hasBridge) return true;
-        const ao = this.onBridge(a), bo = this.onBridge(b);
-        const au = this.underBridge(a), bu = this.underBridge(b);
-        return !((ao && bu) || (bo && au));
-    }
-
-    // The deck itself, drawn after the cars underneath and before the ones on
-    // top of it. A slab with a shadow under its lip and a railing either side,
-    // so it reads as something the road climbs over.
-    drawBridge(ctx) {
-        const b = this.getBridge();
-        if (!b) return;
-        ctx.save();
-        ctx.translate(b.x, b.y);
-        ctx.rotate(b.angle);
-
-        const hl = b.half, hw = b.wide;
-
-        // the shadow it casts on the road below, offset down-right
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.34)';
-        ctx.fillRect(-hl + 5, -hw + 6, hl * 2, hw * 2);
-
-        // the deck: the same tarmac as the rest of the circuit, so it reads as
-        // road rather than as a lid
-        ctx.fillStyle = '#6b6f73';
-        ctx.fillRect(-hl, -hw, hl * 2, hw * 2);
-        // a slightly lighter strip down the middle: the running surface
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-        ctx.fillRect(-hl, -this.trackWidth, hl * 2, this.trackWidth * 2);
-
-        // expansion joints across it
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
-        ctx.lineWidth = 2;
-        for (const t of [-0.55, 0.55]) {
-            ctx.beginPath();
-            ctx.moveTo(hl * t, -hw);
-            ctx.lineTo(hl * t, hw);
-            ctx.stroke();
-        }
-
-        // railings along both edges, with posts
-        for (const side of [-1, 1]) {
-            const y = side * hw;
-            ctx.fillStyle = '#d7d7d7';
-            ctx.fillRect(-hl, y - side * 5, hl * 2, 5);
-            ctx.fillStyle = '#8d8d8d';
-            for (let x = -hl + 6; x < hl; x += 22) {
-                ctx.fillRect(x, y - side * 9, 3, 9);
-            }
-        }
-        ctx.restore();
-    }
-
-    // =====================================================================
-    //  THE WALL YOU ACTUALLY HIT
-    //  checkBarrierCollision stops a car when the NEAREST centre line is more
-    //  than grassWidth - 12 away (12 being the car's collision radius). The
-    //  painted barrier, on the other hand, is a ring at grassWidth: on a wide
-    //  circuit the two are close enough that stopping reads as touching the
-    //  wall, but they are not the same line, and on a tight one they are
-    //  nowhere near each other.
-    //
-    //  Lombard made that plain. Its verge is 14px wider than its road, so
-    //  after the 12px of car there are TWO pixels of run-off: you stop at the
-    //  edge of the tarmac while the painted barrier is 14px away across a
-    //  green band - and where another part of the circuit passes close, that
-    //  painted ring is covered over by its grass and there is nothing to see
-    //  at all. A car stopped dead against nothing.
-    //
-    //  So the wall is drawn where the wall IS: the level set of "distance to
-    //  the nearest centre line = grassWidth - 12". Sampling both offsets of
-    //  the centre line and keeping only the points that no OTHER stretch of
-    //  road is closer to gives exactly the boundary of the drivable area,
-    //  including the places where two stretches run together and the boundary
-    //  is not a simple offset at all.
-    // =====================================================================
-    // How far from the centre line a car's CENTRE can get before the barrier
-    // stops it. grassWidth is where the barrier stands and 12 is the car's
-    // collision radius - but on a circuit whose verge is barely wider than its
-    // road that subtraction puts the wall INSIDE the asphalt. Pettine (road
-    // 70, verge 75) stopped cars 7px in from the edge of the tarmac, and Crown
-    // 2px in; both had done so since they were drawn. The floor keeps the
-    // barrier just outside the road, wherever it is.
-    wallRadius() {
-        return Math.max(this.grassWidth - 12, this.trackWidth + 2);
-    }
-
-    // How far outside the stopping line the armco is painted: one car radius,
-    // so that a stopped car is touching it rather than buried in it.
-    //
-    // This is an OFFSET, not a second radius, and that distinction was a bug.
-    // The first version asked for the level set at wallRadius() + 12 - a wider
-    // barrier, computed from scratch. Near anything re-entrant the two sets are
-    // not parallel curves: where the road doubles back on itself the wider set
-    // closes over the notch and simply is not there, while the physics is still
-    // stopping cars inside it. Measured, that left Pettine with 996 grid spots
-    // where a car is stopped and the nearest painted barrier is up to 171px
-    // away - between the teeth of the comb there was no barrier at all - and
-    // Lombard with 16 at up to 30px, which is the one Nicola drove into.
-    //
-    // Building it as an offset of the physics boundary instead makes a ghost
-    // impossible by construction: every point that stops a car is 12px inside
-    // a painted barrier, because the paint IS that point pushed outwards.
-    barrierOffset() {
-        return 12;
-    }
-    barrierRadius() {
-        return this.wallRadius() + this.barrierOffset();
-    }
-
-    // The barrier as geometry: the set of points at exactly R from the nearest
-    // stretch of centre line, each pushed `out` further along its own outward
-    // normal. `out` moves the curve without changing which points are ON it.
-    getWalls(R, out) {
-        if (R === undefined) R = this.wallRadius();
-        out = out || 0;
-        this._wallCache = this._wallCache || {};
-        const key = R + ':' + out;
-        if (this._wallCache[key]) return this._wallCache[key];
-        const step = 2;
-        const runs = [];
-
-        // Dense samples of the centre line with its normal - plus, at every
-        // joint, a FAN of directions across the turn. Offsetting perpendicular
-        // to the road leaves a wedge unpainted on the outside of a corner,
-        // where the boundary is really a cap around the joint itself; without
-        // the fan, Thunder was left with a 15px hole in its wall.
-        const pts = [];
-        const fan = (x, y, a0, a1) => {
-            let d = a1 - a0;
-            while (d > Math.PI) d -= Math.PI * 2;
-            while (d < -Math.PI) d += Math.PI * 2;
-            const n = Math.ceil(Math.abs(d) * R / step);
-            for (let i = 1; i < n; i++) {
-                const a = a0 + d * i / n;
-                pts.push({ x: x, y: y, nx: Math.cos(a), ny: Math.sin(a) });
-            }
-        };
-        const normalAt = (g, which) => {
-            if (g.type === 'line') {
-                const dx = g.x2 - g.x1, dy = g.y2 - g.y1, L = Math.hypot(dx, dy);
-                return { nx: -dy / L, ny: dx / L, x: which === 'end' ? g.x2 : g.x1,
-                         y: which === 'end' ? g.y2 : g.y1 };
-            }
-            const a = which === 'end' ? g.end : g.start;
-            return { nx: Math.cos(a), ny: Math.sin(a),
-                     x: g.cx + g.r * Math.cos(a), y: g.cy + g.r * Math.sin(a) };
-        };
-
-        for (const g of this.segments) {
-            if (g.type === 'line') {
-                const dx = g.x2 - g.x1, dy = g.y2 - g.y1;
-                const L = Math.hypot(dx, dy), m = Math.max(2, Math.ceil(L / step));
-                for (let i = 0; i < m; i++) {
-                    pts.push({ x: g.x1 + dx * i / m, y: g.y1 + dy * i / m,
-                               nx: -dy / L, ny: dx / L });
-                }
-            } else {
-                const sweep = this._arcSweep(g);
-                const L = Math.abs(sweep) * g.r, m = Math.max(3, Math.ceil(L / step));
-                for (let i = 0; i < m; i++) {
-                    const a = g.start + sweep * i / m;
-                    pts.push({ x: g.cx + g.r * Math.cos(a), y: g.cy + g.r * Math.sin(a),
-                               nx: Math.cos(a), ny: Math.sin(a) });
-                }
-            }
-        }
-
-        // fill the wedges at the joints
-        for (let i = 0; i < this.segments.length; i++) {
-            const a = normalAt(this.segments[i], 'end');
-            const b = normalAt(this.segments[(i + 1) % this.segments.length], 'start');
-            fan(a.x, a.y, Math.atan2(a.ny, a.nx), Math.atan2(b.ny, b.nx));
-        }
-
-        // And a full circle around every segment END. getClosestPoint falls
-        // back to an arc's endpoints for anything outside its sweep, so the
-        // boundary can wrap right around a joint by more than the exterior
-        // angle - and where two stretches of road run close, it does. Walking
-        // the whole circle and keeping only what survives the boundary test
-        // catches those without having to reason about which case is which.
-        // Thunder had an 18px hole in its wall until this went in.
-        const ends = [];
-        for (const g of this.segments) {
-            if (g.type === 'line') ends.push({ x: g.x2, y: g.y2 });
-            else ends.push({ x: g.cx + g.r * Math.cos(g.end),
-                             y: g.cy + g.r * Math.sin(g.end) });
-        }
-        const ring = Math.max(24, Math.ceil(2 * Math.PI * R / step));
-        for (const e of ends) {
-            for (let i = 0; i < ring; i++) {
-                const a = (2 * Math.PI * i) / ring;
-                pts.push({ x: e.x, y: e.y, nx: Math.cos(a), ny: Math.sin(a), ring: true });
-            }
-        }
-
-        for (const side of [-1, 1]) {
-            let cur = [];
-            const flush = () => { if (cur.length >= 4) runs.push(cur); cur = []; };
-            for (let i = 0; i <= pts.length; i++) {
-                const p = pts[i % pts.length];
-                // the rings are walked once, not once per side
-                if (p.ring && side < 0) { flush(); continue; }
-                const wx = p.x + p.nx * side * R, wy = p.y + p.ny * side * R;
-                // Is this point really on the boundary? It is exactly R from
-                // the centre line it came from; if anything else is closer,
-                // the car can still drive here and there is no wall.
-                // NOTE the test is on the point at R, never on the offset one:
-                // that is what keeps the painted curve tied to the physics.
-                if (this.getClosestPoint(wx, wy).dist < R - 0.75) { flush(); continue; }
-                const ox = wx + p.nx * side * out, oy = wy + p.ny * side * out;
-                // A jump means the offset has come back somewhere else - round
-                // the far side of a hairpin, most often. Joining the two would
-                // draw a wall straight across the road, which is worse than
-                // drawing none: break the run instead.
-                if (cur.length >= 2) {
-                    const px = cur[cur.length - 2], py = cur[cur.length - 1];
-                    if (Math.hypot(ox - px, oy - py) > (step + out * 0.35) * 4) flush();
-                }
-                cur.push(ox, oy);
-            }
-            flush();
-        }
-        // Thin them out. The samples are 2px apart, which is what it takes to
-        // FIND the boundary, but drawing every one of them means about 7000
-        // path operations per frame on a circuit like Lombard - enough to
-        // matter, and enough to exhaust a recording context in the tests.
-        // Douglas-Peucker at half a pixel keeps the shape and throws away
-        // nine tenths of the points.
-        this._wallCache[key] = runs.map(r => simplifyRun(r, 0.5));
-        return this._wallCache[key];
-    }
-
-    // The armco: green, white and red, in that order, all the way round.
-    //
-    // It is painted at barrierRadius(), so it stands one car radius outside
-    // the line where a car is stopped - which means it is the thing your car
-    // is touching when it stops, not a stripe lying on the verge. The green is
-    // NOT the green of the grass: the verge is #2e7d32 and the field beyond it
-    // #3f8f45, both muted, and the flag's own #009246 next to them would read
-    // as more grass. It is lifted to a saturated emerald that neither of them
-    // can be mistaken for.
-    drawBarrier(ctx) {
-        const runs = this.getWalls(this.wallRadius(), this.barrierOffset());
-        const COLS = ['#00d152', '#f7f7f7', '#e02b2b'];
-
-        ctx.save();
-        ctx.lineCap = 'butt';
-        ctx.lineJoin = 'round';
-
-        // A shadow along the foot, so the armco stands up off the grass
-        ctx.lineWidth = 9;
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.30)';
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        for (const r of runs) {
-            ctx.moveTo(r[0], r[1] + 2);
-            for (let i = 2; i < r.length; i += 2) ctx.lineTo(r[i], r[i + 1] + 2);
-        }
-        ctx.stroke();
-
-        // Then the panels, one colour after another along the run.
-        //
-        // The cut points are found by ARC LENGTH and interpolated, not taken
-        // from the run's own vertices. The runs come out of Douglas-Peucker,
-        // so a straight is two points however long it is: cutting at vertices
-        // painted the whole of a straight in a single colour, which is how the
-        // first version of this came out - one green line down the inside of
-        // every straight and the tricolour only in the corners.
-        //
-        // The panels are collected by colour and stroked three times rather
-        // than once each: Zipper is four hundred panels, and four hundred
-        // stroke() calls a frame is a cost worth not paying.
-        ctx.lineCap = 'butt';
-        ctx.lineWidth = 6;
-        const bands = [[], [], []];
-        for (const r of runs) {
-            // Panel length is per RUN, not global. A fixed 26px meant a short
-            // run - the inside of a comb tooth at Pettine, the neck between two
-            // lobes at Lombard - got one panel and a stub, came out solid
-            // green, and solid green against grass reads as no barrier at all.
-            // Every run now shows all three colours however short it is.
-            let L = 0;
-            for (let i = 2; i < r.length; i += 2)
-                L += Math.hypot(r[i] - r[i - 2], r[i + 1] - r[i - 1]);
-            const SEG = Math.max(3.5, Math.min(26, L / 3));
-            let band = 0, cur = [r[0], r[1]], left = SEG;
-            for (let i = 2; i < r.length; i += 2) {
-                let x0 = r[i - 2], y0 = r[i - 1];
-                const x1 = r[i], y1 = r[i + 1];
-                let seg = Math.hypot(x1 - x0, y1 - y0);
-                while (seg > left) {
-                    const t = left / seg;
-                    const mx = x0 + (x1 - x0) * t, my = y0 + (y1 - y0) * t;
-                    cur.push(mx, my);
-                    bands[band % 3].push(cur);
-                    band++;
-                    cur = [mx, my];
-                    x0 = mx; y0 = my;
-                    seg -= left;
-                    left = SEG;
-                }
-                left -= seg;
-                cur.push(x1, y1);
-            }
-            if (cur.length >= 4) bands[band % 3].push(cur);
-        }
-        for (let b = 0; b < 3; b++) {
-            ctx.strokeStyle = COLS[b];
-            ctx.beginPath();
-            for (const p of bands[b]) {
-                ctx.moveTo(p[0], p[1]);
-                for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
-            }
-            ctx.stroke();
-        }
-
-        // a thin dark rail along the top edge ties the panels together
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = 'rgba(20, 20, 24, 0.55)';
-        ctx.beginPath();
-        for (const r of runs) {
-            ctx.moveTo(r[0], r[1] - 2.4);
-            for (let i = 2; i < r.length; i += 2) ctx.lineTo(r[i], r[i + 1] - 2.4);
-        }
-        ctx.stroke();
-        ctx.restore();
-    }
-
     // Width of the kerb band lining the inside of the corners.
     get kerbWidth() {
         return Math.min(26, Math.max(14, this.trackWidth * 0.30));
     }
 
-    // How much of it actually fits on a given corner. Two limits, and the
-    // second one was missing.
-    //
-    // 1. On a hairpin whose radius is barely wider than the track there is
-    //    almost no inside run-off, so the kerb is whatever will fit.
-    // 2. It has to stop before the BARRIER. kerbWidth is 30% of the road, and
-    //    on several circuits that is wider than the whole verge: Peanut runs a
-    //    70px road with an 85px verge and a 21px kerb, so the kerb reached 91
-    //    from the middle of the road while the armco stands at 85 - the two
-    //    were painted on top of one another. Nobody noticed while there was no
-    //    barrier drawn there. Four pixels of clearance, and the cap is applied
-    //    here rather than in draw() so that getSurface() agrees with the paint.
+    // How much of it actually fits on a given corner. On a hairpin whose
+    // radius is barely wider than the track there is almost no inside run-off,
+    // so the kerb is whatever will fit - possibly nothing at all.
     kerbWidthFor(seg) {
         if (!seg || seg.type !== 'arc') return 0;
-        return Math.min(this.kerbWidth,
-                        Math.max(0, seg.r - this.trackWidth - 2),
-                        Math.max(0, this.barrierRadius() - this.trackWidth - 4));
+        return Math.min(this.kerbWidth, Math.max(0, seg.r - this.trackWidth - 2));
     }
 
     getSurface(x, y) {
@@ -612,9 +160,8 @@ class SegmentedTrack {
         const distData = this.getClosestPoint(car.x, car.y);
         const currentRadius = distData.dist;
         
-        // Boundaries (using 12 as car collision radius). One definition, shared
-        // with the wall that gets drawn - see wallRadius().
-        const maxAllowed = this.wallRadius();
+        // Boundaries (using 12 as car collision radius)
+        const maxAllowed = this.grassWidth - 12;
         
         if (currentRadius > maxAllowed) {
             // Push car back inside the allowed bounds
@@ -641,34 +188,10 @@ class SegmentedTrack {
                 const intoWall = car.velocity.x * nx + car.velocity.y * ny;
                 // The player gets a wider free band as well as the damage
                 // scale in takeDamage - see PLAYER_FREE_IMPACT in car.js.
-                const free = 60 + (car.isPlayer && typeof playerFreeImpact === 'function'
-                    ? playerFreeImpact() : 0);
+                const free = 60 + (car.isPlayer && typeof PLAYER_FREE_IMPACT !== 'undefined'
+                    ? PLAYER_FREE_IMPACT : 0);
                 if (intoWall > free) {
-                    // ONE impact may not finish a healthy car.
-                    //
-                    // The curve above was set on circuits where a wall can only
-                    // ever be grazed - measured, the barrier is 88 to 89
-                    // degrees off your nose on all of the old ones, so a "square
-                    // hit" was unreachable. Two of the new circuits double back
-                    // on themselves: on Lombard, inside a hook, and on
-                    // Crossover, in the wedges beside the crossing, the wall
-                    // stands 0 to 2 degrees off your nose. There a single touch
-                    // at 260px/s costs 346hp of a 255hp car - qualifying over,
-                    // one mistake, no warning. It ended a session in a log
-                    // Nicola sent.
-                    //
-                    // So a heavy shunt still all but ruins the car, and a
-                    // second one does finish it, but the first one leaves you
-                    // something to limp home with.
-                    const raw = 260 * Math.pow((intoWall - free) / 100, 2);
-                    // The cap is on what the car ACTUALLY loses, so it means
-                    // the same thing for the player - whose damage is scaled
-                    // down in takeDamage - as for everybody else: at most 62%
-                    // of a full car, from any one impact.
-                    const scale = (car.isPlayer && typeof playerDamageScale === 'function')
-                        ? playerDamageScale() : 1;
-                    const cap = (car.maxHealth * 0.62) / scale;
-                    car.takeDamage(Math.min(raw, cap));
+                    car.takeDamage(260 * Math.pow((intoWall - free) / 100, 2));
                 }
 
                 // Tangent projection for sliding effect (non-sticky wall)
@@ -1226,26 +749,39 @@ class SegmentedTrack {
         ctx.lineCap = 'butt'; // Crucial for segmented drawing without huge overlap
         ctx.lineJoin = 'round';
         
-        // The tricolour barrier is back, and this time it is where a barrier
-        // belongs. Two earlier attempts were not: the original was a stroke
-        // wider than the grass drawn UNDERNEATH it, so only a ring showed and
-        // the round joins at the corners bulged it into detached bars lying on
-        // the verge; the second was a thin dashed line painted along the line
-        // where a car stops, which was geometrically right but read as paint.
-        // This one is drawn last, as panels, at barrierRadius() - one car
-        // radius outside the stopping line, so it is the thing you are
-        // touching when you stop.
+        const dashLen = 100; // Increased length for better visibility
 
-        // 1. Grass Margin (Dark Green), out as far as the barrier. On fifteen
-        //    circuits that is grassWidth exactly; Pettine and Crown have a
-        //    verge narrower than their own barrier and get the few pixels they
-        //    were missing, so the armco never floats on the background.
+        
+        // 1. Outer Barrier (Green segment)
         this.drawPath(ctx);
-        ctx.lineWidth = Math.max(this.grassWidth, this.barrierRadius()) * 2;
+        ctx.lineWidth = this.grassWidth * 2 + 10;
+        ctx.strokeStyle = '#009246'; // Distinct Italian Green
+        ctx.setLineDash([dashLen, dashLen * 2]);
+        ctx.lineDashOffset = 0;
+        ctx.stroke();
+        
+        // 2. Outer Barrier (White segment)
+        this.drawPath(ctx);
+        ctx.strokeStyle = '#ffffff'; // White
+        ctx.lineDashOffset = -dashLen;
+        ctx.stroke();
+        
+        // 3. Outer Barrier (Red segment)
+        this.drawPath(ctx);
+        ctx.strokeStyle = '#d32f2f'; // Italian Red
+        ctx.lineDashOffset = -dashLen * 2;
+        ctx.stroke();
+        
+        ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
+        
+        // 3. Grass Margin (Dark Green)
+        this.drawPath(ctx);
+        ctx.lineWidth = this.grassWidth * 2;
         ctx.strokeStyle = '#2e7d32';
         ctx.stroke();
 
-        // 2. Kerbs on the inside of every corner (red / white).
+        // 4. Kerbs on the inside of every corner (red / white).
         //    Drawn as a thin band hugging the inner edge of the asphalt, so
         //    nothing appears on the outside of the corner or on the straights.
         for (const seg of this.segments) {
@@ -1271,14 +807,13 @@ class SegmentedTrack {
             }
         }
 
-        // 3. Track Asphalt (Dark Grey)
+        // 5. Track Asphalt (Dark Grey)
         this.drawPath(ctx);
         ctx.lineWidth = this.trackWidth * 2;
         ctx.strokeStyle = '#555';
         ctx.stroke();
 
         this.drawStartLine(ctx);
-        this.drawBarrier(ctx);
         // On top of the asphalt, under the cars.
         this.drawPuddles(ctx);
     }
@@ -1439,23 +974,22 @@ class CircoMassimoTrack extends SegmentedTrack {
         ctx.strokeStyle = 'rgba(0, 0, 0, 0.30)';
         ctx.stroke();
 
-        // The wall itself. It used to be white with red blocks, to match the
-        // barriers - but nothing is painted white and red outside the road any
-        // more, and on this one the markings were the only thing that made the
-        // spina look like a line rather than a thing. Concrete, with a lighter
-        // top edge, so it reads as standing up off the sand.
+        // the wall itself: white with red blocks, like every other barrier
+        // a driver is meant to keep away from
         ctx.beginPath();
         ctx.moveTo(x1, y);
         ctx.lineTo(x2, y);
         ctx.lineWidth = 11;
-        ctx.strokeStyle = '#5f6066';
+        ctx.strokeStyle = '#f5f5f5';
         ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(x1, y - 2.5);
-        ctx.lineTo(x2, y - 2.5);
-        ctx.lineWidth = 4;
-        ctx.strokeStyle = '#9b9da6';
+        ctx.moveTo(x1 + 8, y);
+        ctx.lineTo(x2 - 8, y);
+        ctx.lineWidth = 11;
+        ctx.setLineDash([26, 26]);
+        ctx.strokeStyle = '#d32f2f';
         ctx.stroke();
+        ctx.setLineDash([]);
 
         // the metae: the gilded turning posts at either end of the spina
         for (const mx of [x1, x2]) {
@@ -1637,233 +1171,6 @@ class CrownTrack extends SegmentedTrack {
 
         this.startX = 714.23;
         this.startY = 579.26;
-
-        this.waypoints = this.generateWaypoints();
-    }
-}
-
-// A long fast sweep down one side into a hairpin, then a short technical
-// run home. The circuit for a car that can carry speed.
-class BoomerangTrack extends SegmentedTrack {
-    constructor() {
-        super();
-        this.trackWidth = 64;
-        this.grassWidth = 84;
-        this.segments = [
-            { type: 'arc', cx: 427.67, cy: 435.34, r: 108.01, start: 1.7429871, end: 2.9816795000000003, ccw: false },
-            { type: 'line', x1: 321.04, y1: 452.54, x2: 301.62, y2: 332.17 },
-            { type: 'arc', cx: 427.64, cy: 311.84, r: 127.65, start: 2.9816795000000003, end: -1.884417, ccw: false },
-            { type: 'line', x1: 388.26, y1: 190.43, x2: 585.91, y2: 126.32 },
-            { type: 'arc', cx: 658.61, cy: 350.48, r: 235.65, start: -1.884417, end: -1.3481354, ccw: false },
-            { type: 'line', x1: 710.65, y1: 120.65, x2: 1064.08, y2: 200.67 },
-            { type: 'arc', cx: 1031.56, cy: 344.31, r: 147.28, start: -1.3481354, end: -0.0964738, ccw: false },
-            { type: 'line', x1: 1178.16, y1: 330.13, x2: 1189.59, y2: 448.32 },
-            { type: 'arc', cx: 1101.63, cy: 456.83, r: 88.37, start: -0.0964738, end: 1.3825748000000002, ccw: false },
-            { type: 'line', x1: 1118.17, y1: 543.64, x2: 806.05, y2: 603.09 },
-            { type: 'arc', cx: 784.01, cy: 487.35, r: 117.83, start: 1.3825748000000002, end: 1.7429871, ccw: false },
-            { type: 'line', x1: 763.82, y1: 603.43, x2: 409.16, y2: 541.75 }
-        ];
-        this.startX = 852.02;
-        this.startY = 152.66;
-
-        this.waypoints = this.generateWaypoints();
-    }
-}
-
-// Three quick direction changes hung between two long corners: this one
-// asks how well your car changes direction, and nothing else.
-class ZipperTrack extends SegmentedTrack {
-    constructor() {
-        super();
-        this.trackWidth = 58;
-        this.grassWidth = 76;
-        this.segments = [
-            { type: 'arc', cx: 408.9, cy: 294.46, r: 116.9, start: 3.1415927000000003, end: -1.6991196, ccw: false },
-            { type: 'line', x1: 393.94, y1: 178.52, x2: 536.04, y2: 160.18 },
-            { type: 'arc', cx: 549.13, cy: 261.63, r: 102.29, start: -1.6991196, end: -0.6610432, ccw: false },
-            { type: 'line', x1: 629.88, y1: 198.83, x2: 662.08, y2: 240.23 },
-            { type: 'arc', cx: 735.13, cy: 183.42, r: 92.55, start: 2.4805495, end: 0.7266423, ccw: true },
-            { type: 'line', x1: 804.3, y1: 244.9, x2: 849.17, y2: 194.43 },
-            { type: 'arc', cx: 925.62, cy: 262.39, r: 102.29, start: -2.4149503, end: -1.4157996, ccw: false },
-            { type: 'line', x1: 941.41, y1: 161.32, x2: 1099.14, y2: 185.97 },
-            { type: 'arc', cx: 1081.1, cy: 301.47, r: 116.9, start: -1.4157996, end: 0, ccw: false },
-            { type: 'line', x1: 1198, y1: 301.47, x2: 1198, y2: 391.61 },
-            { type: 'arc', cx: 1071.35, cy: 391.61, r: 126.65, start: 0, end: 1.4464413, ccw: false },
-            { type: 'line', x1: 1087.06, y1: 517.28, x2: 749.12, y2: 559.52 },
-            { type: 'arc', cx: 730.99, cy: 414.52, r: 146.13, start: 1.4464413, end: 1.7033479, ccw: false },
-            { type: 'line', x1: 711.68, y1: 559.37, x2: 401.91, y2: 518.07 },
-            { type: 'arc', cx: 418.65, cy: 392.53, r: 126.65, start: 1.7033479, end: 3.1415927000000003, ccw: false },
-            { type: 'line', x1: 292, y1: 392.53, x2: 292, y2: 294.46 }
-        ];
-        this.startX = 1004.5;
-        this.startY = 171.18;
-
-        this.waypoints = this.generateWaypoints();
-    }
-}
-
-// One enormous constant-radius curve you are in for a very long time, and
-// one genuinely slow corner at the end of it.
-class KettleTrack extends SegmentedTrack {
-    constructor() {
-        super();
-        this.trackWidth = 70;
-        this.grassWidth = 92;
-        this.segments = [
-            { type: 'arc', cx: 466.88, cy: 301.96, r: 158.89, start: 2.9441971000000002, end: -1.6041173000000002, ccw: false },
-            { type: 'line', x1: 461.59, y1: 143.16, x2: 927.71, y2: 127.62 },
-            { type: 'arc', cx: 936.01, cy: 376.41, r: 248.93, start: -1.6041173000000002, end: -0.5724598000000001, ccw: false },
-            { type: 'line', x1: 1145.25, y1: 241.57, x2: 1163.43, y2: 269.78 },
-            { type: 'arc', cx: 1065.49, cy: 332.9, r: 116.52, start: -0.5724598000000001, end: 0.9300126, ccw: false },
-            { type: 'line', x1: 1135.15, y1: 426.31, x2: 948.9, y2: 565.21 },
-            { type: 'arc', cx: 866.57, cy: 454.82, r: 137.7, start: 0.9300126, end: 1.6092389000000002, ccw: false },
-            { type: 'line', x1: 861.28, y1: 592.42, x2: 475.87, y2: 577.6 },
-            { type: 'arc', cx: 481.57, cy: 429.41, r: 148.3, start: 1.6092389000000002, end: 2.9441971000000002, ccw: false },
-            { type: 'line', x1: 336.15, y1: 458.49, x2: 311.08, y2: 333.12 }
-        ];
-        this.startX = 648.04;
-        this.startY = 136.94;
-
-        this.waypoints = this.generateWaypoints();
-    }
-}
-
-// Tight and walled in: short straights, late braking, and the hardest
-// place on the calendar to get past anybody.
-class HarbourTrack extends SegmentedTrack {
-    constructor() {
-        super();
-        this.trackWidth = 54;
-        this.grassWidth = 70;
-        this.segments = [
-            { type: 'arc', cx: 378.86, cy: 311.52, r: 92.86, start: 3.0132694, end: -2.0344439000000003, ccw: false },
-            { type: 'line', x1: 337.33, y1: 228.47, x2: 528.13, y2: 133.07 },
-            { type: 'arc', cx: 565.04, cy: 206.9, r: 82.54, start: -2.0344439000000003, end: -1.5444866, ccw: false },
-            { type: 'line', x1: 567.21, y1: 124.38, x2: 910.85, y2: 133.43 },
-            { type: 'arc', cx: 907.86, cy: 246.88, r: 113.49, start: -1.5444866, end: -1.0636978, ccw: false },
-            { type: 'line', x1: 962.98, y1: 147.67, x2: 1153.59, y2: 253.57 },
-            { type: 'arc', cx: 1105.99, cy: 339.25, r: 98.02, start: -1.0636978, end: 0.2140607, ccw: false },
-            { type: 'line', x1: 1201.77, y1: 360.07, x2: 1177.77, y2: 470.47 },
-            { type: 'arc', cx: 1092.07, cy: 451.84, r: 87.7, start: 0.2140607, end: 1.3677510999999998, ccw: false },
-            { type: 'line', x1: 1109.76, y1: 537.74, x2: 838.83, y2: 593.52 },
-            { type: 'arc', cx: 818.02, cy: 492.46, r: 103.18, start: 1.3677510999999998, end: 1.8337910999999998, ccw: false },
-            { type: 'line', x1: 791.2, y1: 592.09, x2: 565.87, y2: 531.42 },
-            { type: 'arc', cx: 544.95, cy: 609.14, r: 80.48, start: -1.3078016000000001, end: -1.7942729000000002, ccw: true },
-            { type: 'line', x1: 527.11, y1: 530.66, x2: 424.73, y2: 553.93 },
-            { type: 'arc', cx: 403.01, cy: 458.35, r: 98.02, start: 1.3473197000000001, end: 3.0132694, ccw: false },
-            { type: 'line', x1: 305.8, y1: 470.89, x2: 286.77, y2: 323.41 }
-        ];
-        this.startX = 704.67;
-        this.startY = 128;
-
-        this.waypoints = this.generateWaypoints();
-    }
-}
-
-// THE CROSSING. Two loops joined by two long diagonals that cross in the
-// middle of the circuit, with a bridge carrying one over the other.
-//
-// Deliberately not a neat figure of eight: the right-hand loop is a single
-// fast sweep, the left one is tighter and carries an extra corner, so the two
-// halves of a lap feel nothing alike.
-//
-// The crossing works because every car localises itself on the racing line
-// from where it was LAST frame (car.js keeps _nodeIdx, ai.js keeps nodeIdx),
-// searching only a window around it. The two roads meet in space but are half
-// a lap apart in node index, so neither the odometer nor the AI can jump
-// across. Only a car that has been thrown more than 200px - spun or punted -
-// falls back to a global search, and that is already a car in trouble.
-class CrossoverTrack extends SegmentedTrack {
-    constructor() {
-        super();
-        this.trackWidth = 68;
-        this.grassWidth = 86;
-        this.segments = [
-            { type: 'arc', cx: 1004.49, cy: 313.93, r: 139.47, start: -2.4719537, end: -0.8507256, ccw: false },
-            { type: 'line', x1: 1096.47, y1: 209.08, x2: 1138.93, y2: 246.33 },
-            { type: 'arc', cx: 1043.88, cy: 354.68, r: 144.13, start: -0.8507256, end: 0.8245938, ccw: false },
-            { type: 'line', x1: 1141.73, y1: 460.51, x2: 1085.55, y2: 512.45 },
-            { type: 'arc', cx: 1002.27, cy: 422.36, r: 122.68, start: 0.8245938, end: 2.2794226, ccw: false },
-            { type: 'line', x1: 922.43, y1: 515.51, x2: 549.73, y2: 196.06 },
-            { type: 'arc', cx: 468.67, cy: 290.62, r: 124.55, start: -0.8621700999999999, end: -2.2774105, ccw: true },
-            { type: 'line', x1: 387.81, y1: 195.89, x2: 341.64, y2: 235.31 },
-            { type: 'arc', cx: 415.04, cy: 321.29, r: 113.05, start: -2.2774105, end: 2.6504290999999998, ccw: true },
-            { type: 'line', x1: 315.35, y1: 374.61, x2: 362.32, y2: 462.43 },
-            { type: 'arc', cx: 453.56, cy: 413.62, r: 103.47, start: 2.6504290999999998, end: 1.8622531, ccw: true },
-            { type: 'line', x1: 423.83, y1: 512.73, x2: 544.27, y2: 548.87 },
-            { type: 'arc', cx: 578.69, cy: 434.16, r: 119.76, start: 1.8622531, end: 0.6696389, ccw: true },
-            { type: 'line', x1: 672.58, y1: 508.49, x2: 895.14, y2: 227.36 }
-        ];
-        this.startX = 472.01;
-        this.startY = 527.19;
-
-        // Where the bridge is, and which stretch of road goes over it. Both
-        // are worked out from the geometry in getBridge() - the crossing point
-        // is wherever the two straights meet, and "over" is whichever of them
-        // runs along bridgeAngle.
-        this.hasBridge = true;
-
-        this.waypoints = this.generateWaypoints();
-    }
-}
-
-// =========================================================================
-//  KART  -  Circus Maximus, three times over.
-// -------------------------------------------------------------------------
-//  Circus Maximus is one straight driven twice: out along one side of a
-//  central wall, round the far end, back along the other. Kart stacks three
-//  of them. Four horizontal roads - three straights with a spina between each
-//  pair, and a return that carries you from the end of the third back to the
-//  start of the first:
-//
-//      y1  --------------------->     driven right
-//          ======= spina =======
-//      y2  <---------------------     driven left
-//          ======= spina =======
-//      y3  --------------------->     driven right
-//          ======= spina =======
-//      y4  <---------------------     the return
-//
-//  The two ends are what make it work. On the RIGHT, two ordinary hairpins:
-//  y1 to y2 and y3 to y4. On the LEFT, two CONCENTRIC semicircles about the
-//  same centre - a small one taking y2 to y3, and a big one taking the return
-//  all the way back up to y1. Concentric, and exactly one spina apart, which
-//  is why the left end comes out as tidy as the right.
-//
-//  Turning: +180 -180 +180 +180 = +360. It closes, and it had to.
-//
-//  The numbers are not typed in, they are solved (kart2.js). Joint gaps come
-//  out at 0.0000px and the tangent breaks at 0.0000 degrees, because every
-//  hairpin radius IS half the spacing and the two left arcs share a centre.
-//  The spacing of 152 is chosen against Circus Maximus itself: with a 58px
-//  wall radius it leaves a 31.8px strip of infield between two lanes, against
-//  32.8 there. Below about 120 there would be no wall between the lanes at all
-//  and you could drive straight across the spina.
-//
-//  At 3769px it is the longest circuit in the game - Pettine, the previous
-//  longest, is 3053. That is the point of it: three long straights, and the
-//  straights are as long as the arena allows once the return arc on the left
-//  has taken its 228px.
-// =========================================================================
-class KartTrack extends SegmentedTrack {
-    constructor() {
-        super();
-        this.trackWidth = 50;
-        this.grassWidth = 70;
-        this.segments = [
-            { type: 'line', x1: 529, y1: 132, x2: 1113, y2: 132 },
-            { type: 'arc', cx: 1113, cy: 208, r: 76, start: -1.5708, end: 1.5708, ccw: false },
-            { type: 'line', x1: 1113, y1: 284, x2: 529, y2: 284 },
-            { type: 'arc', cx: 529, cy: 360, r: 76, start: -1.5708, end: 1.5708, ccw: true },
-            { type: 'line', x1: 529, y1: 436, x2: 1113, y2: 436 },
-            { type: 'arc', cx: 1113, cy: 512, r: 76, start: -1.5708, end: 1.5708, ccw: false },
-            { type: 'line', x1: 1113, y1: 588, x2: 529, y2: 588 },
-            { type: 'arc', cx: 529, cy: 360, r: 228, start: 1.5708, end: 4.7124, ccw: false }
-        ];
-        // On the top straight, which is the only thing crossing this x going
-        // left to right inside the band the lap counter watches.
-        this.startX = 891.08;
-        this.startY = 132;
 
         this.waypoints = this.generateWaypoints();
     }

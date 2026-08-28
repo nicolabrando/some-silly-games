@@ -4,150 +4,45 @@ let __carUid = 0;
 //  TYRE COMPOUNDS
 // -------------------------------------------------------------------------
 //  `grip` is the fresh multiplier, `falloff` how much of it is lost by the
-//  time the tyre is finished, `life` the fraction of the RACE the compound
-//  survives, and `bite` its own hold on the STEERING RATE.
+//  time the tyre is finished, and `life` is the fraction of the RACE the
+//  compound survives.
 //
-//  life is a fraction of the race rather than a number of laps, so a set lasts
-//  proportionally longer the longer the race: a soft is spent after ~4.5 laps
-//  of a 5-lap race and ~9 laps of a 10-lap one. The medium's life came down
-//  from 1.50 to 1.30 as part of this fit: at 1.50 it barely wore at all, which
-//  left it and the hard within 0.2% of each other for a whole stint and meant
-//  the hard's endurance could never buy it anything. It was taken to 1.05
-//  first and that was too far - at Harbour, the tightest of the circuits, the
-//  field lost enough grip late in the race to start running wide, 8.6% of the
-//  sampled frames on the grass against 0.2%, and one car in eight failed to
-//  finish. 1.30 keeps the shape and gives that back. That has a consequence worth
-//  stating, because it decides how these numbers were chosen: if life is a
-//  fraction of the distance then the shape of every stint is identical at
-//  every race length, so race length CANNOT be what makes one compound better
-//  than another, and tuning for "softs win short races" is impossible by
-//  construction. (chooseTyre used to try anyway - see ai.js.)
+//  life is a fraction of the race rather than a number of laps, so a set
+//  lasts proportionally longer the longer the race: a soft is spent after
+//  ~4.5 laps of a 5-lap race and ~9 laps of a 10-lap one.
 //
-//  WHY `bite` HAD TO EXIST. The binding cornering limit in this model is the
-//  steering rate, not the grip - v = maxSteer / (1/R + maxSteer/500) - so grip
-//  is nearly free: measured one knob at a time it is worth -0.012% of lap time
-//  per 1%, against -0.351% for the steering rate. tyrePerf did multiply the
-//  steering rate, but it is the GRIP curve, and nine per cent of it bought the
-//  soft almost nothing while its cliff cost it everything. Measured over a full
-//  solo stint on four circuits: soft +1.8%, medium +0.1%, hard +0.2% off the
-//  best. The soft was not a strategy, it was a trap - never the right call at
-//  any distance, which is why the AI taking it 39% of the time was handing the
-//  player most of a second a lap.
+//  That has a consequence worth stating, because it decides how these numbers
+//  were chosen. If life is a fraction of the distance then the shape of every
+//  stint is identical at every race length - so race length CANNOT be what
+//  makes one compound better than another, and tuning for "softs win short
+//  races" is impossible by construction.
 //
-//  `bite` multiplies the steering rate directly and FADES WITH THE SET: all of
-//  it on a fresh tyre, none of it on a spent one. So the soft is genuinely the
-//  quickest thing on the road early and genuinely the slowest at the end, and
-//  what you are choosing is WHEN you want your performance. Nothing is a free
-//  win; what breaks the tie is situational - track position, how much you slide
-//  the car (wear accrues faster under load), a corner-heavy circuit, and the
-//  places-gained bonus that pays for early aggression.
+//  So they are tuned the other way: the three have the same MEAN pace across
+//  a race to within 0.001%, and completely different shapes. Soft starts 10.3%
+//  quicker than hard and finishes 16.6% slower - over its stint it throws away
+//  a quarter of its performance, while the hard loses half a percent. The
+//  first version of these numbers was half as dramatic and the difference was
+//  not noticeable from the driving seat. Nothing is a free win; what
+//  you are choosing is WHEN you want your performance. What then breaks the
+//  tie is situational - track position, how much you slide the car (wear
+//  accrues faster under load), a corner-heavy circuit, and the places-gained
+//  bonus that pays for early aggression.
 //
-//  FITTED, not chosen (tyrefit.js sweeps `bite` and the medium's life over full
-//  solo stints). Three things had to be true at once, and every candidate that
-//  satisfied two of them failed the third:
-//
-//    * no compound more than 1.5% better over a full race  -> worst case 1.46%
-//    * the first lap goes  soft < medium < hard
-//    * the last lap goes   hard < medium < soft
-//
-//  The middle one is what killed the earlier candidates: several closed the
-//  overall gap by making the HARD quicker than the medium on a fresh set,
-//  which is nonsense however good the totals look.
-//
-//  Note the fit is done at medium difficulty, not at impossible. At the top of
-//  the ladder the AI is pinned against its own `maxCorner` ceiling, so extra
-//  steering rate is partly thrown away and the soft measures better than it
-//  is; the player has no such ceiling.
+//  The multiplier is applied to the STEERING RATE, not just to grip. In this
+//  car model the binding limit almost everywhere is how fast the car can
+//  change direction, not how much lateral load it can hold - so a compound
+//  that only touched `grip` would have been nearly invisible, the same trap
+//  the rain fell into.
 // =========================================================================
 const TYRES = {
     soft:   { key: 'soft',   label: 'Soft',   short: 'S', colour: '#e53935',
-              grip: 1.090, falloff: 0.2285, life: 0.90, bite: 1.010 },
+              grip: 1.090, falloff: 0.2285, life: 0.90 },
     medium: { key: 'medium', label: 'Medium', short: 'M', colour: '#fdd835',
-              grip: 1.000, falloff: 0.0696, life: 1.30, bite: 1.000 },
+              grip: 1.000, falloff: 0.0696, life: 1.50 },
     hard:   { key: 'hard',   label: 'Hard',   short: 'H', colour: '#e0e0e0',
-              grip: 0.988, falloff: 0.0240, life: 2.60, bite: 1.005 }
+              grip: 0.988, falloff: 0.0240, life: 2.60 }
 };
 const TYRE_KEYS = ['soft', 'medium', 'hard'];
-
-// =========================================================================
-//  CHASSIS  -  chosen once, for a whole season
-// -------------------------------------------------------------------------
-//  Three cars, and none of them is the good one. The trades are hung on the
-//  handles the physics actually has, so each is felt from the driving seat
-//  rather than read off a stat screen:
-//
-//    steer  - the STEERING RATE, which is the binding cornering limit in this
-//             model almost everywhere (v = maxSteer / (1/R + maxSteer/500)).
-//             This is the single most valuable number on the car, so anything
-//             that raises it pays dearly elsewhere. Think of it as downforce.
-//    top    - top speed, = enginePower / baseFriction. Downforce costs drag,
-//             so the car that turns best is the slowest in a straight line.
-//    power  - engine force: acceleration out of the slow stuff. It also
-//             drives `powerOversteer` (demand = enginePower / speed), so the
-//             muscular car genuinely is the loose one - that is not a
-//             separate fudge factor, it falls out of the same number.
-//    grip   - the lateral limit. In the DRY the steering rate binds first and
-//             this barely shows; in the WET, on grass and on the kerbs it is
-//             what is holding the car up. So it is a wet-weather trait.
-//    wear   - tyre wear rate. Wear feeds tyrePerf, which multiplies the
-//             steering rate, so a set that lasts is real pace in the last
-//             third of a race rather than a number in a menu.
-//    brake  - braking force.
-//
-//  The three are meant to be circuit-dependent and style-dependent, not
-//  ranked: Aero wants corners, Bolt wants straights, Ridge wants a long race
-//  or a wet one.
-//
-//  THE EXCHANGE RATE, measured one knob at a time over the whole calendar
-//  (chassis_sens.js), as % of lap time per 1% of the knob:
-//
-//                  dry      wet
-//      steer     -0.351   -0.174
-//      top       -0.160   -0.115
-//      power     -0.101   -0.152
-//      grip      -0.012   -0.161      <- nothing in the dry, everything in the wet
-//      brake     ~0       ~0
-//
-//  Which is the whole reason the first attempt was not balanced: steering
-//  rate is worth 2.2x its own size in top speed, so a car given +8.5% of it
-//  and only -5.5% of top speed was quicker on 8 circuits out of 11 and 2.45%
-//  quicker on average. The numbers below are set so the three come out level
-//  on MEAN dry pace and diverge per circuit - which is the point.
-//
-//  A SECOND ROUND of fitting was needed after RACING them rather than
-//  time-trialling them (chassis_split.js keeps dry and wet apart). Two things
-//  only a race shows:
-//    - tyre life is worth far more over a distance than it looks on one lap,
-//      so the durable car was winning the dry as well: 4.2 of 9 against 5.6
-//      for the powerful one. wear 0.72 -> 0.86.
-//    - grip is nearly free in the dry and decisive in the wet, so the rain
-//      was a rout - 3.0 of 9 against 6.7. The grips were pulled in from
-//      1.12/0.92 to 1.06/0.97, and the power car's engine trimmed from 1.08
-//      to 1.05: in the wet a big engine is mostly a way of spinning the
-//      rears, since powerOversteer sits at its cap once the surface is wet.
-// =========================================================================
-const CHASSIS = {
-    aero: {
-        key: 'aero', label: 'Aero', short: 'AER', accent: '#4dd0e1',
-        line1: 'High downforce',
-        line2: 'Turns in like nothing else and drags its heels on the straight. Hard on tyres.',
-        steer: 1.030, top: 0.928, power: 1.000, grip: 1.00, wear: 1.15, brake: 1.05
-    },
-    bolt: {
-        key: 'bolt', label: 'Bolt', short: 'BLT', accent: '#ff7043',
-        line1: 'Low drag, long legs',
-        line2: 'Fastest thing on the straight by a distance. It does not want to turn.',
-        steer: 0.978, top: 1.098, power: 1.000, grip: 0.98, wear: 1.00, brake: 0.97
-    },
-    ridge: {
-        key: 'ridge', label: 'Ridge', short: 'RDG', accent: '#9ccc65',
-        line1: 'Understeer, but it lasts',
-        line2: 'Washes wide if you rush it. Still on its tyres at the end, and quick in the rain.',
-        steer: 0.992, top: 1.005, power: 0.985, grip: 1.04, wear: 0.88, brake: 1.02
-    }
-};
-const CHASSIS_KEYS = ['aero', 'bolt', 'ridge'];
-const CHASSIS_DEFAULT = 'ridge';
 
 // --- Player damage handicap ---------------------------------------------
 // Applied to the player's car only. Two handles: a straight scale on every
@@ -155,12 +50,6 @@ const CHASSIS_DEFAULT = 'ridge';
 // while learning a corner are genuinely free rather than merely cheap.
 const PLAYER_DAMAGE_SCALE = 0.45;
 const PLAYER_FREE_IMPACT = 28;      // px/s of closing speed added to the free band
-// ...and taken away again at Alien, where the point of the level is that the
-// player is given nothing the field is not. Set by main.js when the session
-// starts; everything that reads the two constants goes through these instead.
-let playerHandicapOn = true;
-function playerDamageScale() { return playerHandicapOn ? PLAYER_DAMAGE_SCALE : 1; }
-function playerFreeImpact() { return playerHandicapOn ? PLAYER_FREE_IMPACT : 0; }
 
 class Car {
     constructor(x, y, color, isPlayer = false) {
@@ -180,15 +69,12 @@ class Car {
         this.health = 100;
         this.isBroken = false;
         
-        // Physics constants (Drift physics). These are the BASE car; the
-        // chassis multiplies them, so there is exactly one place where the
-        // reference numbers live and setChassis() can always be re-applied.
-        this.baseEnginePower = 300;
-        this.baseBrakingPower = 150; // Reduced for less abrupt braking
-        this.baseMaxSteer = Math.PI * 0.7; // Very smooth steering
-        this.baseBaseGrip = 1200; // Lower grip to allow sliding
-        this.baseBaseFriction = 0.85; // Drag
-        this.setChassis(CHASSIS_DEFAULT);
+        // Physics constants (Drift physics)
+        this.enginePower = 300;
+        this.brakingPower = 150; // Reduced for less abrupt braking
+        this.maxSteer = Math.PI * 0.7; // Very smooth steering
+        this.baseGrip = 1200; // Lower grip to allow sliding
+        this.baseFriction = 0.85; // Drag
         
         this.inputs = {
             up: false,
@@ -246,7 +132,6 @@ class Car {
         this.tyre = TYRES.medium;
         this.tyreWear = 0;
         this.tyrePerf = 1;
-        this.tyreSteer = 1;
 
         // Blue flag (set each frame by main.js when a car on a higher lap closes in)
         this.blueFlag = false;
@@ -254,23 +139,6 @@ class Car {
         this.blueFlagFrom = null;
     }
     
-    // Apply a chassis. Everything the physics reads is derived here, so a
-    // car's numbers can never drift out of step with the badge on its nose.
-    setChassis(key) {
-        const c = CHASSIS[key] || CHASSIS[CHASSIS_DEFAULT];
-        this.chassis = c;
-        this.chassisKey = c.key;
-        this.enginePower = this.baseEnginePower * c.power;
-        this.brakingPower = this.baseBrakingPower * c.brake;
-        this.maxSteer = this.baseMaxSteer * c.steer;
-        this.baseGrip = this.baseBaseGrip * c.grip;
-        // top speed = enginePower / baseFriction, so the drag that delivers
-        // the quoted top speed follows from the power it was given.
-        this.baseFriction = this.baseBaseFriction * (c.power / c.top);
-        this.tyreWearScale = c.wear;
-        return this;
-    }
-
     update(dt, track) {
         // Being craned away, or already parked outside the barriers: the
         // wreck is scenery now, not a car.
@@ -305,20 +173,12 @@ class Car {
             const moved = Math.hypot(this.velocity.x, this.velocity.y) * dt;
             const lapFrac = moved / this._lapPixels;                 // laps covered this frame
             const abuse = 1 + 0.55 * (this.gripUse || 0);
-            // The chassis is part of how hard the car is on its rubber: a
-            // high-downforce car loads the tyre far more than one running
-            // little wing.
-            const chassisWear = this.tyreWearScale || 1;
-            this.tyreWear += lapFrac * abuse * chassisWear / Math.max(0.05, tyre.life * laps);
+            this.tyreWear += lapFrac * abuse / Math.max(0.05, tyre.life * laps);
         }
         const w = Math.max(0, Math.min(1.25, this.tyreWear));
         // ^1.6: the first half of a set costs almost nothing, the last of it
         // falls away quickly - the cliff is what makes the choice interesting.
         this.tyrePerf = tyre.grip - tyre.falloff * Math.pow(w, 1.6);
-        // The compound's own hold on the steering rate, fading with the set:
-        // all of it on a fresh tyre, none of it on a spent one.
-        const bite = tyre.bite === undefined ? 1 : tyre.bite;
-        this.tyreSteer = this.tyrePerf * (1 + (bite - 1) * Math.max(0, 1 - w));
 
         // Adjust physics based on surface
         let currentGrip = this.baseGrip * this.condition * this.tyrePerf;
@@ -376,15 +236,11 @@ class Car {
         }
         
         if (this.finished || this.isBroken) {
-            // Suspend commands, let it coast by inertia. The analogue pair has
-            // to be cleared too, or a finished car would keep the throttle the
-            // slider was last holding.
+            // Suspend commands, let it coast by inertia
             this.inputs.up = false;
             this.inputs.down = false;
             this.inputs.left = false;
             this.inputs.right = false;
-            this.inputs.throttle = 0;
-            this.inputs.brake = 0;
         }
         
         // --- Longitudinal forces (Engine, Brakes) ---
@@ -394,28 +250,16 @@ class Car {
         // being recovered (global set by main.js).
         const vsc = (typeof vscPowerFactor !== 'undefined') ? vscPowerFactor : 1;
 
-        // Throttle and brake are ANALOGUE, 0..1. A keyboard can only ask for
-        // 0 or 1, so `up`/`down` still mean exactly what they meant and a
-        // desktop lap is bit-identical; a touch slider can ask for anything
-        // in between. Whoever sets `throttle` must also set `up`, because the
-        // oversteer model, the AI and the effects all read the boolean.
-        const thr = this.inputs.throttle !== undefined
-            ? Math.max(0, Math.min(1, this.inputs.throttle))
-            : (this.inputs.up ? 1 : 0);
-        const brk = this.inputs.brake !== undefined
-            ? Math.max(0, Math.min(1, this.inputs.brake))
-            : (this.inputs.down ? 1 : 0);
-
-        if (thr > 0) {
-            forwardForce += this.enginePower * this.condition * vsc * thr;
+        if (this.inputs.up) {
+            forwardForce += this.enginePower * this.condition * vsc;
             // Slipstream: continuous with distance rather than an on/off cone,
             // so the tow builds as you close in instead of snapping on.
             if (this.draftStrength > 0) {
-                forwardForce += this.enginePower * 0.26 * this.draftStrength * vsc * thr;
+                forwardForce += this.enginePower * 0.26 * this.draftStrength * vsc;
             }
         }
-        if (brk > 0) {
-            forwardForce -= this.brakingPower * brk;
+        if (this.inputs.down) {
+            forwardForce -= this.brakingPower;
         }
         
         // --- Steering ---
@@ -444,7 +288,7 @@ class Car {
             // tenth of the input reaches the road, so the car carries straight
             // on through the water whatever you ask of it.
             const aqua = 1 - 0.90 * (this.aquaplane || 0);
-            const steerEffectiveness = speedTerm * understeer * (this.tyreSteer || this.tyrePerf || 1) * aqua;
+            const steerEffectiveness = speedTerm * understeer * (this.tyrePerf || 1) * aqua;
             const steerAmount = this.maxSteer * dt * steerEffectiveness;
 
             // Allow reversing steer direction if going backwards
@@ -460,10 +304,8 @@ class Car {
         // is far higher, and if you are also asking them to hold the car in a
         // corner the tail steps out. Slippery surfaces make it far easier.
         let powerOversteer = 0;
-        if (thr > 0 && steerInput !== 0 && speed > 12 && !this.finished && !this.isBroken) {
-            // scaled by the throttle actually applied: feeding it in gently is
-            // how you keep the rear behind you
-            const demand = (this.enginePower * this.condition * thr) / Math.max(70, speed);
+        if (this.inputs.up && steerInput !== 0 && speed > 12 && !this.finished && !this.isBroken) {
+            const demand = (this.enginePower * this.condition) / Math.max(70, speed);
             const slipperiness = Math.max(1, Math.min(2.4, this.baseGrip / Math.max(1, currentGrip)));
             powerOversteer = Math.max(0, Math.min(1, ((demand - 1.45) / 2.2) * slipperiness));
         }
@@ -657,53 +499,10 @@ class Car {
 
         const d2 = (i) => (this.x - nodes[i].cx) ** 2 + (this.y - nodes[i].cy) ** 2;
 
-        // A global rescan must not just take the nearest node. On a circuit
-        // that crosses itself the nearest node can belong to the OTHER road -
-        // they share the same pixels - and a car that gets punted at the
-        // crossing would be re-attached to the wrong half of the lap, drive
-        // round one lobe of the eight for ever and never complete a lap. So
-        // the rescan prefers a node the car is actually pointing along; only
-        // if nothing agrees with the direction of travel does it fall back to
-        // plain distance.
-        const dirX = Math.hypot(this.velocity.x, this.velocity.y) > 25
-            ? this.velocity.x / Math.hypot(this.velocity.x, this.velocity.y)
-            : Math.cos(this.angle);
-        const dirY = Math.hypot(this.velocity.x, this.velocity.y) > 25
-            ? this.velocity.y / Math.hypot(this.velocity.x, this.velocity.y)
-            : Math.sin(this.angle);
-        // Take the nearest node - and only let the direction of travel overrule
-        // that when there is a genuine ambiguity: another node just as close in
-        // SPACE but far away along the LAP. That is exactly what a crossing is,
-        // and nothing else on any circuit looks like it.
-        //
-        // The first version of this preferred an aligned node outright, which
-        // quietly changed every circuit: ten cars parked on the same spot read
-        // ten different distances (151px apart) because they were pointing
-        // different ways, and the slipstream, which is keyed off the same
-        // number, started handing out tows to cars 22px off line.
-        const globalScan = () => {
-            let fi = 0, fd = Infinity;
-            for (let i = 0; i < N; i++) {
-                const d = d2(i);
-                if (d < fd) { fd = d; fi = i; }
-            }
-            const near = Math.sqrt(fd) + 8;
-            const apart = (this.width || 24) * 3;
-            let bi = fi, bAlign = nodes[fi].tx * dirX + nodes[fi].ty * dirY;
-            for (let i = 0; i < N; i++) {
-                if (i === fi) continue;
-                if (Math.sqrt(d2(i)) > near) continue;
-                if (Math.abs(nodes[i].s - nodes[fi].s) < apart) continue;   // same stretch
-                const al = nodes[i].tx * dirX + nodes[i].ty * dirY;
-                if (al > bAlign + 0.25) { bAlign = al; bi = i; }
-            }
-            return { i: bi, d: d2(bi) };
-        };
-
         let best = 0;
         let bd = Infinity;
         if (this._nodeIdx === undefined) {
-            const g = globalScan(); best = g.i; bd = g.d;
+            for (let i = 0; i < N; i++) { const d = d2(i); if (d < bd) { bd = d; best = i; } }
         } else {
             for (let o = -14; o <= 34; o++) {
                 const i = (this._nodeIdx + o + N * 2) % N;
@@ -711,7 +510,8 @@ class Car {
                 if (d < bd) { bd = d; best = i; }
             }
             if (bd > 220 * 220) {          // lost it (spun, punted, teleported)
-                const g = globalScan(); best = g.i; bd = g.d;
+                bd = Infinity;
+                for (let i = 0; i < N; i++) { const d = d2(i); if (d < bd) { bd = d; best = i; } }
             }
         }
         this._nodeIdx = best;
@@ -766,7 +566,7 @@ class Car {
         // contact the AI never has. Scaling the player's damage compensates
         // for that gap rather than making the car tougher: barriers and
         // contact still hurt, they just stop ending a race in one mistake.
-        if (this.isPlayer) amount *= playerDamageScale();
+        if (this.isPlayer) amount *= PLAYER_DAMAGE_SCALE;
         this.health -= amount;
         if (this.health <= 0) {
             this.health = 0;
@@ -774,7 +574,7 @@ class Car {
         }
     }
     
-    draw(ctx, skipTags) {
+    draw(ctx) {
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
@@ -800,91 +600,47 @@ class Car {
         ctx.roundRect(-W / 2 + 2, -H / 2 + 2, W, H, 4);
         ctx.fill();
 
-        // --- the three chassis, in the same 24x14 box ---------------------
-        // Nothing here touches the physics: the collision box, the grid
-        // spacing and the crane all work off W and H, which never change.
-        // What changes is what the shape SAYS - a car covered in wing, a car
-        // that is mostly engine, a car built to survive the distance - so a
-        // glance at the timing screen and a glance at the road agree.
-        const ch = this.chassis || CHASSIS[CHASSIS_DEFAULT];
-        const K = ch.key;
-        const P = K === 'aero'
-            ? { fwD: 3.0, fwSpan: 1.00, rwD: 3.2, rwSpan: 0.88, pod: 1.4,
-                rearTyre: 5.0, fin: 0, nose: 5.6 }
-            : K === 'bolt'
-            ? { fwD: 1.7, fwSpan: 0.80, rwD: 2.0, rwSpan: 0.60, pod: 2.2,
-                rearTyre: 6.2, fin: 6.5, nose: 3.6 }
-            : { fwD: 2.2, fwSpan: 0.90, rwD: 2.6, rwSpan: 0.76, pod: 3.0,
-                rearTyre: 5.4, fin: 0, nose: 4.6 };
-
-        // front wing: the aero car's is a full-width plane with tall
-        // endplates, the bolt's a stub
-        const fwH = H * P.fwSpan;
+        // front wing: a full-width plane right at the nose, with endplates
         ctx.fillStyle = '#1a1a1a';
-        ctx.fillRect(W / 2 - P.fwD + 0.8, -fwH / 2, P.fwD - 0.8, fwH);
-        ctx.fillStyle = ch.accent;
-        ctx.fillRect(W / 2 - P.fwD - 0.4, -fwH / 2, P.fwD + 0.4, 1.2);   // endplates
-        ctx.fillRect(W / 2 - P.fwD - 0.4, fwH / 2 - 1.2, P.fwD + 0.4, 1.2);
-        if (K === 'aero') {
-            // a second element: this is the car that is all wing
-            ctx.fillStyle = '#101010';
-            ctx.fillRect(W / 2 - P.fwD - 0.2, -fwH / 2 + 1.2, 1.0, fwH - 2.4);
-        }
+        ctx.fillRect(W / 2 - 2.2, -H / 2, 2.2, H);
+        ctx.fillRect(W / 2 - 3.4, -H / 2, 3.4, 1.3);          // endplates
+        ctx.fillRect(W / 2 - 3.4, H / 2 - 1.3, 3.4, 1.3);
 
-        // rear wing
-        const rwH = H * P.rwSpan;
+        // rear wing: narrower, sitting off the tail
         ctx.fillStyle = '#111';
-        ctx.fillRect(-W / 2, -rwH / 2, P.rwD, rwH);
-        ctx.fillStyle = ch.accent;
-        ctx.fillRect(-W / 2, -rwH / 2 - 0.4, P.rwD + 1.0, 1.2);
-        ctx.fillRect(-W / 2, rwH / 2 - 0.8, P.rwD + 1.0, 1.2);
+        ctx.fillRect(-W / 2, -H / 2 + 1.6, 2.6, H - 3.2);
+        ctx.fillRect(-W / 2, -H / 2 + 1.2, 3.6, 1.3);         // endplates
+        ctx.fillRect(-W / 2, H / 2 - 2.5, 3.6, 1.3);
 
-        // exposed tyres. The bolt puts more rubber on the road at the back,
-        // which is the only way it holds on to its own engine.
+        // exposed tyres, the mark of a single-seater: rears fatter than fronts
         ctx.fillStyle = '#161616';
-        ctx.fillRect(-W / 2 + 3.4, -H / 2, P.rearTyre, 3.7);
-        ctx.fillRect(-W / 2 + 3.4, H / 2 - 3.7, P.rearTyre, 3.7);
-        ctx.fillRect(W / 2 - 9.2, -H / 2 + 0.3, 4.2, 3.1);
-        ctx.fillRect(W / 2 - 9.2, H / 2 - 3.4, 4.2, 3.1);
+        ctx.fillRect(-W / 2 + 3.4, -H / 2, 5.2, 3.6);          // rear left
+        ctx.fillRect(-W / 2 + 3.4, H / 2 - 3.6, 5.2, 3.6);     // rear right
+        ctx.fillRect(W / 2 - 9.2, -H / 2 + 0.3, 4.2, 3.1);     // front left
+        ctx.fillRect(W / 2 - 9.2, H / 2 - 3.4, 4.2, 3.1);      // front right
+        // hubs, so the wheels read as wheels and not body
         ctx.fillStyle = '#3c3c3c';
         ctx.fillRect(-W / 2 + 5.2, -H / 2 + 1.1, 1.6, 1.4);
         ctx.fillRect(-W / 2 + 5.2, H / 2 - 2.5, 1.6, 1.4);
         ctx.fillRect(W / 2 - 7.8, -H / 2 + 1.2, 1.4, 1.3);
         ctx.fillRect(W / 2 - 7.8, H / 2 - 2.5, 1.4, 1.3);
 
-        // monocoque: the nose length and the sidepods are what separate the
-        // three silhouettes from above - a needle, a slab, a full-bodied car
+        // monocoque: narrow nose, cockpit shoulders, sidepods, pinched tail
         ctx.fillStyle = this.color;
         ctx.beginPath();
-        ctx.moveTo(W / 2 - 0.4, 0);
-        ctx.lineTo(W / 2 - P.nose, -2.2);
-        ctx.lineTo(1.5, -3.5);
-        ctx.lineTo(-2.5, -H / 2 + 3.4 - P.pod);
-        ctx.lineTo(-W / 2 + 3.6, -H / 2 + 3.8 - P.pod);
-        ctx.lineTo(-W / 2 + 2.5, -1.7);
+        ctx.moveTo(W / 2 - 0.4, 0);                    // nose tip, into the wing
+        ctx.lineTo(W / 2 - 5.0, -2.2);
+        ctx.lineTo(1.5, -3.5);                         // cockpit shoulders
+        ctx.lineTo(-2.5, -H / 2 + 2.0);                // sidepod leading edge
+        ctx.lineTo(-W / 2 + 3.6, -H / 2 + 2.4);        // sidepod to the tail
+        ctx.lineTo(-W / 2 + 2.5, -1.7);                // tail pinches in
         ctx.lineTo(-W / 2 + 2.5, 1.7);
-        ctx.lineTo(-W / 2 + 3.6, H / 2 - 3.8 + P.pod);
-        ctx.lineTo(-2.5, H / 2 - 3.4 + P.pod);
+        ctx.lineTo(-W / 2 + 3.6, H / 2 - 2.4);
+        ctx.lineTo(-2.5, H / 2 - 2.0);
         ctx.lineTo(1.5, 3.5);
-        ctx.lineTo(W / 2 - P.nose, 2.2);
+        ctx.lineTo(W / 2 - 5.0, 2.2);
         ctx.closePath();
         ctx.fill();
-
-        // the bolt's shark fin, running back to the rear wing
-        if (P.fin > 0) {
-            ctx.fillStyle = ch.accent;
-            ctx.fillRect(-W / 2 + P.rwD, -0.7, P.fin, 1.4);
-        }
-        // and the ridge's high sidepod shoulders, the full-bodied look
-        if (K === 'ridge') {
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-            ctx.fillRect(-6.5, -H / 2 + 3.5, 6.0, 1.4);
-            ctx.fillRect(-6.5, H / 2 - 4.9, 6.0, 1.4);
-        }
-
-        // accent flash on the nose: the badge you actually read at speed
-        ctx.fillStyle = ch.accent;
-        ctx.fillRect(W / 2 - P.nose - 1.2, -1.0, 2.6, 2.0);
 
         // cockpit opening + halo hoop over it
         ctx.fillStyle = '#101014';
@@ -898,15 +654,7 @@ class Car {
         ctx.stroke();
 
         ctx.restore();
-
-        // Everything above the car - health, name, blue flag - is drawn by
-        // drawTags(), separately, because on a circuit with a bridge the deck
-        // has to go between the two: under it you cannot see the car, but you
-        // can still see who it is and how they are doing.
-        if (!skipTags) this.drawTags(ctx);
-    }
-
-    drawTags(ctx) {
+        
         // Draw Health Bar
         if (this.health > 0) {
             const barWidth = 24;

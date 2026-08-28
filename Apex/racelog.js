@@ -102,7 +102,7 @@ const RaceLog = {
         const a = document.createElement('a');
         const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         a.href = url;
-        a.download = `apex2-log-${stamp}.txt`;
+        a.download = `apex-log-${stamp}.txt`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
