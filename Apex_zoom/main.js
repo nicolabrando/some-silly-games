@@ -5792,13 +5792,43 @@ function startGame(forceTrackType = null) {
     player2Car = null;
     spectateCar = null;   // a tower pick belongs to one race only
 
-    // Find closest waypoint to start line
+    // Find the waypoint just BEFORE the start line - NOT the closest one.
+    // The closest can sit past the line: waypoints on a straight are spaced
+    // length/15 apart, and Riviera's 1750px sea-front spaces them 117px, so
+    // the waypoint nearest x=420 sat 47px BEYOND the line. Pole was then
+    // placed 35px back from it - 12px past the line - never logged lap 1,
+    // and spent the race being shown blue flags as a backmarker (the 28 Aug
+    // log has P1 blue-flagged at t=0.008s). The crossing pair is found with
+    // the same test the lap counter itself uses, so the grid and the
+    // odometer can never again disagree about which side of the line the
+    // race starts on; the leftover distance from that waypoint to the line
+    // is folded into the setback below.
     let startIdx = 0;
-    let minDist = Infinity;
-    track.waypoints.forEach((wp, idx) => {
-        const d = Math.hypot(wp.x - track.startX, wp.y - track.startY);
-        if (d < minDist) { minDist = d; startIdx = idx; }
-    });
+    let startGap = 0;      // waypoint -> start line, along the track
+    {
+        let found = false;
+        for (let i = 0; i < track.waypoints.length; i++) {
+            const a = track.waypoints[i];
+            const b2 = track.waypoints[(i + 1) % track.waypoints.length];
+            if (track.checkLapCross(a.x, a.y, b2.x, b2.y)) {
+                startIdx = i;
+                const t = (track.startX - a.x) / ((b2.x - a.x) || 1);
+                startGap = Math.max(0, Math.min(1, t)) *
+                           Math.hypot(b2.x - a.x, b2.y - a.y);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            // no crossing pair (should be impossible on a registered
+            // circuit): fall back to the old nearest-waypoint behaviour
+            let minDist = Infinity;
+            track.waypoints.forEach((wp, idx) => {
+                const d = Math.hypot(wp.x - track.startX, wp.y - track.startY);
+                if (d < minDist) { minDist = d; startIdx = idx; }
+            });
+        }
+    }
     
     const getGridPos = (distBackward, lateralOffset) => {
         let traveled = 0;
@@ -5941,10 +5971,15 @@ function startGame(forceTrackType = null) {
         currentParticipants.map((p, i) => `${i + 1}.${p.driverName || p.color}`).join(' '));
 
     // Spawn positions, one per starter: staggered 30px back each row and
-    // alternating 20px either side of the centre line.
+    // alternating 20px either side of the centre line. The base setback is
+    // measured from the START LINE, not from the reference waypoint: the
+    // waypoint sits startGap short of the line, so 35px behind the line is
+    // (35 - startGap) behind the waypoint - floored so pole never lands
+    // ahead of the waypoint on a coarsely-sampled straight.
+    const poleBack = Math.max(6, 35 - startGap);
     const gridPositions = [];
     for (let i = 0; i < currentParticipants.length; i++) {
-        gridPositions.push(getGridPos(35 + i * 30, i % 2 === 0 ? 20 : -20));
+        gridPositions.push(getGridPos(poleBack + i * 30, i % 2 === 0 ? 20 : -20));
     }
 
     // 4. Instantiate cars at their assigned grid positions
@@ -8470,9 +8505,10 @@ let RIVAL_BOOST = 1.015;
 
 function seasonRounds() {
     const el = document.getElementById('rounds-select');
+    const pool = (typeof activeSeasonPool === 'function') ? activeSeasonPool() : SEASON_POOL;
     const n = parseInt(el && el.value, 10);
-    if (!isFinite(n)) return Math.min(SEASON_DEFAULT, SEASON_POOL.length);
-    return Math.max(1, Math.min(SEASON_POOL.length, n));
+    if (!isFinite(n)) return Math.min(SEASON_DEFAULT, pool.length);
+    return Math.max(1, Math.min(pool.length, n));
 }
 
 // What the seed box says, or a fresh one if it is empty. Whitespace and case
@@ -8491,15 +8527,59 @@ function lastSeed() {
     try { return window.localStorage.getItem(SEED_STORE_KEY) || ''; } catch (e) { return ''; }
 }
 
+// The circuit list, in the order a person scans a list: alphabetical by the
+// name on the label. The HTML keeps them grouped by the order they were
+// built in, which stopped being readable somewhere around circuit twenty.
+(function alphabetiseTrackSelect() {
+    const sel = document.getElementById('track-select');
+    if (!sel) return;
+    const keep = sel.value;
+    Array.from(sel.options)
+        .sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()))
+        .forEach(o => sel.appendChild(o));
+    sel.value = keep;
+})();
+
+// --- Only large circuits -------------------------------------------------
+// The championship checkbox that narrows the calendar to the XLs. What is
+// an XL is derived from the tracks themselves - a world bigger than the
+// classic canvas - so the list can never drift when a circuit is added.
+let _xlPool = null;
+function xlPool() {
+    if (_xlPool) return _xlPool;
+    _xlPool = SEASON_POOL.filter(k => {
+        try {
+            const t = makeTrackRaw(k);
+            // the base class defaults worldW/H to the classic canvas, so XL
+            // means STRICTLY BIGGER, not merely present
+            return !!(t && ((t.worldW || 0) > WORLD_W || (t.worldH || 0) > WORLD_H));
+        } catch (e) { return false; }
+    });
+    return _xlPool;
+}
+function xlOnlyEnabled() {
+    const el = document.getElementById('xl-only-checkbox');
+    return !!(el && el.checked);
+}
+// The pool every season decision draws from this instant: calendar, length
+// cap, nightmare ranking. One function, so they cannot disagree.
+function activeSeasonPool() {
+    return xlOnlyEnabled() ? xlPool() : SEASON_POOL;
+}
+
 // The dropdown is built from the pool rather than written out in the HTML:
 // the longest season on offer is then exactly the number of circuits that
-// exist, and it cannot drift out of step when one is added.
+// exist, and it cannot drift out of step when one is added - or when the
+// Only-large-circuits box narrows the pool. The current choice is kept
+// where it still fits and clamped down where it does not.
 function populateSeasonLengths() {
     const el = document.getElementById('rounds-select');
     if (!el) return;
-    const want = Math.min(SEASON_DEFAULT, SEASON_POOL.length);
+    const max = activeSeasonPool().length;
+    const prev = parseInt(el.value, 10);
+    const want = isFinite(prev) ? Math.min(prev, max) : Math.min(SEASON_DEFAULT, max);
     let html = '';
-    for (let i = 1; i <= SEASON_POOL.length; i++) {
+    for (let i = 1; i <= max; i++) {
         html += '<option value="' + i + '"' + (i === want ? ' selected' : '') + '>' +
                 i + (i === 1 ? ' round' : ' rounds') + '</option>';
     }
@@ -8507,6 +8587,14 @@ function populateSeasonLengths() {
     el.value = String(want);
 }
 populateSeasonLengths();
+(function wireXlOnly() {
+    const box = document.getElementById('xl-only-checkbox');
+    if (!box) return;
+    box.addEventListener('change', () => {
+        populateSeasonLengths();
+        if (typeof refreshNightmareHint === 'function') refreshNightmareHint();
+    });
+})();
 
 // The repeat button fills the box with the seed of the last season started.
 // Two clicks - repeat, then change the tyre - is the whole workflow the
@@ -8581,7 +8669,7 @@ function makeSeedText() {
 // a short list.
 function seasonCalendar(rounds, rng) {
     const rand = rng || Math.random;
-    const pool = SEASON_POOL;
+    const pool = (typeof activeSeasonPool === 'function') ? activeSeasonPool() : SEASON_POOL;
     const shuffled = () => {
         const a = pool.slice();
         for (let i = a.length - 1; i > 0; i--) {
@@ -8651,13 +8739,15 @@ function nightmareRanking() {
 function nightmareCalendar(rounds, rng) {
     const rank = nightmareRanking();
     const rand = rng || Math.random;
+    const pool = (typeof activeSeasonPool === 'function') ? activeSeasonPool() : SEASON_POOL;
+    const inPool = (k) => pool.indexOf(k) !== -1;
     // worst first, then the unknowns, shuffled among themselves
-    const unknown = rank.unknown.map(x => x.key);
+    const unknown = rank.unknown.map(x => x.key).filter(inPool);
     for (let i = unknown.length - 1; i > 0; i--) {
         const j = Math.floor(rand() * (i + 1));
         [unknown[i], unknown[j]] = [unknown[j], unknown[i]];
     }
-    const ordered = rank.known.map(x => x.key).concat(unknown);
+    const ordered = rank.known.map(x => x.key).filter(inPool).concat(unknown);
     const picked = [];
     // a season longer than the game has circuits goes round again, still
     // worst-first
@@ -8684,6 +8774,8 @@ function refreshNightmareHint() {
     el.style.display = '';
     const rank = nightmareRanking();
     const rounds = seasonRounds();
+    const hintPool = (typeof activeSeasonPool === 'function') ? activeSeasonPool() : SEASON_POOL;
+    rank.known = rank.known.filter(x => hintPool.indexOf(x.key) !== -1);
     if (!rank.known.length) {
         el.innerHTML = 'Nothing on record yet, so there is nothing to be afraid of: ' +
             'the calendar will be drawn at random until some championship rounds have been run.';
