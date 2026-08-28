@@ -1802,8 +1802,12 @@ td.ex-actions { white-space: nowrap; text-align: right; padding-left: 4px; }
 .ex-rec-tyre { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
                margin-left: 6px; vertical-align: baseline;
                box-shadow: 0 0 0 1px rgba(0,0,0,0.45); }
-/* spectating: a tower row you can click to follow that car */
-.tt-click { cursor: pointer; }
+/* spectating: a tower row you can click to follow that car. The
+   pointer-events matters more than the cursor: the whole HUD column is
+   pointer-events:none (see the HUD buttons note), so without this opt-in a
+   "clickable" row is a picture of a button - hit-testing passes straight
+   through it to the canvas. */
+.tt-click { cursor: pointer; pointer-events: auto; }
 .tt-click:hover { background: rgba(255, 255, 255, 0.10); }
 .tt-watch { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55); }
 

@@ -937,6 +937,20 @@ const logBody = document.getElementById('log-body');
 const stopSessionBtn = document.getElementById('stopSessionBtn');
 const vscBanner = document.getElementById('vsc-banner');
 const timingTower = document.getElementById('timing-tower');
+// Following a car from the tower, wired ONCE on the container. It cannot be
+// per-row: the tower is rebuilt from innerHTML every frame, and a real click
+// is mousedown + ~80ms + mouseup - the row that took the mousedown is gone
+// several rebuilds before the mouseup, so the browser retargets the click at
+// the container and a row onclick never fires. (The el.click() the test suite
+// used to dispatch skipped hit-testing entirely, which is how this shipped
+// broken.) pointerdown instead of click for the same reason: it is delivered
+// to whatever row exists at that instant, and bubbles here before the next
+// rebuild can destroy it.
+timingTower.addEventListener('pointerdown', (e) => {
+    const row = e.target && e.target.closest
+        ? e.target.closest('.tt-row[data-idx]') : null;
+    if (row) spectateFollow(parseInt(row.dataset.idx, 10));
+});
 const pauseBtn = document.getElementById('pauseBtn');
 const pauseOverlay = document.getElementById('pause-overlay');
 const resumeBtn = document.getElementById('resume-btn');
@@ -7196,10 +7210,16 @@ function updateHUD() {
             const chPip = `<span class="tt-ch" style="background:${ch.accent};" ` +
                 `title="${ch.label}">${ch.short}</span>`;
             // One cell per car, laid left to right along the top.
-            // Spectating: the row is a button that follows that car. It is
-            // an onclick attribute rather than a listener because the tower is
-            // rebuilt from innerHTML every frame - a listener attached here
-            // would be thrown away before it could ever fire.
+            // Spectating: the row is a button that follows that car. The row
+            // only CARRIES data-idx - the listening happens once, on the
+            // container (see the pointerdown wiring beside the timingTower
+            // lookup), because these rows live for one frame each. And the
+            // tt-click class is load-bearing beyond the cursor: the whole HUD
+            // column is pointer-events:none so it never eats clicks meant for
+            // the canvas, and tt-click is what opts a row back in - without
+            // it the row looks clickable and hit-testing passes straight
+            // through it. That, plus the one-frame lifespan, is why the
+            // original onclick version of this never worked at all.
             const idx = cars.indexOf(c);
             // Clickable for a spectator - and for a driver whose own race is
             // over (DNF or finished), who can now follow anybody still out.
@@ -7219,7 +7239,7 @@ function updateHUD() {
             rows.push(
                 `<div class="tt-row${c.isPlayer ? ' me' : ''}${lapClass}` +
                 `${spect ? ' tt-click' : ''}${spectateCar === c ? ' tt-watch' : ''}" ` +
-                (spect ? `onclick="spectateFollow(${idx})" ` +
+                (spect ? `data-idx="${idx}" ` +
                          `title="${c === playerCar ? 'Back to your car'
                                  : 'Follow ' + (c.driverName || c.color)}" ` : '') +
                 `style="border-left-color:${c.color};">` +
