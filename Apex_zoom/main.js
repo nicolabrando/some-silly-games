@@ -8561,10 +8561,45 @@ function xlOnlyEnabled() {
     const el = document.getElementById('xl-only-checkbox');
     return !!(el && el.checked);
 }
+// ...and its opposite number: only the SHORT circuits, lap under 3km. The
+// length is measured off the waypoints of the real geometry, cached per key,
+// so the list maintains itself exactly like the XL one.
+const _lapLenCache = {};
+function trackLapLength(k) {
+    if (_lapLenCache[k] !== undefined) return _lapLenCache[k];
+    let len = 0;
+    try {
+        const w = makeTrackRaw(k).waypoints;
+        for (let i = 0; i < w.length; i++) {
+            const a = w[i], b = w[(i + 1) % w.length];
+            len += Math.hypot(a.x - b.x, a.y - b.y);
+        }
+    } catch (e) { len = 0; }
+    _lapLenCache[k] = len;
+    return len;
+}
+let _shortPool = null;
+function shortPool() {
+    if (_shortPool) return _shortPool;
+    _shortPool = SEASON_POOL.filter(k => {
+        const L = trackLapLength(k);
+        return L > 0 && L < 3000;
+    });
+    return _shortPool;
+}
+function shortOnlyEnabled() {
+    const el = document.getElementById('short-only-checkbox');
+    return !!(el && el.checked);
+}
 // The pool every season decision draws from this instant: calendar, length
-// cap, nightmare ranking. One function, so they cannot disagree.
+// cap, nightmare ranking. One function, so they cannot disagree. The two
+// filters are exclusive - the checkboxes uncheck each other - but if both
+// ever read true, large wins and short is ignored rather than the calendar
+// going empty.
 function activeSeasonPool() {
-    return xlOnlyEnabled() ? xlPool() : SEASON_POOL;
+    if (xlOnlyEnabled()) return xlPool();
+    if (shortOnlyEnabled()) return shortPool();
+    return SEASON_POOL;
 }
 
 // The dropdown is built from the pool rather than written out in the HTML:
@@ -8587,13 +8622,16 @@ function populateSeasonLengths() {
     el.value = String(want);
 }
 populateSeasonLengths();
-(function wireXlOnly() {
-    const box = document.getElementById('xl-only-checkbox');
-    if (!box) return;
-    box.addEventListener('change', () => {
+(function wirePoolFilters() {
+    const xlBox = document.getElementById('xl-only-checkbox');
+    const shBox = document.getElementById('short-only-checkbox');
+    const onToggle = (self, other) => () => {
+        if (self.checked && other) other.checked = false;   // exclusive pair
         populateSeasonLengths();
         if (typeof refreshNightmareHint === 'function') refreshNightmareHint();
-    });
+    };
+    if (xlBox) xlBox.addEventListener('change', onToggle(xlBox, shBox));
+    if (shBox) shBox.addEventListener('change', onToggle(shBox, xlBox));
 })();
 
 // The repeat button fills the box with the seed of the last season started.
