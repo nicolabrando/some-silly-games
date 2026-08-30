@@ -3939,3 +3939,74 @@ class ValloneTrack extends SegmentedTrack {
         this.waypoints = this.generateWaypoints();
     }
 }
+
+
+
+
+// =============================================================================
+//  PUZZLE, XL. Two leaves of the rosa camuna, and a real circuit around them.
+//
+//  The name came after the drawing: one leaf hangs OUT of the lap and the
+//  other folds INTO the infield, which is precisely a jigsaw piece - a tab
+//  on one side, a blank on the other.
+//
+//  This started as LOMBARDY - the Lombard emblem's five-petal rose taken
+//  literally, tangency-perfect and, as Nicola put it after driving it, a
+//  nightmare: no straight anywhere on the lap, five 238-degree loops back to
+//  back, five hairpins in the notches, nowhere to settle. Faithful to the
+//  flag, hostile to the driver.
+//
+//  So two petals were kept and everything else thrown away. What survives is
+//  the LEAF: a reverse-curve neck in, a 210-degree carousel at r280 you can
+//  lean on instead of fight, a neck back out. The sweeps are set so that
+//  leaf = 2 x neck, which makes the whole excursion HEADING-NEUTRAL: the
+//  road leaves the lap pointing one way and rejoins it pointing the same
+//  way, so the leaf hangs off the side and the ring behind it stays a clean
+//  ring. That is exactly what the five-petal version could not do - there,
+//  every petal dragged the heading 130 degrees round and the lap folded over
+//  itself.
+//
+//  On a clockwise ring an outward leaf always swings left of travel, so two
+//  outward leaves would both have been right-handers. The second one hangs
+//  INWARD instead, into the empty infield, which costs nothing and buys the
+//  lap its opposite lock. Around them: a 840px pit straight, a real braking
+//  corner at T1, a 740px bottom straight to have a run at, and four corners
+//  at four different radii. 7.3km.
+//
+//  Built by /root/tools/design_puzzle.js. Edit that tool, not these numbers.
+// =============================================================================
+class PuzzleTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 2220;
+        this.worldH = 2020;
+        this.trackWidth = 60;
+        this.grassWidth = 80;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 840, y2: 0 },
+            { type: 'arc', cx: 840, cy: 160, r: 160, start: -1.5708, end: 0, ccw: false },
+            { type: 'line', x1: 1000, y1: 160, x2: 1000, y2: 400 },
+            { type: 'arc', cx: 1220, cy: 400, r: 220, start: 3.14159, end: 1.309, ccw: true },
+            { type: 'arc', cx: 1349.41, cy: 882.96, r: 280, start: -1.8326, end: 1.8326, ccw: false },
+            { type: 'arc', cx: 1220, cy: 1365.93, r: 220, start: 4.97419, end: 3.14159, ccw: true },
+            { type: 'line', x1: 1000, y1: 1365.93, x2: 1000, y2: 1625.93 },
+            { type: 'arc', cx: 830, cy: 1625.93, r: 170, start: 0, end: 1.5708, ccw: false },
+            { type: 'line', x1: 830, y1: 1795.93, x2: 90, y2: 1795.93 },
+            { type: 'arc', cx: 90, cy: 1555.93, r: 240, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: -150, y1: 1555.93, x2: -150, y2: 1305.93 },
+            { type: 'arc', cx: 70, cy: 1305.93, r: 220, start: 3.14159, end: 4.97419, ccw: false },
+            { type: 'arc', cx: 199.41, cy: 822.96, r: 280, start: 8.11578, end: 4.45059, ccw: true },
+            { type: 'arc', cx: 70, cy: 340, r: 220, start: 1.309, end: 3.14159, ccw: false },
+            { type: 'line', x1: -150, y1: 340, x2: -150, y2: 150 },
+            { type: 'arc', cx: 0, cy: 150, r: 150, start: 3.14159, end: 4.71239, ccw: false }
+        ];
+
+        // 380px along the pit straight: the whole grid forms up behind the
+        // line with the last corner well clear of the back row.
+        this.startX = 380;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}

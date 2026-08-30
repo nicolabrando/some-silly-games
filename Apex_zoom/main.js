@@ -2024,6 +2024,7 @@ function makeTrackRaw(trackType) {
         case 'onda':         return new OndaTrack();
         case 'dedalo':       return new DedaloTrack();
         case 'vallone':      return new ValloneTrack();
+        case 'puzzle':       return new PuzzleTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2948,7 +2949,8 @@ const CHASSIS_PACE = {
     riviera: { best: 'bolt', g: '1f11lcf', pct: { aero: 5.3, bolt: 0, ridge: 2.5, torque: 1.9 } },
     onda: { best: 'ridge', g: '1b4f6sm', pct: { aero: 0.7, bolt: 0.4, ridge: 0, torque: 0.4 } },
     dedalo: { best: 'bolt', g: '1ecq16x', pct: { aero: 1.9, bolt: 0, ridge: 0.1, torque: 0.4 } },
-    vallone: { best: 'ridge', g: '1nxegx', pct: { aero: 0.9, bolt: 0.1, ridge: 0, torque: 0.4 } }
+    vallone: { best: 'ridge', g: '1nxegx', pct: { aero: 0.9, bolt: 0.1, ridge: 0, torque: 0.4 } },
+    puzzle: { best: 'ridge', g: '1fe3bvd', pct: { aero: 0.4, bolt: 0.2, ridge: 0, torque: 0.5 } }
 };
 
 function chassisPaceFor(key) {
@@ -2973,7 +2975,7 @@ const TRACK_LABELS = {
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown',
     maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka',
     lungolago: 'Lungolago', riviera: 'Riviera',
-    onda: 'Onda', dedalo: 'Dedalo', vallone: 'Vallone'
+    onda: 'Onda', dedalo: 'Dedalo', vallone: 'Vallone', puzzle: 'Puzzle'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -2991,7 +2993,7 @@ const TRACK_CODES = {
     pettine: 'COM', thunder: 'THU', crown: 'CRW',
     maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ',
     lungolago: 'LUN', riviera: 'RIV',
-    onda: 'OND', dedalo: 'DED', vallone: 'VAL'
+    onda: 'OND', dedalo: 'DED', vallone: 'VAL', puzzle: 'PZL'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -8494,7 +8496,10 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      // right, and none of them owns a gimmick - they are the
                      // calendar's road-and-nothing-but circuits.
                      'maratona', 'colosso', 'spa', 'suzuka', 'lungolago', 'riviera',
-                     'onda', 'dedalo', 'vallone'];
+                     'onda', 'dedalo', 'vallone',
+                     // two leaves of the rosa camuna, on a circuit that
+                     // gives you somewhere to breathe between them
+                     'puzzle'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:
