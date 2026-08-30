@@ -8250,8 +8250,19 @@ function gameLoop(timestamp) {
         _impactsThisFrame = 0;
 
         drawTrackFrame(ctx);           // leaves the context in world space
-        cars.forEach(car => car.draw(ctx));
-        if (typeof track.drawBridge === 'function') track.drawBridge(ctx);
+        // Same layering as the race render below: whoever is on the lower
+        // road goes down first, then the deck or the tunnel roof, then
+        // whoever is on top of it. The grid is nowhere near the crossing on
+        // either circuit that has one, but a countdown that layered them
+        // differently from the race would be a bug waiting for a circuit
+        // that does.
+        if (typeof track.getBridge === 'function' && track.getBridge()) {
+            cars.forEach(car => { if (!track.onBridge(car)) car.draw(ctx); });
+            track.drawBridge(ctx);
+            cars.forEach(car => { if (track.onBridge(car)) car.draw(ctx); });
+        } else {
+            cars.forEach(car => car.draw(ctx));
+        }
         drawCranes(ctx);
 
         applyScreenTransform(ctx);     // rain, lights and minimap are window furniture

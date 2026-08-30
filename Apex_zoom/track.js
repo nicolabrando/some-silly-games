@@ -406,10 +406,26 @@ class SegmentedTrack {
         const underIdx = this.bridgeOverFirst === false ? bi : bj;
         const o = nodes[overIdx], u = nodes[underIdx];
 
+        // The centreline of the OVER road across the crossing, sampled off the
+        // line itself. A tunnel roof has to put that road back on top of the
+        // ground it buries, and the road there may be curving - Suzuka's is,
+        // through the esses - so a rectangle will not do: this is the real
+        // shape, stroked later at road and verge width.
+        const span = Math.ceil((half + this.trackWidth + 30) / ds) + 2;
+        const overPath = [];
+        for (let k = -span; k <= span; k++) {
+            const nd = nodes[(overIdx + k + N * 4) % N];
+            overPath.push({ x: nd.cx, y: nd.cy });
+        }
+
         this._bridge = {
             x: (o.cx + u.cx) / 2,
             y: (o.cy + u.cy) / 2,
             angle: Math.atan2(o.ty, o.tx),      // the deck runs along the upper road
+            // ...and the tunnel runs along the LOWER one: it is the road that
+            // changes level, so its heading is the one the portals square up to
+            uAngle: Math.atan2(u.ty, u.tx),
+            overPath: overPath,
             half: half,                          // half its length, along the road
             // Half its width - and it is the WALL, not the road, because that
             // is where the parapet stands. It used to be trackWidth + 30, so
@@ -452,6 +468,7 @@ class SegmentedTrack {
     drawBridge(ctx) {
         const b = this.getBridge();
         if (!b) return;
+        if (this.bridgeStyle === 'tunnel') { this.drawTunnel(ctx, b); return; }
         ctx.save();
         ctx.translate(b.x, b.y);
         ctx.rotate(b.angle);
@@ -2258,6 +2275,36 @@ class SegmentedTrack {
         }
     }
 
+    // The kerb pass, lifted out of draw() so the tunnel roof can put the
+    // road back together above the buried one. `near`, when given, restricts
+    // it to arcs whose kerb passes within r of (x, y) - the roof only needs
+    // the handful of arcs at the crossing, not the whole lap, every frame.
+    drawKerbs(ctx, near) {
+        for (const seg of this.segments) {
+            if (seg.type !== 'arc') continue;
+
+            const kw = this.kerbWidthFor(seg);
+            if (kw < 3) continue;               // no verge to put one on
+            const rk = seg.r - this.trackWidth - kw / 2;
+            if (rk <= 2) continue;
+            if (near && Math.hypot(seg.cx - near.x, seg.cy - near.y) > seg.r + near.r) continue;
+
+            const sweep = this._arcSweep(seg);
+            const arcLen = Math.abs(sweep) * rk;
+            const bands = Math.max(4, Math.round(arcLen / 22));
+
+            for (let b = 0; b < bands; b++) {
+                const a0 = seg.start + sweep * (b / bands);
+                const a1 = seg.start + sweep * ((b + 1) / bands);
+                ctx.beginPath();
+                ctx.arc(seg.cx, seg.cy, rk, a0, a1, sweep < 0);
+                ctx.lineWidth = kw;
+                ctx.strokeStyle = (b % 2 === 0) ? '#d32f2f' : '#f2f2f2';
+                ctx.stroke();
+            }
+        }
+    }
+
     draw(ctx) {
         // Water first, under everything else - see drawWater.
         this.drawWater(ctx);
@@ -2303,28 +2350,7 @@ class SegmentedTrack {
         //    wall, which on four circuits left no room at all. The verge is 18px
         //    everywhere now, so the band is 16 and reaches from the edge of the
         //    asphalt to just short of the armco on every circuit in the game.
-        for (const seg of this.segments) {
-            if (seg.type !== 'arc') continue;
-
-            const kw = this.kerbWidthFor(seg);
-            if (kw < 3) continue;               // no verge to put one on
-            const rk = seg.r - this.trackWidth - kw / 2;
-            if (rk <= 2) continue;
-
-            const sweep = this._arcSweep(seg);
-            const arcLen = Math.abs(sweep) * rk;
-            const bands = Math.max(4, Math.round(arcLen / 22));
-
-            for (let b = 0; b < bands; b++) {
-                const a0 = seg.start + sweep * (b / bands);
-                const a1 = seg.start + sweep * ((b + 1) / bands);
-                ctx.beginPath();
-                ctx.arc(seg.cx, seg.cy, rk, a0, a1, sweep < 0);
-                ctx.lineWidth = kw;
-                ctx.strokeStyle = (b % 2 === 0) ? '#d32f2f' : '#f2f2f2';
-                ctx.stroke();
-            }
-        }
+        this.drawKerbs(ctx);
 
         // 3. Track Asphalt (Dark Grey)
         this.drawPath(ctx);
@@ -2338,6 +2364,97 @@ class SegmentedTrack {
         this.drawPuddles(ctx);
     }
     
+    // --- THE TUNNEL ------------------------------------------------------
+    //  The other way for two roads to cross: instead of lifting the second
+    //  one onto a deck, drop it into the ground under the first.
+    //
+    //  Suzuka needed it. A deck is a straight slab aligned with the road on
+    //  top of it, which is why the backstretch was put up there - it is
+    //  straight where they meet. But that deck then sat over the ESSES, and
+    //  the esses are the best corners on the circuit: you were driving them
+    //  under a lid. Swapping the levels alone does not help, because the
+    //  esses curve through 100 degrees inside the deck's own length and a
+    //  straight slab laid along them would leave the road entirely. So the
+    //  backstretch stays the road that changes level, and it now goes DOWN:
+    //  the esses are ordinary ground-level road with nothing above them, and
+    //  the backstretch dives under and comes out the far side.
+    //
+    //  Drawn as cut-and-cover: bury the lower road in the ground the upper
+    //  one sits on, rebuild the upper road's verge, kerbs and asphalt on top
+    //  of the fill, and put a portal at each end where the lower road goes
+    //  in. The fill is not quite opaque, for the same reason the deck was
+    //  not: at 0.9 the buried road still reads as a shape, so a driver in
+    //  the tunnel can place themselves, and main.js draws the tags for
+    //  everyone afterwards - a car you cannot see is still a car you can
+    //  follow.
+    drawTunnel(ctx, b) {
+        b = b || this.getBridge();
+        if (!b) return;
+        const hl = b.half;                    // along the buried road
+        const hw = this.wallRadius();         // its half width
+
+        // 1. the ground the upper road stands on, laid over the lower one
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.uAngle);
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = this.vergeColour || '#2e7d32';
+        ctx.fillRect(-hl, -hw, hl * 2, hw * 2);
+        ctx.globalAlpha = 1;
+
+        // 2. the portals. The mouth is dark on the OUTSIDE of the fill - on
+        //    the road you are still driving, fading away from the opening,
+        //    because that is where a hole in the ground reads from above.
+        //    Then the retaining wall across the full corridor, with its top
+        //    edge catching the light.
+        for (const side of [-1, 1]) {
+            const x = side * hl;
+            const g = ctx.createLinearGradient(x, 0, x + side * 52, 0);
+            g.addColorStop(0, 'rgba(0, 0, 0, 0.80)');
+            g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(Math.min(x, x + side * 52), -this.trackWidth,
+                         52, this.trackWidth * 2);
+            ctx.fillStyle = '#8f9599';                       // the retaining wall
+            ctx.fillRect(Math.min(x, x + side * 8), -hw, 8, hw * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';     // its lit top edge
+            ctx.fillRect(x - (side > 0 ? 0 : 2), -hw, 2, hw * 2);
+        }
+        ctx.restore();
+
+        // 3. the upper road, rebuilt on the fill - verge, kerbs, asphalt, in
+        //    the same order the circuit itself is painted. Clipped to the
+        //    buried rectangle so nothing outside the crossing is touched.
+        const p = b.overPath;
+        if (!p || p.length < 2) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.uAngle);
+        ctx.rect(-hl, -hw, hl * 2, hw * 2);
+        ctx.clip();
+        ctx.rotate(-b.uAngle);
+        ctx.translate(-b.x, -b.y);
+
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'round';
+        const road = () => {
+            ctx.beginPath();
+            ctx.moveTo(p[0].x, p[0].y);
+            for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
+        };
+        road();
+        ctx.lineWidth = Math.max(this.grassWidth, this.barrierRadius()) * 2;
+        ctx.strokeStyle = this.vergeColour || '#2e7d32';
+        ctx.stroke();
+        this.drawKerbs(ctx, { x: b.x, y: b.y, r: hl + this.grassWidth });
+        road();
+        ctx.lineWidth = this.trackWidth * 2;
+        ctx.strokeStyle = '#555';
+        ctx.stroke();
+        ctx.restore();
+    }
+
     drawStartLine(ctx) {
         ctx.fillStyle = '#fff';
         const startY = this.startY - this.trackWidth;
@@ -3522,12 +3639,13 @@ class SpaTrack extends SegmentedTrack {
 //  degrees in two bites, THE ESSES - see below, they are the point of the
 //  place - Dunlop, a vestigial Degner, the kinked underpass run to the
 //  HAIRPIN, 200R, a Spoon that is itself a small pair of esses, a 1005px
-//  backstretch carried OVER the bridge, the 130R sweep into the Casio
+//  backstretch that dives under the esses, the 130R sweep into the Casio
 //  chicane, and a long Last Curve. And the thing that makes it Suzuka rather
 //  than anywhere else: the lap CROSSES ITSELF - a figure of eight, the
-//  second on the calendar after Crossover, with the backstretch carried over
-//  the hairpin approach (bridgeOverFirst false: you pass under first, and
-//  three corners later you are the traffic above), crossing at 70 degrees.
+//  second on the calendar after Crossover, with the backstretch dropping
+//  into a TUNNEL beneath the esses (bridgeOverFirst true, bridgeStyle
+//  'tunnel': you are on top through the esses, and three corners later you
+//  are the traffic underneath), crossing at 70 degrees.
 //
 //  THE ESSES are six alternating 100-degree corners at r120, and their depth
 //  is a designed threshold, found by measuring rather than luck. The road
@@ -3560,8 +3678,16 @@ class SuzukaTrack extends SegmentedTrack {
         this.trackWidth = 60;
         this.grassWidth = 80;
         this.hasBridge = true;
-        // the backstretch (later in the lap) is the road on the deck
-        this.bridgeOverFirst = false;
+        // The esses (earlier in the lap) are the road at GROUND level, and
+        // the backstretch dives under them - see drawTunnel. It was the
+        // other way round until Nicola pointed out the obvious: the deck
+        // was sitting over the best corners on the circuit and you drove
+        // them under a lid. The backstretch is still the road that changes
+        // level, because it is the straight one where they meet; it just
+        // goes down now instead of up. No segment moved, so every lap time
+        // and record set on this circuit still stands.
+        this.bridgeOverFirst = true;
+        this.bridgeStyle = 'tunnel';
 
         this.segments = [
             { type: 'line', x1: 0, y1: 0, x2: 475, y2: 0 },
