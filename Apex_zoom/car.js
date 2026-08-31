@@ -996,18 +996,49 @@ function paintCarShadow(g, W, H, ch, alpha) {
 }
 
 
-// --- Player damage handicap ---------------------------------------------
-// Applied to the player's car only. Two handles: a straight scale on every
-// hit, and extra impact speed that costs nothing at all, so light scrapes
-// while learning a corner are genuinely free rather than merely cheap.
+// --- The damage handicap -------------------------------------------------
+// Two handles: a straight scale on every hit, and extra impact speed that
+// costs nothing at all, so light scrapes while learning a corner are genuinely
+// free rather than merely cheap. What they are worth, against a 255hp car:
+//
+//     closing        without          with
+//      80 px/s          7 hp           0 hp
+//     100             39             0.7
+//     120             97            10
+//     150            231            47
+//   the hit that ends a full car:  154 px/s  ->  226 px/s
+//
+// WHO GETS IT is three states, not two:
+//   - normally, the player and nobody else. The AI drives to a computed speed
+//     profile with perfect lookahead and knows exactly how much steering it is
+//     about to need; a human has four arrow keys and a reaction time, so the
+//     same corner costs them contact the AI never has.
+//   - with "No AI handicap" ticked, EVERY car. Nicola asked for it after
+//     watching the field retire from contact he had walked away from: the
+//     forgiving curve is not a cheat if everyone is on it, it is just a
+//     gentler ruleset, and it makes for closer racing rather than an easier
+//     race.
+//   - at ALIEN, nobody at all, and the checkbox is refused. The whole premise
+//     of that level is that the player is given nothing the field is not, and
+//     giving the FIELD something instead is the same bargain from the other
+//     side. main.js unticks and disables the box when Alien is chosen, and
+//     applyDifficultyRules forces the flag off as well - a UI that can be
+//     raced past is not a rule.
 const PLAYER_DAMAGE_SCALE = 0.45;
 const PLAYER_FREE_IMPACT = 28;      // px/s of closing speed added to the free band
-// ...and taken away again at Alien, where the point of the level is that the
-// player is given nothing the field is not. Set by main.js when the session
-// starts; everything that reads the two constants goes through these instead.
-let playerHandicapOn = true;
-function playerDamageScale() { return playerHandicapOn ? PLAYER_DAMAGE_SCALE : 1; }
-function playerFreeImpact() { return playerHandicapOn ? PLAYER_FREE_IMPACT : 0; }
+// Both set by main.js when a session starts, so qualifying and the race agree.
+let playerHandicapOn = true;        // false at Alien
+let noAiHandicapOn = false;         // true when the box is ticked (never at Alien)
+
+// Does this car take damage on the gentle curve? One predicate, so the three
+// places that bill damage - takeDamage, the barrier, and car-to-car contact -
+// cannot disagree about who is on which ruleset.
+function softDamage(car) {
+    if (!playerHandicapOn) return false;               // Alien: nobody
+    return !!(car && (car.isPlayer || noAiHandicapOn));
+}
+function damageScaleFor(car) { return softDamage(car) ? PLAYER_DAMAGE_SCALE : 1; }
+function freeImpactFor(car) { return softDamage(car) ? PLAYER_FREE_IMPACT : 0; }
 
 class Car {
     constructor(x, y, color, isPlayer = false) {
@@ -1933,13 +1964,11 @@ class Car {
     
     takeDamage(amount) {
         if (this.isBroken || this.finished) return;
-        // The AI drives to a computed speed profile with perfect lookahead and
-        // knows exactly how much steering it is about to need. A human has
-        // four arrow keys and a reaction time, so the same corner costs them
-        // contact the AI never has. Scaling the player's damage compensates
-        // for that gap rather than making the car tougher: barriers and
-        // contact still hurt, they just stop ending a race in one mistake.
-        if (this.isPlayer) amount *= playerDamageScale();
+        // Scaled rather than the car being made tougher: barriers and contact
+        // still hurt, they just stop ending a race in one mistake. WHO is on
+        // the gentle curve depends on the difficulty and on the "No AI
+        // handicap" box - see softDamage() and the note above it.
+        amount *= damageScaleFor(this);
         this.health -= amount;
         // One hook for every hit in the game - barriers, wheel-to-wheel and
         // the crane all arrive here - so the sound cannot get out of step with

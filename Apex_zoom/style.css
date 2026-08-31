@@ -2129,3 +2129,11 @@ button.menu-danger {
     background: rgba(6, 10, 16, 0.75);
     white-space: nowrap;
 }
+
+/* A menu checkbox that the current settings have taken away: still readable,
+   plainly not live. Used by "No AI handicap" at Alien. */
+.menu-check.menu-check-off {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.menu-check.menu-check-off input { cursor: not-allowed; }

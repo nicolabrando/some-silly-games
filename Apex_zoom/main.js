@@ -2052,6 +2052,24 @@ function reverseGridEnabled() {
     return !!(box && box.checked);
 }
 
+// "No AI handicap": the player's forgiving damage curve, handed to the whole
+// field. See softDamage() in car.js for what it is worth.
+//
+// A CHAMPIONSHIP CARRIES ITS OWN, and that is not tidiness: a season is saved,
+// resumed months later and replayed from the archive, and a rule that changed
+// how its races were run has to travel with it or round nine is scored under
+// a different game from round one. A single race reads the box live, because
+// there is nothing to travel with.
+function noAiHandicapBox() {
+    const box = document.getElementById('no-ai-handicap-checkbox');
+    return !!(box && box.checked);
+}
+function noAiHandicapWanted() {
+    if (isChampionship && championshipState)
+        return !!championshipState.noAiHandicap;
+    return noAiHandicapBox();
+}
+
 // Every track made here is tagged with the key it was made from. Several
 // things downstream need to ask a track object what it is - the AI's compound
 // choice depends on the layout now - and reverse-mapping a constructor name is
@@ -2268,8 +2286,16 @@ function judgeRacingLine(qTrack) {
 // and the race agree.
 function applyDifficultyRules(diff) {
     const prof = (typeof AI_PROFILES !== 'undefined' && AI_PROFILES[diff]) || null;
+    const alien = !!(prof && prof.noPlayerHandicap);
     if (typeof playerHandicapOn !== 'undefined')
-        playerHandicapOn = !(prof && prof.noPlayerHandicap);
+        playerHandicapOn = !alien;
+    // ...and the field's, which is the box - refused at Alien whatever the
+    // box says. The menu also unticks and disables it there, but a rule that
+    // only exists in the UI is a rule that can be raced past: a season saved
+    // with the flag set and its difficulty later read as Alien would arrive
+    // here with the box irrelevant and the flag still true.
+    if (typeof noAiHandicapOn !== 'undefined')
+        noAiHandicapOn = !alien && noAiHandicapWanted();
 }
 
 function qualiTick() {
@@ -6306,7 +6332,11 @@ function startGame(forceTrackType = null) {
         mode: isPractice ? 'Free Practice' : (isChampionship ? 'Championship round' : 'Single race'),
         track: trackLabel(trackType),
         laps: isPractice ? null : TOTAL_LAPS,
-        difficulty: isPractice ? null : (isChampionship ? championshipState.difficulty : difficulty),
+        difficulty: isPractice ? null : (isChampionship ? championshipState.difficulty : difficulty)
+            // a rule that changed how the race was scored belongs in the log
+            // of that race, not only in the menu it was ticked in
+            + (!isPractice && typeof noAiHandicapOn !== 'undefined' && noAiHandicapOn
+               ? ' (no AI handicap)' : ''),
         weather: isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry',
         seed: isChampionship && championshipState ? championshipState.seed : null,
         playerTyre: (() => {
@@ -6779,10 +6809,12 @@ function updatePhysics(dt) {
                         //   150 px/s -> 230 hp  ( 90%)    nearly terminal
                         //   170 px/s -> 353 hp  (>100%)   race over
                         const closing = -velAlongNormal;      // px/s, always > 0 here
-                        // Each car is billed against its own free band, so the
-                        // player's wider one does not also let the AI off.
-                        const freeOf = (c) => 65 + (c.isPlayer &&
-                            typeof playerFreeImpact === 'function' ? playerFreeImpact() : 0);
+                        // Each car is billed against its OWN free band and its
+                        // own scale, so one car being on the gentle curve does
+                        // not let the other off - which matters in exactly the
+                        // case the option exists for, where they both are.
+                        const freeOf = (c) => 65 + (typeof freeImpactFor === 'function'
+                            ? freeImpactFor(c) : 0);
                         const dmgOf = (c) => {
                             const f = freeOf(c);
                             return closing <= f ? 0 : 320 * Math.pow((closing - f) / 100, 2);
@@ -8887,6 +8919,34 @@ function populateSeasonLengths() {
     el.value = String(want);
 }
 populateSeasonLengths();
+// ALIEN REFUSES THE BOX, and says so rather than quietly ignoring it. The
+// premise of that difficulty is that nobody is given anything the field is
+// not, and handing the FIELD the soft damage curve is the same bargain from
+// the other side. So the box unticks itself, greys out, and its label says
+// why - a control that looks live and does nothing is worse than one that is
+// plainly off. applyDifficultyRules enforces it again at session start, for
+// a season whose difficulty is read back from a save.
+(function wireAiHandicap() {
+    const box = document.getElementById('no-ai-handicap-checkbox');
+    const diff = document.getElementById('difficulty-select');
+    if (!box || !diff) return;
+    const label = box.closest('label');
+    const span = label && label.querySelector('span');
+    const sync = () => {
+        const alien = diff.value === 'alien';
+        if (alien && box.checked) box.checked = false;
+        box.disabled = alien;
+        if (label) label.classList.toggle('menu-check-off', alien);
+        if (span) span.textContent = alien ? 'No AI handicap — not at Alien'
+                                           : 'No AI handicap';
+        if (label) label.title = alien
+            ? 'Alien gives nobody a damage handicap, the player included.'
+            : 'The field takes damage on your forgiving curve instead of the harsh one.';
+    };
+    diff.addEventListener('change', sync);
+    sync();
+})();
+
 (function wirePoolFilters() {
     const xlBox = document.getElementById('xl-only-checkbox');
     const shBox = document.getElementById('short-only-checkbox');
@@ -9147,7 +9207,10 @@ function startChampionship() {
         bonusPoints: {},          // places-gained, tracked apart from race points
         participants: [],
         results: [],
-        difficulty: difficulty
+        difficulty: difficulty,
+        // fixed at creation, so a season resumed in a month is still the
+        // season you started - see noAiHandicapWanted()
+        noAiHandicap: noAiHandicapBox() && difficulty !== 'alien'
     };
     // Written back into the box and kept, so the season you have just started
     // can be run again on a different tyre without having copied anything down.

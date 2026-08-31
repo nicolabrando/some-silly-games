@@ -1226,10 +1226,11 @@ class SegmentedTrack {
                 //   150      -> 210 hp
                 //   200      -> 510 hp   (terminal)
                 const intoWall = car.velocity.x * nx + car.velocity.y * ny;
-                // The player gets a wider free band as well as the damage
-                // scale in takeDamage - see PLAYER_FREE_IMPACT in car.js.
-                const free = 60 + (car.isPlayer && typeof playerFreeImpact === 'function'
-                    ? playerFreeImpact() : 0);
+                // Whoever is on the gentle curve gets a wider free band as
+                // well as the damage scale in takeDamage - see softDamage()
+                // in car.js for who that is.
+                const free = 60 + (typeof freeImpactFor === 'function'
+                    ? freeImpactFor(car) : 0);
                 if (intoWall > free) {
                     // ONE impact may not finish a healthy car.
                     //
@@ -1249,11 +1250,11 @@ class SegmentedTrack {
                     // something to limp home with.
                     const raw = 260 * Math.pow((intoWall - free) / 100, 2);
                     // The cap is on what the car ACTUALLY loses, so it means
-                    // the same thing for the player - whose damage is scaled
-                    // down in takeDamage - as for everybody else: at most 62%
-                    // of a full car, from any one impact.
-                    const scale = (car.isPlayer && typeof playerDamageScale === 'function')
-                        ? playerDamageScale() : 1;
+                    // the same thing for a car on the gentle curve - whose
+                    // damage is scaled down in takeDamage - as for one that is
+                    // not: at most 62% of a full car, from any one impact.
+                    const scale = (typeof damageScaleFor === 'function')
+                        ? damageScaleFor(car) : 1;
                     const cap = (car.maxHealth * 0.62) / scale;
                     car.takeDamage(Math.min(raw, cap));
                 }
