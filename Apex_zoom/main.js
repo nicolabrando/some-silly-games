@@ -257,6 +257,21 @@ function layerScale() {
     return Math.max(0.5, s);
 }
 
+// A car in the TUNNEL would otherwise be gone: unlike the deck - which is
+// drawn at 0.88 so what is underneath shows through - a tunnel rebuilds the
+// upper road opaquely over the buried one, and no amount of alpha on the
+// roof survives that. So the cars down there are drawn again, on top of the
+// finished crossing, as shapes: enough to see someone coming out the far
+// side, not so much that they read as being on the road you are on. Their
+// tags are drawn for everyone afterwards either way.
+function drawTunnelGhosts(g, list) {
+    if (!track || track.bridgeStyle !== 'tunnel' || !track.underBridge) return;
+    g.save();
+    g.globalAlpha = 0.3;
+    for (const car of list) if (track.underBridge(car)) car.draw(g, true);
+    g.restore();
+}
+
 function drawTrackFrame(g) {
     const W = curWorldW(), H = curWorldH();
     const S = layerScale();
@@ -496,6 +511,13 @@ let pendingWeather = null;  // weather chosen at qualifying, reused for the race
 let pendingWetLevel = null; // 'damp' | 'soaked', pinned with it
 let wetLevel = null;        // the live one, read by car.js and ai.js
 let racePoleColor = null;   // who started P1 in the race now running
+// The grid of the race now running, with the lap each slot was earned on and
+// where that lap came from. Kept because the archive used to record only WHO
+// took pole: the times themselves lived in the readable half of the race log,
+// which is memory only and starts empty at every reload, so a qualifying
+// session was gone the moment the tab was closed. Built for every race, human
+// or skipped, so a season's grids are complete.
+let raceQualiGrid = null;
 // Who crossed the line first on each lap. The last piece of a Grand Chelem:
 // pole + win + fastest lap + led every single lap.
 let lapLeaders = [];
@@ -908,6 +930,54 @@ let skipPlayers = [];       // every human entry (two of them on one keyboard)
 // the pause compensation are all measured against it, and firstFinisherTime
 // being on a different clock meant the pause adjustment was mixing two time
 // bases that only happen to share a unit.
+// --- WATCHING IT FASTER -------------------------------------------------
+// Not the same thing as skipping a Grand Prix (skipGrandPrix, above): that
+// one hides the race and simulates it. This runs the race you are watching,
+// on screen, at 2x, 4x or 8x - for the evening you are collected by somebody
+// on lap two of eight and there is a lot of afternoon left to sit through.
+//
+// It works by running the physics step MORE THAN ONCE a frame rather than by
+// making the step bigger: a 64ms step would be a different simulation, four
+// 16ms steps are the same one. The race clock, the DNF window and the VSC
+// countdown are wall-clock anchors, so each extra step pulls all three back
+// by exactly one step - which is the trick the stall guard already uses in
+// the other direction. Lap times therefore come out identical to real time.
+const RACE_SPEEDS = [1, 2, 4, 8];
+let raceSpeed = 1;
+// Offered only when your own race is over - you cannot drive at 8x, and
+// nobody should be able to fast-forward past a mistake they are still
+// making. A spectator has no car, so they get it from the lights.
+function raceSpeedEligible() {
+    if (skipMode || gameState !== 'playing') return false;
+    if (raceMode !== 'race' && raceMode !== 'championship') return false;
+    return !humanCars().some(c => !c.isBroken && !c.finished);
+}
+function cycleRaceSpeed() {
+    if (!raceSpeedEligible()) { raceSpeed = 1; return; }
+    const i = RACE_SPEEDS.indexOf(raceSpeed);
+    raceSpeed = RACE_SPEEDS[(i + 1) % RACE_SPEEDS.length];
+    RaceLog.event('SPEED', 'watching at ' + raceSpeed + 'x');
+}
+// How many physics steps this frame. A machine already struggling to hold
+// the frame gets fewer of them rather than a slideshow.
+function raceSpeedSteps(dt) {
+    if (raceSpeed <= 1 || !raceSpeedEligible()) return 1;
+    if (dt > 0.05) return 2;
+    return raceSpeed;
+}
+function refreshFfwdBtn() {
+    const b = document.getElementById('ffwdBtn');
+    if (!b) return;
+    const on = raceSpeedEligible();
+    b.style.display = on ? 'inline-block' : 'none';
+    if (!on) { if (raceSpeed !== 1) raceSpeed = 1; return; }
+    b.innerHTML = raceSpeed === 1 ? '&#9193;&nbsp;2&times;'
+                                  : '&#9193;&nbsp;' + raceSpeed + '&times;';
+    b.style.background = raceSpeed === 1 ? '#00695c' : '#00897b';
+    b.title = raceSpeed === 1 ? 'watch the rest of the race at double speed'
+                              : 'watching at ' + raceSpeed + 'x — click to change';
+}
+
 function raceNow() { return skipMode ? skipNow : performance.now(); }
 // UI Elements
 const menu = document.getElementById('menu');
@@ -1408,8 +1478,8 @@ document.getElementById('ex-seasons-export').addEventListener('click', () => {
     const m = document.getElementById('ex-seasons-msg');
     if (m) {
         m.className = 'ex-io-msg ex-io-ok';
-        m.textContent = 'Downloaded — that .txt carries every season and lap record on this ' +
-                        'machine, and Load reads it back.';
+        m.textContent = 'Downloaded — that .txt carries every season, lap record and ghost ' +
+                        'lap on this machine, and Load reads it back.';
     }
 });
 document.getElementById('log-load-btn').addEventListener('click', () =>
@@ -1725,6 +1795,10 @@ function setPaused(want) {
 }
 
 pauseBtn.addEventListener('click', () => setPaused(!isPaused));
+(function wireFfwd() {
+    const b = document.getElementById('ffwdBtn');
+    if (b) b.addEventListener('click', () => { cycleRaceSpeed(); refreshFfwdBtn(); });
+})();
 resumeBtn.addEventListener('click', () => setPaused(false));
 pauseQuitBtn.addEventListener('click', () => {
     setPaused(false);
@@ -1787,6 +1861,7 @@ restartBtn.addEventListener('click', () => {
     pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
     skipMode = false;
+    raceSpeed = 1;
     skipPlayer = null;
     skipPlayers = [];
     weekendChassisAsked = false;   // a new weekend, a new choice of car
@@ -1796,6 +1871,7 @@ restartBtn.addEventListener('click', () => {
 nextRoundBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
     skipMode = false;
+    raceSpeed = 1;
     skipPlayer = null;
     skipPlayers = [];
     nextChampionshipRound();
@@ -1829,6 +1905,7 @@ quitBtn.addEventListener('click', () => {
     pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
     skipMode = false;
+    raceSpeed = 1;
     skipPlayer = null;
     skipPlayers = [];
     document.getElementById('skip-overlay').style.display = 'none';
@@ -2354,6 +2431,7 @@ function startQualifying(forceTrackType) {
     playerCar = null;
     player2Car = null;
     spectateCar = null;   // a tower pick belongs to one race only
+    raceSpeed = 1;        // and so does the fast-forward
 
     const humans = pendingField.filter(p => p.isPlayer);
     twoPlayer = humans.length > 1;
@@ -5295,21 +5373,57 @@ function exShowSeason(id) {
 //  the history goes with you. Reading prose back would have been the other
 //  way to do this, and prose is not a data format.
 // ---------------------------------------------------------------------------
+//
+//  THE GHOSTS TRAVEL TOO. They were the one thing on this machine that the
+//  file did not carry, and the only one whose loss could not be repaired:
+//  seasons and personal bests were in the block, the AI record book rebuilds
+//  itself, the racing lines are recomputed, and the resume slot is a copy of
+//  state the archive already holds - but a ghost lap is a recording. Lose it
+//  and the TIME survives in the bests table while the car you drove against
+//  does not, which is precisely the half you cannot set again.
+//
+//  They are also the bulk of the file: about 20KB of coordinates per lap
+//  before JSON, against 4KB for a whole season. That is the right trade for a
+//  backup - a save that leaves out the biggest thing on the machine is not one
+//  - but it is worth knowing that the file grows with the ghosts, not with the
+//  seasons.
 function dataPayload() {
     return {
         v: 1,
         game: 'APEX 3',
         exported: new Date().toISOString(),
         seasons: seasonsLoad(),
-        bests: pbLoad()
+        bests: pbLoad(),
+        ghosts: loadGhostStore()
     };
+}
+
+// Is this stored ghost a lap of the circuit as it is drawn NOW? The read path
+// asks the same question through ghostFor(), which has the track in hand; the
+// importer has only a store key, so the track is built from it - memoised,
+// because a file can carry sixty keys and the answer is per circuit.
+const ghostGeomMemo = {};
+function ghostEntryCurrent(storeKey, rec) {
+    if (!rec || typeof rec !== 'object') return false;
+    const base = String(storeKey).split(':')[0].replace(/~acw$/, '');
+    if (!(base in ghostGeomMemo)) {
+        try { ghostGeomMemo[base] = geomStampOf(makeTrackRaw(base)); }
+        catch (e) { ghostGeomMemo[base] = undefined; }
+    }
+    const want = ghostGeomMemo[base];
+    if (want === undefined) return false;          // no such circuit here
+    return geomStampOk(rec.g, base, want);
+}
+function ghostEntryOk(rec) {
+    return !!(rec && rec.v === 1 && Array.isArray(rec.data) && rec.data.length >= 6 &&
+              typeof rec.ms === 'number' && rec.ms > 1000 && rec.hz > 0);
 }
 
 // Merges rather than replaces, and reports what it did in numbers a person
 // can check against what they expected.
 function importDataPayload(box) {
     if (!box || typeof box !== 'object') return null;
-    const out = { seasons: { added: 0, updated: 0, skipped: 0 }, bests: 0 };
+    const out = { seasons: { added: 0, updated: 0, skipped: 0 }, bests: 0, ghosts: 0 };
     if (Array.isArray(box.seasons)) {
         const r = seasonsMerge(box.seasons);
         out.seasons = r;
@@ -5329,6 +5443,37 @@ function importDataPayload(box) {
             }
         }
         pbSave();
+    }
+    // Ghost laps merge on the stopwatch as well, but with one extra question
+    // asked first, because a ghost is COORDINATES and a time is only a number.
+    // A lap recorded on a layout the circuit no longer has replays through the
+    // scenery; the read path already refuses to drive one, so the danger here
+    // is subtler - a stale incoming lap that happens to be quicker would evict
+    // a slower one that still fits the road. So: a lap that matches today's
+    // geometry always beats one that does not, and only between two laps of
+    // equal standing does the clock decide.
+    if (box.ghosts && typeof box.ghosts === 'object') {
+        const mine = loadGhostStore();
+        let touched = false;
+        for (const key of Object.keys(box.ghosts)) {
+            const theirs = box.ghosts[key];
+            if (!ghostEntryOk(theirs)) continue;
+            const ours = mine[key];
+            const theirsFits = ghostEntryCurrent(key, theirs);
+            if (!ours) {
+                // nothing of ours to protect - take it even if it is stale, the
+                // read path will simply not offer it
+                mine[key] = theirs; touched = true; out.ghosts++; continue;
+            }
+            const oursFits = ghostEntryCurrent(key, ours);
+            const better = (theirsFits !== oursFits) ? theirsFits : (theirs.ms < ours.ms);
+            if (better) { mine[key] = theirs; touched = true; out.ghosts++; }
+        }
+        if (touched) {
+            try { window.localStorage.setItem(GHOST_STORE_KEY, JSON.stringify(mine)); }
+            catch (e) { /* storage full: the laps live for this session only */ }
+            ghostS = null;         // re-read the best for the circuit in hand
+        }
     }
     return out;
 }
@@ -5587,7 +5732,7 @@ function importDataText(text) {
         return { ok: true, fromLog: true,
                  why: bits.join(', ') + ' — colours and calendar length were never in a log, ' +
                       'so they are reconstructed',
-                 report: { seasons: r, bests: 0 } };
+                 report: { seasons: r, bests: 0, ghosts: 0 } };
     }
     const r = importDataPayload(box);
     if (!r) return { ok: false, why: 'that file was not readable' };
@@ -5595,6 +5740,7 @@ function importDataText(text) {
     if (r.seasons.added) bits.push(r.seasons.added + ' season' + (r.seasons.added > 1 ? 's' : '') + ' added');
     if (r.seasons.updated) bits.push(r.seasons.updated + ' updated');
     if (r.bests) bits.push(r.bests + ' lap record' + (r.bests > 1 ? 's' : '') + ' improved');
+    if (r.ghosts) bits.push(r.ghosts + ' ghost lap' + (r.ghosts > 1 ? 's' : '') + ' taken on');
     if (r.seasons.skipped) bits.push(r.seasons.skipped + ' entry rejected');
     return { ok: true, why: bits.length ? bits.join(', ') : 'nothing new in that file', report: r };
 }
@@ -5793,6 +5939,7 @@ function startGame(forceTrackType = null) {
     playerCar = null; // Reset playerCar
     player2Car = null;
     spectateCar = null;   // a tower pick belongs to one race only
+    raceSpeed = 1;        // and so does the fast-forward
 
     // Find the waypoint just BEFORE the start line - NOT the closest one.
     // The closest can sit past the line: waypoints on a straight are spaced
@@ -5968,6 +6115,26 @@ function startGame(forceTrackType = null) {
 
     racePoleColor = currentParticipants.length ? currentParticipants[0].color : null;
     lapLeaders = [];
+
+    // The grid, kept for the archive. Built from currentParticipants rather
+    // than from recapQuali because the participant order IS the grid order in
+    // every branch above, including the two that never qualify at all: a
+    // reverse-grid round has no times, and a grid is still a fact worth
+    // keeping. `ms` is null wherever no lap was set - a driver who never got
+    // a time, or a round where nobody did.
+    raceQualiGrid = {
+        source: gridSource,
+        rows: currentParticipants.map((p, i) => {
+            const q = recapQuali ? recapQuali.find(x => x.p === p) : null;
+            const ms = q && q.lap !== null && q.lap !== undefined && isFinite(q.lap)
+                ? Math.round(q.lap) : null;
+            // colour only, no name or code: the round's `order` already
+            // carries both for every driver and the archive keys on colour
+            // everywhere. A grid is thirty rounds long by the end of a season
+            // and this is stored twice, in localStorage and in the save file.
+            return { pos: i + 1, color: p.color, ms: ms, tyre: (q && q.tyre) || null };
+        })
+    };
 
     RaceLog.event('SESSION', `grid set from ${gridSource}: ` +
         currentParticipants.map((p, i) => `${i + 1}.${p.driverName || p.color}`).join(' '));
@@ -7463,6 +7630,8 @@ function updateHUD() {
         }, 4000);
     }
     
+    refreshFfwdBtn();
+
     for (const hc of humanCars()) {
         if (hc.isBroken && !hc.notifiedBroken &&
             (raceMode === 'race' || raceMode === 'championship')) {
@@ -7682,7 +7851,11 @@ function updateHUD() {
                     code: participantCode(sp),
                     name: sp.driverName || sp.color,
                     pos: null, pts: 0, dnf: false, dns: true
-                })) : [])
+                })) : []),
+                // Saturday, kept. `pole` above is one colour; this is the
+                // whole session - who was where on the grid and on what lap.
+                quali: raceQualiGrid ? raceQualiGrid.rows : null,
+                qualiFrom: raceQualiGrid ? raceQualiGrid.source : null
             });
         }
 
@@ -8259,6 +8432,7 @@ function gameLoop(timestamp) {
         if (typeof track.getBridge === 'function' && track.getBridge()) {
             cars.forEach(car => { if (!track.onBridge(car)) car.draw(ctx); });
             track.drawBridge(ctx);
+            drawTunnelGhosts(ctx, cars);
             cars.forEach(car => { if (track.onBridge(car)) car.draw(ctx); });
         } else {
             cars.forEach(car => car.draw(ctx));
@@ -8343,7 +8517,22 @@ function gameLoop(timestamp) {
             return;
         }
 
-        updatePhysics(dt);
+        // Fast-forward: the same step, run more than once, with the
+        // wall-clock anchors pulled back a step each time so the race clock
+        // keeps up with the simulation. At 1x this is the single call it
+        // always was.
+        const steps = raceSpeedSteps(dt);
+        for (let s = 0; s < steps; s++) {
+            if (s > 0) {
+                const back = dt * 1000;
+                raceStartTime -= back;
+                if (firstFinisherTime) firstFinisherTime -= back;
+                if (vscEndsAt !== null) vscEndsAt -= back;
+                track.currentRaceTime = performance.now() - raceStartTime;
+            }
+            updatePhysics(dt);
+            if (gameState !== 'playing') break;   // somebody took the flag
+        }
         ghostTick();
 
         // The camera follows the physics and precedes the paint: everything
@@ -8399,6 +8588,7 @@ function gameLoop(timestamp) {
         if (bridged) {
             renderSorted.forEach(car => { if (!track.onBridge(car)) car.draw(ctx, true); });
             track.drawBridge(ctx);
+            drawTunnelGhosts(ctx, renderSorted);
             renderSorted.forEach(car => { if (track.onBridge(car)) car.draw(ctx, true); });
             renderSorted.forEach(car => car.drawTags(ctx));
         } else {
@@ -9211,7 +9401,68 @@ function renderSeasonRecap(state, hostEl, title) {
         ' &nbsp;·&nbsp; &#9730; wet race &nbsp;·&nbsp; DNS = Grand Prix skipped' +
         ' &nbsp;·&nbsp; gold = win, green = podium</div>';
 
+    html += renderSeasonQuali(st);
     host.innerHTML = html;
+}
+
+// SATURDAY, in the same shape as Sunday: one row per driver, one column per
+// round, the grid slot in the cell and the lap that earned it in the tooltip.
+//
+// Returns HTML rather than writing it, so it lands inside the same host as the
+// results grid and cannot be left behind when that one is redrawn.
+//
+// Seasons archived before this build have no `quali` on their rounds and get
+// nothing: an empty table saying "no data" is worse than no table, and the
+// grids they were run on genuinely are not recoverable - they were never
+// written down anywhere but the race log, which does not survive a reload.
+function renderSeasonQuali(st) {
+    const races = (st && st.results) || [];
+    const withQ = races.filter(r => Array.isArray(r.quali) && r.quali.length);
+    if (!withQ.length) return '';
+
+    const order = Object.keys(st.points).sort((a, b) => st.points[b] - st.points[a]);
+    const ms = (v) => (v === null || v === undefined) ? null : (v / 1000).toFixed(3);
+
+    let html = '<h2 style="margin:18px 0 8px;">Qualifying</h2>' +
+        '<div style="overflow-x:auto;"><table class="season-table"><thead><tr>' +
+        '<th style="text-align:left;">Driver</th>';
+    races.forEach(r => {
+        const q = Array.isArray(r.quali) ? r.quali : null;
+        const pole = q && q.length && q[0].ms !== null ? ms(q[0].ms) : null;
+        html += `<th title="${exEsc(trackLabel(r.track))}` +
+                (r.qualiFrom ? ' — grid from ' + exEsc(r.qualiFrom) : '') +
+                (pole ? ' — pole ' + pole : '') + '">' + trackCode(r.track) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    for (const color of order) {
+        const p = (st.participants || []).find(x => x.color === color);
+        const label = p ? participantCode(p) : color.slice(0, 3).toUpperCase();
+        html += `<tr><td style="text-align:left;white-space:nowrap;">` +
+                `<span class="tt-chip" style="background:${color};display:inline-block;` +
+                `vertical-align:middle;margin-right:6px;"></span>` +
+                `<b style="color:${color};">${label}</b></td>`;
+        for (const r of races) {
+            const q = Array.isArray(r.quali) ? r.quali : null;
+            const e = q && q.find(x => x.color === color);
+            if (!e) { html += '<td class="sr-none">&ndash;</td>'; continue; }
+            const t = ms(e.ms);
+            // the gap to pole, which is the number a grid is actually read by
+            const pole = q.length && q[0].ms !== null ? q[0].ms : null;
+            const gap = (pole !== null && e.ms !== null && e.ms > pole)
+                ? ' (+' + ((e.ms - pole) / 1000).toFixed(3) + ')' : '';
+            const tip = t ? t + gap + (e.tyre ? ' on ' + e.tyre : '') : 'no time set';
+            html += `<td class="${e.pos === 1 ? 'sr-win' : (e.pos <= 3 ? 'sr-pod' : '')}"` +
+                    ` title="${exEsc(tip)}">${e.pos}</td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>' +
+        '<div style="font-size:11px;opacity:0.65;margin-top:6px;">' +
+        'Grid slot per round — hover a cell for the lap, the gap to pole and the ' +
+        'compound it was set on; hover a column head for where that grid came from.' +
+        '</div>';
+    return html;
 }
 
 // ---------------------------------------------------------------------------

@@ -2393,13 +2393,25 @@ class SegmentedTrack {
         const hl = b.half;                    // along the buried road
         const hw = this.wallRadius();         // its half width
 
-        // 1. the ground the upper road stands on, laid over the lower one
+        // 1. the ground the upper road stands on, laid over the lower one -
+        //    in three bands, not one: the strip directly over the buried ROAD
+        //    is left a shade thinner than the shoulders either side, so the
+        //    line of the tunnel reads through the grass. The cars in it are
+        //    NOT left to show through this - the upper road is rebuilt
+        //    opaquely on top in step 3, which would bury them again whatever
+        //    this alpha said. main.js draws them back over the finished
+        //    crossing as shapes instead; see the ghost pass there.
         ctx.save();
         ctx.translate(b.x, b.y);
         ctx.rotate(b.uAngle);
-        ctx.globalAlpha = 0.9;
-        ctx.fillStyle = this.vergeColour || '#2e7d32';
-        ctx.fillRect(-hl, -hw, hl * 2, hw * 2);
+        const ground = this.vergeColour || '#2e7d32';
+        const tw = this.trackWidth;
+        ctx.fillStyle = ground;
+        ctx.globalAlpha = 0.98;                       // the shoulders: earth
+        ctx.fillRect(-hl, -hw, hl * 2, hw - tw);
+        ctx.fillRect(-hl, tw, hl * 2, hw - tw);
+        ctx.globalAlpha = 0.9;                        // over the road itself
+        ctx.fillRect(-hl, -tw, hl * 2, tw * 2);
         ctx.globalAlpha = 1;
 
         // 2. the portals. The mouth is dark on the OUTSIDE of the fill - on

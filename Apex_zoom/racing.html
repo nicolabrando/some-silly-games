@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom40">
+    <link rel="stylesheet" href="style.css?v=zoom42">
 </head>
 <body>
     <div id="game-container">
@@ -41,6 +41,9 @@
                                 <div id="dnf-timer" style="visibility: hidden;"></div>
                                 <div id="weather-indicator"></div>
                                 <button id="stopSessionBtn" class="hud-btn" style="display: none; background: #d84315;">Stop</button>
+                                <!-- Fast-forward. Only offered once your own
+                                     race is over: see raceSpeedEligible(). -->
+                                <button id="ffwdBtn" class="hud-btn" style="display: none; background: #00695c;">&#9193;&nbsp;2&times;</button>
                                 <button id="pauseBtn" class="hud-btn" style="background: #455a64;">&#9208;</button>
                                 <button id="quitBtn" class="hud-btn">Quit</button>
                             </div>
@@ -345,7 +348,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom40 &nbsp;·&nbsp; 27 Aug 2026</div>
+                <div id="build-stamp">build zoom42 &nbsp;·&nbsp; 31 Aug 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -632,12 +635,17 @@
                                 every championship you have run &mdash; filed from its first Grand Prix,
                                 so the ones you walk away from are there too. Open one for the full
                                 standings with starts, wins, podiums, poles, fastest laps, retirements
-                                and best finish per driver, plus the round-by-round grid; the strip at
+                                and best finish per driver, plus the round-by-round grid and a
+                                <b>Qualifying</b> grid beneath it &mdash; where every driver started
+                                each round, with the lap, the gap to pole and the compound in the
+                                tooltip; the strip at
                                 the top adds it all up across your career. <b>Download everything</b>
-                                writes a .txt that is both the race log and a save: <b>Load a file</b>,
+                                writes a .txt that is both the race log and a save &mdash; every season,
+                                every personal best and every ghost lap on the machine: <b>Load a file</b>,
                                 on that screen or on the Race Log, reads it back on any machine and
                                 merges it with what is already there &mdash; the same file twice changes
-                                nothing. <b>Older logs work too</b>: a .txt written before any of this
+                                nothing. Records and ghosts merge on the stopwatch, so the quicker lap
+                                wins whichever machine set it. <b>Older logs work too</b>: a .txt written before any of this
                                 existed has no data block, so the report itself is read and the seasons
                                 are rebuilt from the classifications in it. Those are marked
                                 <i>from a log</i>, because a log never carried the drivers&rsquo;
@@ -1013,12 +1021,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom40"></script>
-    <script src="track.js?v=zoom40"></script>
-    <script src="lines.js?v=zoom40"></script>
-    <script src="car.js?v=zoom40"></script>
-    <script src="ai.js?v=zoom40"></script>
-    <script src="audio.js?v=zoom40"></script>
+    <script src="racelog.js?v=zoom42"></script>
+    <script src="track.js?v=zoom42"></script>
+    <script src="lines.js?v=zoom42"></script>
+    <script src="car.js?v=zoom42"></script>
+    <script src="ai.js?v=zoom42"></script>
+    <script src="audio.js?v=zoom42"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1112,6 +1120,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom40"></script>
+    <script src="main.js?v=zoom42"></script>
 </body>
 </html>
