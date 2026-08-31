@@ -350,6 +350,24 @@ let YAW_CAP = 2.0;
 // of the excess, scaled by SLIDE_WEAR - see the wear block in update().
 let SLIDE_FREE = 0.20;
 let SLIDE_WEAR = 30;
+
+// ---------------------------------------------------------------------------
+//  GRAVITY ACROSS THE ROAD - camber, and nothing else.
+//
+//  RELIEF_BANK 200 at full camber is 200 px/s^2 sideways, against enginePower
+//  300 and brakingPower 150. The lateral force a tyre actually generates
+//  through an ordinary corner is |lateralSpeed| x 3.5, which runs 100-250 in
+//  this model - the 1200 grip figure is a CLAMP that binds only in a slide -
+//  so a fully banked corner is worth roughly one tyre's worth of extra
+//  cornering. Enough to change the line you take; not so much that a corner
+//  drives itself.
+//
+//  There was a RELIEF_G here too, gravity along the road rather than across
+//  it: a gradient. It was removed with the circuit that used it. It worked -
+//  a one-in-six descent took a third of the brakes away exactly as the
+//  arithmetic said it would - and that was the problem. Camber gives
+//  something back; a gradient only ever takes.
+const RELIEF_BANK = 200;
 // Quanto l'acqua ferma puo' abbassare il tetto d'imbardata: e' un PAVIMENTO
 // sul fattore della pozzanghera. 0 = l'acqua lo abbassa quanto vuole (com'era
 // prima del 08/26), 1 = non lo abbassa affatto. Vedi la nota al tetto in
@@ -1326,9 +1344,20 @@ class Car {
             this.inputs.brake = 0;
         }
         
+        // --- Camber ----------------------------------------------------
+        // Null on every circuit with no banking, which is all but one of
+        // them, and one array lookup on the other: see track.js, CAMBER. Read
+        // here, before the forces, and used once, after the grip clamp below.
+        const relief = (typeof track.reliefFor === 'function') ? track.reliefFor(this) : null;
+        // Nobody is pushed about on the grid. A car held at the lights has its
+        // inputs off and drag is proportional to speed, so at rest there is
+        // nothing to balance a sideways force - and moving before the lights
+        // go out is a jump-start penalty.
+        const onTheGrid = typeof gameState !== 'undefined' && gameState === 'countdown';
+
         // --- Longitudinal forces (Engine, Brakes) ---
         let forwardForce = 0;
-        
+
         // Virtual Safety Car: everyone runs on reduced power while a wreck is
         // being recovered (global set by main.js).
         const vsc = (typeof vscPowerFactor !== 'undefined') ? vscPowerFactor : 1;
@@ -1640,7 +1669,22 @@ class Car {
         // Apply lateral force
         this.velocity.x += rightX * lateralForce * dt;
         this.velocity.y += rightY * lateralForce * dt;
-        
+
+        // ...and then the camber, which is gravity across the road rather
+        // than the tyres' doing - so it goes on AFTER the grip clamp, not
+        // through it. A banked corner does not give the tyre more grip; it
+        // holds the car in with a force the tyre never has to find, which is
+        // exactly why a banked corner can be taken faster than the same
+        // radius flat. Off-camber is the same force pushing the other way,
+        // and the car runs wide whatever the driver does with the wheel.
+        this.bankNow = 0;
+        if (relief && (relief.bx || relief.by) && !onTheGrid) {
+            this.bankNow = relief.bank || 0;
+            this.velocity.x += relief.bx * RELIEF_BANK * dt;
+            this.velocity.y += relief.by * RELIEF_BANK * dt;
+        }
+
+
         // Apply friction/drag
         let drag = currentFriction;
         if (this.draftStrength > 0) drag *= (1 - 0.30 * this.draftStrength);

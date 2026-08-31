@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom42">
+    <link rel="stylesheet" href="style.css?v=zoom45">
 </head>
 <body>
     <div id="game-container">
@@ -37,6 +37,10 @@
                             <div id="speedometer">0 km/h</div>
                             <div id="lap-timer"></div>
                             <div id="tyre-indicator"></div>
+                            <!-- Only on a circuit with banked corners: which
+                                 way the corner the car is in leans. See
+                                 renderSlopeIndicator(). -->
+                            <div id="slope-indicator" style="display: none;"></div>
                             <div id="hud-right">
                                 <div id="dnf-timer" style="visibility: hidden;"></div>
                                 <div id="weather-indicator"></div>
@@ -121,6 +125,7 @@
                                 <option value="anchor">Anchor</option>
                                 <option value="arrow">Arrow</option>
                                 <option value="boomerang">Boomerang</option>
+                                <option value="cascade">Cascade (XL)</option>
                                 <option value="circle">Circle</option>
                                 <option value="circomassimo">Circus Maximus</option>
                                 <option value="colosso">Colossus (XL)</option>
@@ -133,6 +138,7 @@
                                 <option value="kettle">Kettle</option>
                                 <option value="pentagon">Lotus (XL)</option>
                                 <option value="maratona">Marathon (XL)</option>
+                                <option value="monza">Monza (XL)</option>
                                 <option value="oval" selected>Oval</option>
                                 <option value="peanut">Peanut</option>
                                 <option value="quadrato">Rectangle</option>
@@ -348,7 +354,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom42 &nbsp;·&nbsp; 31 Aug 2026</div>
+                <div id="build-stamp">build zoom45 &nbsp;·&nbsp; 31 Aug 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -456,6 +462,51 @@
                             on one side, a blank on the other &mdash; and puts an ordinary, breathable circuit
                             around them: two long straights and four corners at four different
                             radii.</p>
+                        <p><b>Monza</b> is the first replica of a real circuit: the Autodromo
+                            Nazionale, corner for corner &mdash; the Variante del Rettifilo,
+                            Curva Grande, the Variante della Roggia, both Lesmos, the Serraglio,
+                            the Variante Ascari and the Parabolica, each turning the way and
+                            through the angle it does in life. Two things are deliberately
+                            <i>not</i> to scale. The <b>chicanes</b> are drawn against the width
+                            of the road rather than the width of the map: a real Rettifilo
+                            displaces a car by a fifth of this game's road width, which is a
+                            kink you take flat, so both chicanes are opened out until there is
+                            no line through them that is not a corner. And the <b>radii</b> are
+                            set by the speed each corner is taken at rather than by its metres,
+                            for the same reason in reverse &mdash; Lesmo 1 at its true radius
+                            would be a hairpin. What comes out drives like Monza: two thirds of
+                            the lap flat out, three heavy stops, Ascari taken in fifth, and the
+                            Parabolica tightening all the way to the exit so that getting it
+                            right hands you the tow down the pit straight.</p>
+                        <p><b>Cascade</b> is the circuit with the banked corners. Twelve
+                            corners on a flowing lap, nothing tighter than a medium radius, no
+                            hairpins and no braking zone that is a trap &mdash; and six of the
+                            twelve are <b>banked into the turn</b>. That is worth something real:
+                            a road that leans the way you are turning holds the car in with a
+                            force the tyres never have to find, so a banked corner is quicker
+                            than its radius says and rewards you for committing to it instead of
+                            punishing you. The <b>Carousel</b> at T4 is 110 degrees of it at
+                            nearly full camber; T9 is long and leant on hard; T1, T6, T10 and T12
+                            are lighter. The layout is four corner complexes &mdash;
+                            right, left, right &mdash; hung on the four corners of the lap, so
+                            the road is busy without the circuit sprawling.</p>
+                        <p><b>Reading it.</b> Camber is the least visible thing on a circuit seen
+                            from directly above, so a banked corner says it three ways at once:
+                            the whole corner is washed in <b style="color:#69f0ae;">green</b>, its
+                            high edge is lit and its low edge shadowed &mdash; which is what a
+                            tilted surface looks like from up here &mdash; and the little arrows
+                            across the road point the way water would run off it, which is the
+                            drawing convention for a cross-slope and needs no legend. A sign on
+                            the verge gives the number. And because at racing zoom you can only
+                            see a tenth of the circuit at a time, the readout under the tyre bar
+                            carries the same thing for the corner you are actually in.</p>
+                        <p><i>Cascade was a valley first</i>: a one-in-six descent into a slow
+                            corner, a long climb, and corners cambered both ways. Every
+                            measurement said it worked and it was horrible to drive &mdash;
+                            gravity fighting your brakes at the bottom of a drop, and a corner
+                            tipped away from you at the end of it, are things you can do nothing
+                            about except arrive slower next time. The hills and the off-camber
+                            corners went; the half that gives something back stayed.</p>
                         <p><b>Lungolago</b> and <b>Riviera</b> are the water pair. Lungolago
                             wraps a lake clockwise and for half the lap the road is the shore:
                             the south run is a <b>causeway</b> with the lake past one wall and a
@@ -1021,12 +1072,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom42"></script>
-    <script src="track.js?v=zoom42"></script>
-    <script src="lines.js?v=zoom42"></script>
-    <script src="car.js?v=zoom42"></script>
-    <script src="ai.js?v=zoom42"></script>
-    <script src="audio.js?v=zoom42"></script>
+    <script src="racelog.js?v=zoom45"></script>
+    <script src="track.js?v=zoom45"></script>
+    <script src="lines.js?v=zoom45"></script>
+    <script src="car.js?v=zoom45"></script>
+    <script src="ai.js?v=zoom45"></script>
+    <script src="audio.js?v=zoom45"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1120,6 +1171,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom42"></script>
+    <script src="main.js?v=zoom45"></script>
 </body>
 </html>

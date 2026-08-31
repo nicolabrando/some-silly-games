@@ -2102,6 +2102,8 @@ function makeTrackRaw(trackType) {
         case 'dedalo':       return new DedaloTrack();
         case 'vallone':      return new ValloneTrack();
         case 'puzzle':       return new PuzzleTrack();
+        case 'monza':        return new MonzaTrack();
+        case 'cascade':      return new CascadeTrack();
         default:             return new OvalTrack();
     }
 }
@@ -2397,6 +2399,7 @@ function startQualifying(forceTrackType) {
     weatherIndicator.innerText = isRaining
         ? (wetLevel === 'soaked' ? 'Soaked 🌧️' : 'Damp 🌦️') : 'Dry ☀️';
     renderTyreIndicator(null);
+    renderSlopeIndicator(null);
 
     // AFTER the weather is decided, not before. This used to sit above the
     // block that sets isRaining, so a session got the PREVIOUS session's
@@ -2528,6 +2531,45 @@ function renderTyreIndicator(car) {
         (left * 100).toFixed(0) + '%;background:' + col + ';"></span></span>' +
         '<span id="tyre-wear-pct" style="color:' + col + ';">' +
         (left * 100).toFixed(0) + '%</span>';
+}
+
+// ---------------------------------------------------------------------------
+//  WHICH WAY THIS CORNER IS LEANING
+//
+//  The paint on a banked corner says it three ways - a wash, a lit edge and a
+//  shadowed one, and ticks pointing down the cross-slope - and at racing zoom
+//  you can see about a tenth of the circuit at a time, through a car. So the
+//  same fact gets a readout, in the same green the road is painted in.
+//
+//  Hidden entirely on the thirty-one circuits with no banking: an indicator
+//  that is blank most of the time is a thing to learn to ignore.
+//
+//  (It used to carry a gradient too. That went with the hills - see the note
+//  at CascadeTrack in track.js.)
+// ---------------------------------------------------------------------------
+const SLOPE_IN = '#69f0ae', SLOPE_OUT = '#ff5252';
+function renderSlopeIndicator(car) {
+    const el = document.getElementById('slope-indicator');
+    if (!el) return;
+    if (!car || !track || typeof track.hasRelief !== 'function' || !track.hasRelief()) {
+        el.style.display = 'none';
+        return;
+    }
+    el.style.display = 'flex';
+    const b = car.bankNow || 0;
+    if (Math.abs(b) < 0.25) {
+        el.innerHTML = '<span class="sl-pip sl-flat">&mdash;</span>' +
+                       '<span class="sl-num">flat</span>';
+        return;
+    }
+    const col = b > 0 ? SLOPE_IN : SLOPE_OUT;
+    // the bar grows with the camber, so a glance is enough without reading
+    const w = Math.min(100, Math.abs(b) * 100);
+    el.innerHTML =
+        '<span class="sl-pip" style="color:' + col + ';">&#9679;</span>' +
+        '<span class="sl-bank" style="color:' + col + ';border-color:' + col + ';">' +
+        (b > 0 ? 'BANKED +' : 'OFF-CAMBER \u2212') + '</span>' +
+        '<span class="sl-bar"><span style="width:' + w + '%;background:' + col + ';"></span></span>';
 }
 
 // ===========================================================================
@@ -3028,7 +3070,16 @@ const CHASSIS_PACE = {
     onda: { best: 'ridge', g: '1b4f6sm', pct: { aero: 0.7, bolt: 0.4, ridge: 0, torque: 0.4 } },
     dedalo: { best: 'bolt', g: '1ecq16x', pct: { aero: 1.9, bolt: 0, ridge: 0.1, torque: 0.4 } },
     vallone: { best: 'ridge', g: '1nxegx', pct: { aero: 0.9, bolt: 0.1, ridge: 0, torque: 0.4 } },
-    puzzle: { best: 'ridge', g: '1fe3bvd', pct: { aero: 0.4, bolt: 0.2, ridge: 0, torque: 0.5 } }
+    puzzle: { best: 'ridge', g: '1fe3bvd', pct: { aero: 0.4, bolt: 0.2, ridge: 0, torque: 0.5 } },
+    // The two circuits Nicola asked for WITHOUT a balance brief - "preoccupati
+    // solo di farlo fedele" and "non preoccuparti del bilanciamento" - and both
+    // duly have opinions. Monza is the temple of speed and rewards the low-drag
+    // car by 3.2% over the high-downforce one, which is what the real place
+    // does. Cascade came in at 6.0% when it was a valley - a long climb is a
+    // long time to carry wing you cannot use - and is 4.1% now that the hills
+    // are gone: still the low-drag car, but by a normal margin.
+    monza: { best: 'bolt', g: '1odx0wd', pct: { aero: 3.2, bolt: 0, ridge: 1.1, torque: 1.2 } },
+    cascade: { best: 'bolt', g: 'pup2yo', pct: { aero: 4.1, bolt: 0, ridge: 1.3, torque: 0.8 } }
 };
 
 function chassisPaceFor(key) {
@@ -3053,7 +3104,8 @@ const TRACK_LABELS = {
     pettine: 'Comb', thunder: 'Thunder', crown: 'Crown',
     maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka',
     lungolago: 'Lungolago', riviera: 'Riviera',
-    onda: 'Onda', dedalo: 'Dedalo', vallone: 'Vallone', puzzle: 'Puzzle'
+    onda: 'Onda', dedalo: 'Dedalo', vallone: 'Vallone', puzzle: 'Puzzle',
+    monza: 'Monza', cascade: 'Cascade'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -3071,7 +3123,8 @@ const TRACK_CODES = {
     pettine: 'COM', thunder: 'THU', crown: 'CRW',
     maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ',
     lungolago: 'LUN', riviera: 'RIV',
-    onda: 'OND', dedalo: 'DED', vallone: 'VAL', puzzle: 'PZL'
+    onda: 'OND', dedalo: 'DED', vallone: 'VAL', puzzle: 'PZL',
+    monza: 'MNZ', cascade: 'CSC'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -6246,6 +6299,7 @@ function startGame(forceTrackType = null) {
     } else {
         renderTyreIndicator(playerCar || cars[0] || null);
     }
+    renderSlopeIndicator(playerCar || cars[0] || null);
 
     // ---- open the log for this session ----------------------------------
     RaceLog.start({
@@ -7336,6 +7390,7 @@ function updateHUD() {
     const hc = hudCar();
     if (hc && !twoPlayer) {
         renderTyreIndicator(hc);
+        renderSlopeIndicator(hc);
         if (raceMode === 'practice') {
             lapCounter.innerText = `Practice — lap ${hc.lap + 1}`;
         } else if (raceMode === 'qualifying') {
@@ -8700,7 +8755,11 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      'onda', 'dedalo', 'vallone',
                      // two leaves of the rosa camuna, on a circuit that
                      // gives you somewhere to breathe between them
-                     'puzzle'];
+                     'puzzle',
+                     // and the first replica of a real circuit: see MonzaTrack
+                     'monza',
+                     // and the one with hills in it
+                     'cascade'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:

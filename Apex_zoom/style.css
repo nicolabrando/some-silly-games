@@ -2085,3 +2085,47 @@ button.menu-danger {
     color: #111;
     text-align: center;
 }
+
+/* ---------------------------------------------------------------------------
+   THE SLOPE READOUT
+   Only present on a circuit with relief (see renderSlopeIndicator). Four
+   colours, and they are the SAME four the circuit is painted in - amber up,
+   cyan down, green for camber that helps, red for camber that does not - so
+   the HUD and the road agree without anybody having to learn a legend.
+   --------------------------------------------------------------------------- */
+#slope-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+    margin-top: 3px;
+}
+#slope-indicator .sl-pip { font-size: 15px; line-height: 1; }
+#slope-indicator .sl-pip.sl-flat { color: rgba(255, 255, 255, 0.45); }
+#slope-indicator .sl-num {
+    font-weight: 700;
+    min-width: 34px;
+    color: rgba(255, 255, 255, 0.55);
+}
+#slope-indicator .sl-bar {
+    display: inline-block;
+    width: 54px;
+    height: 7px;
+    border-radius: 4px;
+    background: #14181c;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
+    overflow: hidden;
+    vertical-align: middle;
+}
+#slope-indicator .sl-bar > span { display: block; height: 100%; }
+#slope-indicator .sl-bank {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.4px;
+    padding: 2px 6px;
+    border: 1.5px solid;
+    border-radius: 5px;
+    background: rgba(6, 10, 16, 0.75);
+    white-space: nowrap;
+}

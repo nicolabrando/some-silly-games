@@ -359,6 +359,27 @@ const aiTopOf = (car) => (car && car.enginePower && car.baseFriction)
     ? car.enginePower / car.baseFriction : AI_TOP_SPEED;
 const aiGripOf = (car) => (car && car.baseGrip) || AI_BASE_GRIP;
 const AI_CORNER_SAFETY = 0.90; // never ask for more than 90% of the theoretical limit
+// The camber constant, which MUST be the same number car.js uses: an AI that
+// thinks the road leans more than it does commits to a corner that is not
+// there. Same failure mode as WET_GRIP, which was wrong here for weeks and had
+// the field driving past the limit in every wet corner - so this reads the
+// car's own value when car.js is loaded and only falls back if it is not.
+const AI_RELIEF_BANK = (typeof RELIEF_BANK !== 'undefined') ? RELIEF_BANK : 200;
+// ...and a direct term for camber on top of the grip one, because in this
+// model the STEERING RATE is what usually binds and camber does not touch it:
+// without this a banked corner would be worth nothing to the AI and an
+// off-camber one would be free.
+//
+// ASYMMETRIC, and the second number is now unused: no circuit has a negative
+// bank any more (see the note at CascadeTrack). It is kept because the sign is
+// honoured everywhere else, and because it records something measured: slowing
+// the entry barely touches an off-camber slide. The sideways share of a car's
+// speed through a -0.85 corner was 28-30% at a caution of 0.10 and still 28%
+// at 0.30, because the slide is not an entry-speed mistake - it is 200 px/s2
+// of gravity pushing the car outward for as long as the corner lasts, and no
+// approach speed makes that go away. Which is most of why off-camber went.
+const AI_BANK_GAIN = 0.10;      // credit for a road that leans in
+const AI_BANK_CAUTION = 0.22;   // and respect for one that leans out
 // Running out of road (block 5): how much of the half-width a car may use
 // before its error is turned away - 14px leaves the body of a sideways car
 // inside the white line - and the shortest distance the turning-away is
@@ -797,13 +818,29 @@ class AI {
             // car.js was set.
             if (AI.driftSend && car.tyre && car.tyre.loose && vSteer > AI.driftSendFrom)
                 vSteer *= 1 + AI.driftSend;
-            const vGrip = Math.sqrt(latLimit * tyreG * R);
+            // CAMBER. Banked into the corner, gravity holds the car in and
+            // the tyre has less to find, so the same radius can be taken
+            // faster; off-camber the same slope takes it away again. It is
+            // added to the grip limit rather than multiplied through it,
+            // because that is what it physically is - a force the tyre never
+            // has to generate - and the steering-rate limit is deliberately
+            // left alone: the nose still has to be pointed round the corner
+            // however much the road is leaning.
+            const bank = nd.bank || 0;
+            const vGrip = Math.sqrt(Math.max(60, latLimit * tyreG + AI_RELIEF_BANK * bank) * R);
             const cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
                                 Math.max(this.p.cornerFactor, AI_ATTACK_CORNER_CAP));
             // The tabulated ceiling has to move with the hook too, or it clamps
             // the gain straight back off again.
             const tabF = tyreF * tyreHookAt(car.tyre, vSteer);
-            return Math.min(nd.vCorner * 1.35 * tabF, vSteer, vGrip) * AI_CORNER_SAFETY * cf;
+            // ...and a small direct term on top, because on this circuit the
+            // steering rate is what usually binds, and a limit the camber
+            // never touches would make a banked corner worth nothing to the
+            // AI and an off-camber one free. Measured, not guessed: see
+            // test_relief.js, which drives both and compares.
+            const bankF = 1 + (bank > 0 ? AI_BANK_GAIN : AI_BANK_CAUTION) * bank;
+            return Math.min(nd.vCorner * 1.35 * tabF, vSteer, vGrip) *
+                   AI_CORNER_SAFETY * cf * bankF;
         };
 
         // Under the VSC everyone has the same reduced power, so the AI must

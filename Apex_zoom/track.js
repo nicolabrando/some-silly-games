@@ -1301,6 +1301,97 @@ class SegmentedTrack {
         return { x: seg.cx + seg.r * Math.cos(a), y: seg.cy + seg.r * Math.sin(a) };
     }
 
+    // =====================================================================
+    //  CAMBER
+    //  One property on a segment - `bank`, on ARCS only, signed and about
+    //  0..1 - and one force behind it: gravity across a road that is not
+    //  level. POSITIVE means banked INTO the corner: the road leans the way
+    //  you are turning and gravity holds the car on it, which is why a banked
+    //  corner is taken faster than its radius says. It is a force the TYRES
+    //  NEVER HAVE TO FIND, so it does not come out of the grip budget; see
+    //  the short block in car.js update(), after the grip clamp, which is the
+    //  whole of the physics.
+    //
+    //  There used to be a `climb` beside it, and a gradient resolved from the
+    //  same gravity along the road instead of across it. It worked exactly as
+    //  designed and Nicola could not drive the circuit that used it: a
+    //  one-in-six descent takes a third of the brakes away at the moment they
+    //  are needed, and there is nothing the driver can do about that except
+    //  arrive slower next time. Camber is the half that GIVES something back,
+    //  so camber is the half that stayed. Negative camber went with the
+    //  hills, for the same reason - it is the same "the car does the opposite
+    //  of what you ask" - though the sign is still honoured everywhere below
+    //  in case a circuit ever wants one.
+    // =====================================================================
+    reliefProfile() {
+        if (this._reliefP) return this._reliefP;
+        this._reliefP = { any: this.segments.some(s => s.bank) };
+        return this._reliefP;
+    }
+
+    hasRelief() { return this.reliefProfile().any; }
+
+    //  Baked onto the racing line's nodes, so reading it costs nothing per
+    //  frame: a car already knows which node it is at (car._nodeIdx).
+    //
+    //  SMOOTHED, because bank belongs to a SEGMENT and would otherwise step at
+    //  the joint - a banked corner would open with a sideways shove instead of
+    //  leaning in. 50px of window: four car lengths, long enough to feel like
+    //  road and short enough that the corner still has edges.
+    _applyRelief(nodes) {
+        const N = nodes.length;
+        for (const n of nodes) { n.bank = 0; n.bx = 0; n.by = 0; }
+        if (!this.reliefProfile().any || !N) return;
+        const ds = N > 1 ? Math.max(1, nodes[1].s - nodes[0].s) : 8;
+        const rawB = new Float64Array(N);
+        const sx = new Float64Array(N), sy = new Float64Array(N);
+        for (let i = 0; i < N; i++) {
+            const seg = this.segments[nodes[i].si || 0];
+            const bank = (seg && seg.type === 'arc' && seg.bank) || 0;
+            rawB[i] = bank;
+            // Which way a positive camber pushes: toward the centre of the
+            // arc, which is into the corner. A straight has no "into", so
+            // bank on one is ignored by construction.
+            if (bank) {
+                const dx = seg.cx - nodes[i].cx, dy = seg.cy - nodes[i].cy;
+                const L = Math.hypot(dx, dy) || 1;
+                sx[i] = (dx / L) * bank;
+                sy[i] = (dy / L) * bank;
+            }
+        }
+        const smooth = (src, halfPx) => {
+            const k = Math.max(1, Math.round(halfPx / ds));
+            const out = new Float64Array(N);
+            for (let i = 0; i < N; i++) {
+                let sum = 0;
+                for (let o = -k; o <= k; o++) sum += src[(i + o + N * 8) % N];
+                out[i] = sum / (2 * k + 1);
+            }
+            return out;
+        };
+        const bm = smooth(rawB, 50);
+        // the DIRECTION is smoothed as a vector too, so the push swings round
+        // the corner instead of snapping between normals at the joint
+        const bx = smooth(sx, 50), by = smooth(sy, 50);
+        for (let i = 0; i < N; i++) {
+            nodes[i].bank = bm[i];
+            nodes[i].bx = bx[i];
+            nodes[i].by = by[i];
+        }
+    }
+
+    // What a car needs this frame: one array lookup of the node it is already
+    // tracking. Null on a circuit with no banking, which is every circuit but
+    // one.
+    reliefFor(car) {
+        if (!this.hasRelief()) return null;
+        const line = this._lineStd;
+        if (!line) return null;
+        const i = car._nodeIdx;
+        if (i === undefined || i === null) return null;
+        return line.nodes[i] || null;
+    }
+
     // Analytic lap time of a candidate line: sum of ds / attainable speed.
     // Kept for tools; the line itself is now chosen by _proxyTime (a speed
     // profile with braking, acceleration and the slip drag) and, when the
@@ -1514,17 +1605,47 @@ class SegmentedTrack {
     _searchRacingLine(base) {
         const W = this.trackWidth;
         const cands = [];
+        // ---- A WALL-CLOCK BUDGET, and the reason for it ------------------
+        //  This runs SYNCHRONOUSLY on the main thread, and its cost grows with
+        //  the node count: a 7900px circuit is 984 nodes, and searching it
+        //  took 10.2 seconds in Chromium - longer in Firefox, which is what
+        //  Nicola actually plays in, and long enough that the browser decides
+        //  the tab has hung and offers to kill it. It did. Twice, on Monza,
+        //  before the race had started.
+        //
+        //  Normally this never runs at all: every shipped circuit has its line
+        //  in lines.js and the search only happens for a circuit that has been
+        //  edited since - or added since, which is exactly the state Monza and
+        //  Cascade were in on the day they shipped. So the search is now
+        //  BUDGETED rather than made cheaper: candidates are tried in order of
+        //  value and the search stops when the budget is spent, always keeping
+        //  at least the first relaxation so there is always a line. The cost of
+        //  stopping early is a fraction of a per cent of lap time, on a circuit
+        //  that has no shipped line anyway; the cost of not stopping is the
+        //  browser.
+        const t0 = (typeof performance !== 'undefined' && performance.now)
+            ? performance.now() : Date.now();
+        const spent = () => ((typeof performance !== 'undefined' && performance.now)
+            ? performance.now() : Date.now()) - t0;
+        const BUDGET = 700;                      // ms
+        // ...unless a tool has asked for the full search on purpose, which is
+        // what genlines.js is for: it wants the best line, not a fast answer.
+        const budgeted = !(typeof RACING_LINE_JUDGE_REPS !== 'undefined' &&
+                           RACING_LINE_JUDGE_REPS > 0);
+
         // the three relaxation depths the old selection chose between
         for (const sweeps of [600, 1000, 1800]) {
             const maxOff = Math.max(3, W - 20);
             const alpha = this._relaxAlpha(base, sweeps, maxOff);
             cands.push({ name: 'relax' + sweeps, alpha: alpha, maxOff: maxOff,
                          proxy: this._proxyTime(base, alpha) });
+            if (budgeted && spent() > BUDGET) break;
         }
         // optimised from the best relaxation, at three margins from the edge
         let start = cands[0];
         for (const c of cands) if (c.proxy < start.proxy) start = c;
         for (const margin of RACING_LINE_MARGINS) {
+            if (budgeted && spent() > BUDGET) break;
             const maxOff = Math.max(3, W - margin);
             const r = this._optimizeAlpha(base, start.alpha, maxOff, {});
             cands.push({ name: 'opt' + margin, alpha: r.alpha, maxOff: maxOff, proxy: r.T });
@@ -1566,11 +1687,21 @@ class SegmentedTrack {
     _lineBase() {
         if (this._lineBaseCache) return this._lineBaseCache;
         // ---- 1. dense polyline of the centre line -----------------------
+        // Each dense point remembers WHICH segment it came from and how far
+        // along it: relief (climb, camber) is declared per segment, and this
+        // walk is the one place that correspondence is exact and free. Doing
+        // it afterwards would mean a nearest-segment search per node, which
+        // is both slower and ambiguous where two roads run close together.
         const dense = [];
-        for (const seg of this.segments) {
+        for (let si = 0; si < this.segments.length; si++) {
+            const seg = this.segments[si];
             const len = this._segLength(seg);
             const n = Math.max(2, Math.ceil(len / 2));
-            for (let i = 0; i < n; i++) dense.push(this._segPoint(seg, i / n));
+            for (let i = 0; i < n; i++) {
+                const p = this._segPoint(seg, i / n);
+                p.si = si; p.st = i / n;
+                dense.push(p);
+            }
         }
         const M = dense.length;
         const cum = new Float64Array(M + 1);
@@ -1593,7 +1724,8 @@ class SegmentedTrack {
             const t = segLen > 1e-9 ? (s - cum[j]) / segLen : 0;
             const a = dense[j];
             const b = dense[(j + 1) % M];
-            nodes.push({ cx: a.x + (b.x - a.x) * t, cy: a.y + (b.y - a.y) * t, s: s });
+            nodes.push({ cx: a.x + (b.x - a.x) * t, cy: a.y + (b.y - a.y) * t, s: s,
+                         si: a.si, st: a.st });
         }
         // centre-line tangents / normals
         for (let i = 0; i < N; i++) {
@@ -1607,6 +1739,7 @@ class SegmentedTrack {
             nodes[i].nx = -ty / L;   // left/right normal (unit)
             nodes[i].ny = tx / L;
         }
+        this._applyRelief(nodes);
         this._lineBaseCache = { nodes: nodes, count: N, ds: ds, length: total };
         return this._lineBaseCache;
     }
@@ -2358,10 +2491,162 @@ class SegmentedTrack {
         ctx.strokeStyle = '#555';
         ctx.stroke();
 
+        // 4. Camber. Nothing at all on a circuit with no banking; on one
+        //    with it, the difference between a corner you can read from above
+        //    and a corner you cannot.
+        this.drawRelief(ctx);
+
         this.drawStartLine(ctx);
         this.drawBarrier(ctx);
         // On top of the asphalt, under the cars.
         this.drawPuddles(ctx);
+    }
+
+    // =====================================================================
+    //  DRAWING A HILL ON A FLAT SCREEN
+    //  The camera looks straight down, so height cannot be drawn as height.
+    //  It has to be drawn as LIGHT, the way a relief map does it: imagine a
+    //  sun low in the north-west and let the ground take the shade it would.
+    //  Three passes, cheap because the whole circuit is pre-rendered once:
+    //
+    //   1. HEIGHT. High ground pale, low ground dark, painted over the verge
+    //      and again, half as strongly, over the asphalt - so the landscape
+    //      reads as landscape and the road still reads as road. A linear
+    //      gradient per segment, since climb is linear within one.
+    //   2. GRADIENT. Chevrons on the verge, pointing UPHILL, spaced closer
+    //      and drawn brighter the steeper it is. This is the one cue that
+    //      says which way is up without ambiguity: shading alone can be read
+    //      as a hill or as a hollow, and a driver arriving at a crest needs
+    //      to know which before they get there, not after.
+    //   3. CAMBER. A pale band along the HIGH edge of a banked corner and a
+    //      dark one along the low edge - the two edges of a tilted surface.
+    //      Positive camber lights the outside (the road leans in, so the
+    //      outside is up); off-camber lights the inside, and looks wrong,
+    //      which is the point.
+    // =====================================================================
+    drawRelief(ctx) {
+        if (!this.reliefProfile().any) return;
+        const segs = this.segments;
+        const tw = this.trackWidth;
+        const gw = Math.max(this.grassWidth, this.barrierRadius());
+        // ONE COLOUR, used by the paint, the sign and the HUD, so that green
+        // means the same thing wherever it is seen. (Red is still here for a
+        // negative bank, which no circuit currently has - see the note at
+        // reliefProfile. If one ever does, it draws itself.)
+        const IN = '105,240,174';
+        const OUT = '255,82,82';
+
+        // ==================================================================
+        //  CAMBER, said three ways at once - because "which way is this
+        //  corner leaning" is the least visible fact on a circuit seen from
+        //  directly above:
+        //    - a colour WASH over the whole corner;
+        //    - the two edges lit and shadowed, which is what a tilted surface
+        //      looks like from above;
+        //    - and TICKS across the road pointing DOWNHILL across it, the way
+        //      water would run off, which is the drawing convention for a
+        //      cross-slope and needs no legend at all.
+        // ==================================================================
+        ctx.save();
+        for (const seg of segs) {
+            const bank = seg.bank || 0;
+            if (!bank || seg.type !== 'arc') continue;
+            const k = Math.min(1, Math.abs(bank));
+            const col = bank > 0 ? IN : OUT;
+
+            // the wash
+            ctx.beginPath();
+            ctx.arc(seg.cx, seg.cy, seg.r, seg.start, seg.end, seg.ccw);
+            ctx.lineWidth = tw * 2;
+            ctx.lineCap = 'butt';
+            ctx.strokeStyle = 'rgba(' + col + ',' + (0.10 + 0.16 * k).toFixed(3) + ')';
+            ctx.stroke();
+
+            // lit high edge, shadowed low edge
+            const bandW = 18;
+            const insideR = seg.r - tw + bandW / 2;
+            const outsideR = seg.r + tw - bandW / 2;
+            const lowR = bank > 0 ? insideR : outsideR;
+            const highR = bank > 0 ? outsideR : insideR;
+            for (const [rad, style] of [[lowR, 'rgba(2,8,16,' + (0.30 + 0.30 * k).toFixed(3) + ')'],
+                                        [highR, 'rgba(255,252,235,' + (0.28 + 0.30 * k).toFixed(3) + ')']]) {
+                if (rad <= 2) continue;
+                ctx.beginPath();
+                ctx.arc(seg.cx, seg.cy, rad, seg.start, seg.end, seg.ccw);
+                ctx.lineWidth = bandW;
+                ctx.strokeStyle = style;
+                ctx.stroke();
+            }
+
+            // the fall line: ticks pointing to the LOW side, with a head on
+            // them, spaced closer the steeper the camber
+            const sw = this._arcSweep(seg);
+            const arcLen = Math.abs(sw) * seg.r;
+            const n = Math.max(2, Math.floor(arcLen / (150 - 70 * k)));
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = 'rgba(' + col + ',' + (0.55 + 0.35 * k).toFixed(2) + ')';
+            ctx.lineWidth = 4.5;
+            const toCentre = bank > 0 ? 1 : -1;      // low side: in if banked, out if not
+            for (let c = 0; c < n; c++) {
+                const a = seg.start + sw * ((c + 0.5) / n);
+                const px = seg.cx + seg.r * Math.cos(a), py = seg.cy + seg.r * Math.sin(a);
+                let ux = seg.cx - px, uy = seg.cy - py;
+                const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
+                const dx = ux * toCentre, dy = uy * toCentre;      // downhill across the road
+                const half = tw * 0.62;
+                const ax = px - dx * half, ay = py - dy * half;    // start on the high side
+                const bx = px + dx * half, by = py + dy * half;    // ...pointing to the low
+                ctx.beginPath();
+                ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+                ctx.stroke();
+                const hx = -dy, hy = dx;
+                ctx.beginPath();
+                ctx.moveTo(bx - dx * 13 + hx * 9, by - dy * 13 + hy * 9);
+                ctx.lineTo(bx, by);
+                ctx.lineTo(bx - dx * 13 - hx * 9, by - dy * 13 - hy * 9);
+                ctx.stroke();
+            }
+        }
+        ctx.restore();
+
+        // ==================================================================
+        //  AND THE SIGN. The paint is a picture; this is the sentence. One
+        //  per banked corner, on the left of travel so the eye learns where
+        //  to look, horizontal rather than laid along the road - half a lap
+        //  runs north-south and a label turned ninety degrees is a label
+        //  nobody takes in at racing speed - and sized in WORLD units so the
+        //  camera magnifies it to about thirty screen pixels at race zoom.
+        // ==================================================================
+        ctx.save();
+        ctx.font = 'bold 17px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const seg of segs) {
+            const bank = seg.bank || 0;
+            if (seg.type !== 'arc' || Math.abs(bank) < 0.4) continue;
+            const p = this._segPoint(seg, 0.5);
+            const q = this._segPoint(seg, 0.52);
+            let hx = q.x - p.x, hy = q.y - p.y;
+            const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
+            const nx = hy, ny = -hx;
+            const off = gw + 24;                 // clear of the road, not over it
+            const x = p.x + nx * off, y = p.y + ny * off;
+            const col = bank > 0 ? IN : OUT;
+            const text = (bank > 0 ? 'BANKED  +' : 'OFF-CAMBER  −') +
+                         (bank > 0 ? Math.round(bank * 100) : '');
+            const w = ctx.measureText(text).width;
+            ctx.fillStyle = 'rgba(6,10,16,0.78)';
+            ctx.strokeStyle = 'rgb(' + col + ')';
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.roundRect(x - w / 2 - 8, y - 13, w + 16, 26, 5);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = 'rgb(' + col + ')';
+            ctx.fillText(text, x, y + 1);
+        }
+        ctx.restore();
     }
     
     // --- THE TUNNEL ------------------------------------------------------
@@ -4143,6 +4428,187 @@ class PuzzleTrack extends SegmentedTrack {
         // 380px along the pit straight: the whole grid forms up behind the
         // line with the last corner well clear of the back row.
         this.startX = 380;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+
+//  MONZA - the Autodromo Nazionale, and the calendar's first replica of a real
+//  circuit drawn from its own map rather than invented.
+//
+//  THE ONE DELIBERATE DISTORTION, because it is the whole design. Every
+//  circuit here is drawn at two scales at once: the LAYOUT is about a pixel to
+//  the metre, while the ROAD is ~104px across for something 12m wide in life -
+//  nine times too wide for the map it sits on. On a sweeper nobody notices. On
+//  a chicane it is fatal: the Variante del Rettifilo displaces a car by 25m,
+//  which at layout scale is a fifth of this road's width, so a SURVEY-faithful
+//  Rettifilo is a kink taken flat and Monza's two heaviest braking zones
+//  simply do not exist. Nicola asked for the opposite - "fai che le chicane
+//  costringano a frenare davvero, non che lascino passare dritti in mezzo" -
+//  so both chicanes are scaled to the ROAD instead: 239px and 190px of
+//  displacement against a player's straight-line budget of about 122 (half the
+//  road, less half a car, plus the kerb, both ways). There is no line through
+//  either of them that is not a corner.
+//
+//  Radii are calibrated the same way, to SPEED rather than to metres: Lesmo 1
+//  is 200 km/h in life, six tenths of Monza's top speed, and its real radius
+//  here would give 146 px/s against a top speed near 380 - a hairpin. So each
+//  corner gets the radius that reproduces its fraction of the lap's top speed,
+//  which is what a corner is to a driver. Everything else is the real circuit:
+//  the corner sequence, every handedness, the angles, and the relative length
+//  of every straight, fitted to the map's own proportions.
+//
+//  THE LAP - four straights with a chicane at the end of three of them:
+//  pit straight, VARIANTE DEL RETTIFILO (T1-T2) right-left and the heaviest
+//  stop on the circuit; CURVA GRANDE (T3), long and nearly flat; VARIANTE
+//  DELLA ROGGIA (T4-T5) left-right, quicker but still a real stop; LESMO 1
+//  (T6) and LESMO 2 (T7), two rights, the second tighter; the SERRAGLIO;
+//  VARIANTE ASCARI (T8-T9-T10) left-right-left, which is NOT a stop - Nicola
+//  asked for "rallentare solo un po' e farla veloce", and at r250/235/245 it
+//  is the fastest chicane on the calendar; the run to the PARABOLICA (T11),
+//  180 degrees that open at 355 and tighten to 175 all the way to the exit.
+//
+//  A closed lap turns 360: Rettifilo +80/-80, Curva Grande +82, Roggia
+//  -50/+50, Lesmo 1 +78, Lesmo 2 +78, Ascari -52/+46/-52, Parabolica +180.
+//  82 + 78 + 78 - 58 + 180 = 360.
+//
+//  The lap runs EASTBOUND down the pit straight, because checkLapCross counts
+//  a lap by crossing startX in +x. Against the maps everyone knows that is the
+//  circuit turned through 180 degrees - a ROTATION, not a mirror, so every
+//  corner keeps its handedness and Monza stays right-handed, as it should.
+//  For the same reason it is not in the mirror list.
+//
+//  Drawn and checked by /root/tools/design_monza.js: closure to the pixel,
+//  corridor separation 309px everywhere, exactly one lap-counter crossing.
+//  Edit that tool, not these numbers.
+class MonzaTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 3400;
+        this.worldH = 1880;
+        // Narrower than the calendar's usual 60: the chicanes are judged
+        // against the road's width, so every pixel of road is a pixel of
+        // straight-lining budget handed back to the player.
+        this.trackWidth = 52;
+        this.grassWidth = 72;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 869, y2: 0 },
+            { type: 'arc', cx: 869, cy: 54, r: 54, start: -1.5708, end: 0.08727, ccw: false },
+            { type: 'line', x1: 922.79, y1: 58.71, x2: 915.82, y2: 138.4 },
+            { type: 'arc', cx: 969.62, cy: 143.11, r: 54, start: 3.22886, end: 1.5708, ccw: true },
+            { type: 'line', x1: 969.62, y1: 197.11, x2: 1412.62, y2: 197.11 },
+            { type: 'arc', cx: 1412.62, cy: 537.11, r: 340, start: -1.5708, end: -0.13963, ccw: false },
+            { type: 'line', x1: 1749.31, y1: 489.79, x2: 1791.06, y2: 786.87 },
+            { type: 'arc', cx: 1875.23, cy: 775.04, r: 85, start: 3.00197, end: 1.74533, ccw: true },
+            { type: 'line', x1: 1860.47, y1: 858.75, x2: 1978.65, y2: 879.59 },
+            { type: 'arc', cx: 1963.89, cy: 963.3, r: 85, start: -1.39626, end: -0.13963, ccw: false },
+            { type: 'line', x1: 2048.06, y1: 951.47, x2: 2107.91, y2: 1377.28 },
+            { type: 'arc', cx: 1981.15, cy: 1395.1, r: 128, start: -0.13963, end: 1.22173, ccw: false },
+            { type: 'line', x1: 2024.93, y1: 1515.38, x2: 1744.9, y2: 1617.3 },
+            { type: 'arc', cx: 1713.44, cy: 1530.85, r: 92, start: 1.22173, end: 2.58309, ccw: false },
+            { type: 'line', x1: 1635.42, y1: 1579.6, x2: 1254.34, y2: 969.75 },
+            { type: 'arc', cx: 1072.01, cy: 1083.68, r: 215, start: 5.72468, end: 4.60767, ccw: true },
+            { type: 'line', x1: 1049.53, y1: 869.86, x2: 950.08, y2: 880.31 },
+            { type: 'arc', cx: 929.18, cy: 681.4, r: 200, start: 1.46608, end: 2.68781, ccw: false },
+            { type: 'line', x1: 749.42, y1: 769.08, x2: 705.58, y2: 679.2 },
+            { type: 'arc', cx: 516.83, cy: 771.26, r: 210, start: 5.8294, end: 4.71239, ccw: true },
+            { type: 'line', x1: 516.83, y1: 561.26, x2: -478.73, y2: 561.26 },
+            { type: 'arc', cx: -478.73, cy: 206.26, r: 355, start: 1.5708, end: 3.31613, ccw: false },
+            { type: 'arc', cx: -656, cy: 175, r: 175, start: 3.31613, end: 4.71239, ccw: false },
+            { type: 'line', x1: -656, y1: 0, x2: 0, y2: 0 }
+        ];
+
+        // 60px into the pit straight. The home straight is collinear with it,
+        // so the grid forms up on 716px of unbroken road behind the line, with
+        // 869 ahead of it before the car has to stop for the Rettifilo.
+        this.startX = 60;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+
+//  CASCADE - and the reason `bank` exists.
+//
+//  IT SHIPPED AS A VALLEY, and that was a mistake worth leaving written down.
+//  A one-in-six descent into a 95-radius corner, a long climb, and corners
+//  cambered both ways. Every measurement said it worked: the AI got round it,
+//  ten cars from ten finished, the gradient did precisely what the arithmetic
+//  promised. Nicola drove it and said "non riesco proprio a correrlo", which
+//  is the only measurement that counts. Gravity fighting the brakes at the
+//  bottom of a drop, and a corner tipped away from you at the end of it, are
+//  interesting to read about and miserable to drive - the car does the
+//  opposite of what you ask and there is nothing you can do about it except
+//  arrive slower next time, which is not a skill, it is a toll.
+//
+//  So it was rebuilt to his brief: keep the circuit, fill it with corners
+//  without overdoing it, keep only the camber that HELPS, and take the hills
+//  out along with the way they were drawn. What is left is the good half.
+//  Positive camber is the one thing here that gives something back - 200
+//  px/s2 holding the car INTO the corner, a force the tyres never have to
+//  find - so a banked corner is quicker than its radius says and rewards
+//  commitment instead of punishing it.
+//
+//  TWELVE CORNERS on a flowing lap, six of them banked: T1 (+0.55) out of the
+//  pits, T4 THE CAROUSEL (+0.95, 110 degrees of it), T6 (+0.45, a kink taken
+//  flat), T9 (+0.70, long), T10 (+0.60) and T12 (+0.50) onto the pit straight.
+//  Nothing is tighter than r180 - no hairpins, no stops, no braking zone that
+//  is a trap.
+//
+//  THE FRAME is a rounded rectangle driven clockwise whose four right-angles
+//  are each a COMPLEX of three corners - right, left, right, netting +90 - so
+//  the road is busy without the loop sprawling:
+//      T1 +70  T2 -55  T3 +75  = +90     T4 +110 T5 -70  T6 +50  = +90
+//      T7 +45  T8 -55  T9 +100 = +90     T10 +55 T11 -60 T12 +95 = +90
+//  600 degrees of right against 240 of left. Even is not available - a lap
+//  that turns 360 net cannot be - but 2.5:1 is the calendar's usual ratio.
+//
+//  Drawn and checked by /root/tools/design_cascade.js: closure to the pixel,
+//  corridor separation 320px, one lap-counter crossing, and every bank
+//  positive. Edit that tool, not these numbers.
+class CascadeTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 2760;
+        this.worldH = 1890;
+        this.trackWidth = 58;
+        this.grassWidth = 78;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 620, y2: 0 },   // pit straight
+            { type: 'arc', cx: 620, cy: 200, r: 200, start: -1.5708, end: -0.34907, ccw: false, bank: 0.55 },   // T1 (banked)
+            { type: 'line', x1: 807.94, y1: 131.6, x2: 862.66, y2: 281.95 },   // to T2
+            { type: 'arc', cx: 1088.19, cy: 199.86, r: 240, start: 2.79253, end: 1.8326, ccw: true },   // T2
+            { type: 'line', x1: 1026.07, y1: 431.68, x2: 1161.3, y2: 467.92 },   // to T3
+            { type: 'arc', cx: 1114.71, cy: 641.79, r: 180, start: -1.309, end: 0, ccw: false },   // T3
+            { type: 'line', x1: 1294.71, y1: 641.79, x2: 1294.71, y2: 1175.75 },   // side B
+            { type: 'arc', cx: 1064.71, cy: 1175.75, r: 230, start: 0, end: 1.91986, ccw: false, bank: 0.95 },   // T4 THE CAROUSEL
+            { type: 'line', x1: 986.05, y1: 1391.88, x2: 807.51, y2: 1326.89 },   // out of the Carousel
+            { type: 'arc', cx: 739.1, cy: 1514.83, r: 200, start: 5.06145, end: 3.83972, ccw: true },   // T5
+            { type: 'line', x1: 585.89, y1: 1386.27, x2: 489.48, y2: 1501.18 },   // to T6
+            { type: 'arc', cx: 244.34, cy: 1295.49, r: 320, start: 0.69813, end: 1.5708, ccw: false, bank: 0.45 },   // T6 (banked)
+            { type: 'line', x1: 244.34, y1: 1615.49, x2: -4.53, y2: 1615.49 },   // side C
+            { type: 'arc', cx: -4.53, cy: 1395.49, r: 220, start: 1.5708, end: 2.35619, ccw: false },   // T7
+            { type: 'line', x1: -160.09, y1: 1551.05, x2: -287.37, y2: 1423.77 },   // to T8
+            { type: 'arc', cx: -485.36, cy: 1621.76, r: 280, start: 5.49779, end: 4.53786, ccw: true },   // T8, the kink
+            { type: 'line', x1: -533.99, y1: 1346.02, x2: -760.49, y2: 1385.96 },   // to T9
+            { type: 'arc', cx: -793.48, cy: 1198.84, r: 190, start: 1.39626, end: 3.14159, ccw: false, bank: 0.7 },   // T9 (banked)
+            { type: 'line', x1: -983.48, y1: 1198.84, x2: -983.48, y2: 858.84 },   // side D
+            { type: 'arc', cx: -743.48, cy: 858.84, r: 240, start: 3.14159, end: 4.10152, ccw: false, bank: 0.6 },   // T10 (banked)
+            { type: 'line', x1: -881.14, y1: 662.25, x2: -758.27, y2: 576.21 },   // to T11
+            { type: 'arc', cx: -884.46, cy: 396, r: 220, start: 7.24312, end: 6.19592, ccw: true },   // T11
+            { type: 'line', x1: -665.29, y1: 376.82, x2: -679.24, y2: 217.43 },   // to T12
+            { type: 'arc', cx: -480, cy: 200, r: 200, start: 3.05433, end: 4.71239, ccw: false, bank: 0.5 },   // T12 (banked)
+            { type: 'line', x1: -480, y1: 0, x2: 0, y2: 0 },   // onto the pit straight
+        ];
+
+        // 120px into the pit straight: 600px of road behind the line for the
+        // grid to form up on, and 500 ahead of it before T1.
+        this.startX = 120;
         this.startY = 0;
 
         this.waypoints = this.generateWaypoints();
