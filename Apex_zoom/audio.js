@@ -22,11 +22,46 @@ try {
     if (SOUND_LEVELS[v] !== undefined) soundChoice = v;
 } catch (e) { /* no storage: the default */ }
 
+//  ...AND THE LIMITER AFTER IT
+//  Every voice is mixed by addition, and addition does not care about
+//  headroom. Measured: one impact peaks at 0.40 and three at once at 0.61,
+//  both fine - but three impacts while the car is on a kerb and sliding, which
+//  is precisely what the first corner of a race is, peaked at 1.197. Anything
+//  past 1.0 is clipped by the hardware, and clipping is a crackle, on the one
+//  event in the race that most needs to sound like something heavy.
+//
+//  So one compressor across the master bus, set as a limiter: a threshold at
+//  -6dB with a 12:1 ratio, which leaves everything quieter than half scale
+//  untouched and folds a 1.2 peak back to about 0.5. Its side effect is the
+//  one a mixing desk wants anyway - a big crash ducks the rest of the mix for
+//  a moment, which is part of what makes it read as big.
+//
+//  Exported rather than inlined so the test can put the same limiter on its
+//  own offline renders: a headroom check against a limiter configured by hand
+//  in the test would be checking the test's numbers, not the game's.
+function makeLimiter(ctx) {
+    const lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -6;
+    lim.knee.value = 6;
+    lim.ratio.value = 12;
+    lim.attack.value = 0.003;
+    lim.release.value = 0.15;
+    return lim;
+}
+
 function audioOut() {
     if (!masterGain) {
         masterGain = audioContext.createGain();
         masterGain.gain.value = SOUND_LEVELS[soundChoice];
-        masterGain.connect(audioContext.destination);
+        // If an engine has no compressor at all the mix goes straight out, as
+        // it did before this existed.
+        if (typeof audioContext.createDynamicsCompressor === 'function') {
+            const lim = makeLimiter(audioContext);
+            masterGain.connect(lim);
+            lim.connect(audioContext.destination);
+        } else {
+            masterGain.connect(audioContext.destination);
+        }
     }
     return masterGain;
 }
@@ -314,112 +349,73 @@ function makeNoiseVoice(type, freq, q, level) {
 }
 
 // ---------------------------------------------------------------------------
-//  A TYRE SQUEAL, which is not a filtered hiss
+//  A TYRE SQUEAL, which is a VOICE
 //
-//  The old one was white noise through a single bandpass at Q 7. That is a
-//  band of noise, and a band of noise is a RUSHING sound - wind, a hiss, a
-//  fabric rustle. It is not what a tyre does. A tyre at the limit is a
-//  self-excited oscillator: the tread grips, slips, snaps back and grips
-//  again, thousands of times a second, and what comes out has a definite
-//  PITCH with harmonics on it, wobbling as the slip angle changes.
+//  Four attempts at this, and the first three were all the same attempt.
 //
-//  So three things, and it is all three together that make it a squeal:
-//    - Q 30 instead of 7. A high-Q bandpass on noise rings: the output is
-//      near-sinusoidal at the centre frequency, which is the pitch.
-//    - a SECOND resonance a fifth above it (x1.5) and a third an octave and
-//      a half up (x3). One peak is a whistle; a stack of them is a screech.
-//    - an LFO wobbling all three by a few per cent at ~7Hz. A dead-steady
-//      tone is a test signal; the warble is what says "rubber".
-//  And a little of the old broadband underneath, because a tyre is also
-//  scrubbing tarmac - it just is not ONLY doing that.
+//    1. white noise through one bandpass at Q7          -> a rustle
+//    2. noise through a stack of resonances at Q30      -> a rustle with a tint
+//    3. the same, higher, wider, in stereo              -> a wider rustle
+//
+//  Nicola kept asking for the same thing in different words - stridente, then
+//  deciso, then "una voce acuta che strilla quasi" - and the fourth phrasing
+//  is the one that says what was actually wrong. Every version above was
+//  FILTERED NOISE, and filtered noise cannot scream. You can make it bright,
+//  you can make it narrow, you can make it wide, and it is still air rushing:
+//  there is no pitch in it, only a region where there happens to be more
+//  energy. A scream is the opposite kind of signal - a PERIODIC one, a source
+//  buzzing at a definite rate with a full harmonic series on it - and no
+//  amount of shaping turns one into the other.
+//
+//  So the source changed. This is a voice, built the way a voice is:
+//
+//    GLOTTIS. A sawtooth at 620-1080Hz - the rate of a real shriek, and every
+//      harmonic above it in one go. A tyre at the limit works the same way as
+//      vocal folds do: it grips, slips, snaps back and grips again, hundreds
+//      of times a second, and that is a periodic source, not a hiss.
+//
+//    TRACT. Four fixed formants at 950 / 2050 / 3150 / 4400Hz, weighted
+//      upwards so the shriek band carries the sound. FIXED is the whole
+//      trick and it is what every version before this got backwards: the
+//      resonances used to be multiples of the fundamental, so they moved with
+//      it and the timbre never changed - which is a siren. In a voice the
+//      harmonics slide and the formants stay where they are, so different
+//      harmonics light up as the pitch moves, and THAT is what the ear hears
+//      as something with a throat.
+//
+//    STRAIN. A real scream is not clean. Vibrato at 5.4Hz, a fast tremble at
+//      31Hz that adds the rasp of a voice being pushed, and random jitter -
+//      noise through a 30Hz lowpass into the oscillator's detune - because
+//      nothing alive holds a frequency steady. Without these three it is a
+//      test tone with formants on it.
+//
+//    BREATH. A little noise through the same formants, so it is a voice and
+//      not an organ pipe, and the tarmac is still being scrubbed.
+//
+//  And it is still built twice and panned apart, which is what made it big
+//  last time: different jitter noise, +-1.2% detune, different vibrato rates.
+//  Two copies of one voice is one voice; two voices is a crowd.
 function makeSquealVoice(level) {
     const gain = audioContext.createGain();
     gain.gain.value = 0;
 
-    // the resonant stack
-    const parts = [], beds = [], lfos = [];
-    // The gains look large because a Q30 bandpass passes about f/Q = 50Hz of
-    // a broadband source and throws the rest away, while the scrub bed below
-    // at Q 2.5 passes nearly a kilohertz. Measured, the first draft's 1.0 /
-    // 0.55 / 0.22 against a bed at 0.16 left the bed carrying most of the
-    // energy - which is to say it was still a hiss with a tint on it.
-    //
-    // STRIDENT, which is a different axis from "pitched". Nicola asked for the
-    // tyres to screech harder, and a squeal is shrill because of what sits
-    // ABOVE the fundamental rather than because of the fundamental itself: the
-    // ear reads brightness from the upper partials. So the stack gained a 2x
-    // and a 4.5x, the weight moved up it (the third and fourth partials are
-    // now worth as much as the second), and the whole thing sits higher - see
-    // updateSurfaceSound, where the fundamental has since gone up again, to
-    // 1500-2600Hz. Loud enough to be the sound of the corner, too: level 0.34
-    // against the grass at 0.34 - see the second pass below.
-    //
-    // HIGHER AND MORE DECIDED, second pass. Nicola drove the version above and
-    // asked for more of both, which are two separate knobs:
-    //   ACUTO is where the stack sits - the fundamental now runs 1500-2600Hz
-    //     (see updateSurfaceSound) instead of 1150-2050, so the second partial
-    //     is where the fundamental used to be.
-    //   DECISO is the shape of the peaks and the speed of the onset. The Qs
-    //     went up (a Q32 peak is 80Hz wide at 2.6kHz and rings; a Q20 one is
-    //     130Hz wide and breathes), the weight moved onto the 2x and 3x
-    //     partials, and the gain now ramps in over 15ms instead of 30 - a
-    //     squeal that fades up is a squeal you notice after the corner.
-    //
-    // AMPIO, third pass, and it is the OPPOSITE knob to the one above. That
-    // second pass narrowed every peak and moved the lot upwards, and past a
-    // point that stops being a screech and becomes a whistle: thin, all in one
-    // place, nothing underneath it. Nicola asked for wider and a little lower,
-    // which is three changes and one measure.
-    //
-    //   The measure is SPECTRAL SPREAD - the standard deviation of the
-    //   spectrum about its centroid, in Hz. It is a genuinely different axis
-    //   from everything else here: a sound can be bright, pitched, loud and
-    //   still narrow, and that is exactly what a row of Q30 resonances with
-    //   silence between them is.
-    //
-    //   1. A HALF-MULTIPLE UNDER THE FUNDAMENTAL. Real rubber howls an octave
-    //      below the squeal as well as above it, and a partial at 0.5x puts
-    //      body under the sound where there was nothing but the bed - it is
-    //      the single biggest change to the width, because width is about how
-    //      far the energy reaches, not how fat each peak is.
-    //   2. WIDER PEAKS. Q 32-18 down to 24-13: each resonance passes about a
-    //      third more band than it did. Still nowhere near the kerb's Q1-2
-    //      rush, and the test holds it there - the first attempt went to
-    //      20-11 with a bed at 0.18 and the measurements caught it drifting
-    //      back into the hiss this voice exists to not be (spectral flatness
-    //      0.22 -> 0.34, peak Q 30 -> 11), so both were walked back.
-    //   3. AND A BROADER BED, Q 2.4 down to 1.2 at 0.07 a side. The bed is the
-    //      tyre scrubbing tarmac rather than singing, and it fills the gaps
-    //      between the partials that the ear hears as "thin" - but it is
-    //      noise, and past a point noise is all you can hear.
-    //   4. AND IT IS NO LONGER A POINT. The whole stack used to be one voice
-    //      arriving from the middle of the stereo image, and a sound that
-    //      comes from a point is a small sound however it is filtered. There
-    //      are four tyres, they are in four places, and none of them agrees
-    //      with the others about anything. So the stack is built TWICE and
-    //      panned hard apart, and the two halves are made to disagree in the
-    //      three ways that matter:
-    //        - different noise. Both sides read the same buffer from a
-    //          different offset, so the source material is uncorrelated. Two
-    //          copies of the SAME noise panned apart is not width - it sums
-    //          back to the middle and sounds exactly like one voice.
-    //        - detuned +-1.2%, so the partials beat against each other.
-    //        - and separate warble LFOs at 8.6 and 7.4Hz, so the flutter never
-    //          lines up.
-    // Lower is the last of it: the fundamental runs 1250-2150Hz now, see
-    // updateSurfaceSound.
-    const TABLE = [[0.5, 14, 1.1], [1, 24, 2.4], [1.5, 23, 1.6],
-                   [2, 22, 1.7], [3, 18, 1.3], [4.5, 13, 0.55]];
-    for (const side of [{ pan: -0.6, rate: 8.6, tune: 0.988, offset: 0 },
-                        { pan: 0.6, rate: 7.4, tune: 1.012, offset: 0.31 }]) {
-        const src = audioContext.createBufferSource();
-        src.buffer = getNoiseBuffer();
-        src.loop = true;
+    const voices = [], formants = [], lfos = [];
 
-        // Panning is a nicety, not a requirement - an engine old enough to
-        // lack createStereoPanner still gets both halves, just on top of each
-        // other, where the detune and the two LFOs still do their half of the
-        // job.
+    // f0 x mult is a HARMONIC; a formant is none of the above - it sits at a
+    // frequency of its own and waits for harmonics to pass through it.
+    // Five of them, weighted hard upwards, and WIDE. Two reasons, both
+    // measured. A sawtooth falls off 6dB an octave, so formants of equal gain
+    // leave the lowest one carrying the sound - the first draft measured a
+    // centroid of 1513Hz and 24% of its energy above 2kHz, which is a shout
+    // rather than a shriek. And a narrow formant at 4.4kHz over a source
+    // whose harmonics are 1kHz apart can fall BETWEEN two of them and go
+    // silent; Q 5-7 up there always catches at least one, and which one it
+    // catches keeps changing as the pitch moves, which is the shimmer.
+    const FORMANTS = [[950, 7, 0.5], [2050, 7, 2.0], [3150, 6, 2.4],
+                      [4400, 5, 2.0], [5800, 4.5, 1.2]];
+
+    for (const side of [{ pan: -0.6, vib: 5.4, tune: -21, offset: 0 },
+                        { pan: 0.6, vib: 6.1, tune: 21, offset: 0.31 }]) {
         let dest = gain;
         if (typeof audioContext.createStereoPanner === 'function') {
             const p = audioContext.createStereoPanner();
@@ -428,52 +424,75 @@ function makeSquealVoice(level) {
             dest = p;
         }
 
-        const mine = [];
-        for (const [mult, q, amp] of TABLE) {
+        // ---- the source: a buzz, and the noise that rides with it -------
+        const osc = audioContext.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = 800;
+        osc.detune.value = side.tune;          // +-1.2%, so the two sides beat
+
+        const breath = audioContext.createBufferSource();
+        breath.buffer = getNoiseBuffer();
+        breath.loop = true;
+        const breathG = audioContext.createGain();
+        breathG.gain.value = 0.55;             // under the buzz, never over it
+        breath.connect(breathG);
+
+        // ---- the tract: fixed resonances, one bank per side -------------
+        const bank = [];
+        for (const [hz, q, amp] of FORMANTS) {
             const f = audioContext.createBiquadFilter();
             f.type = 'bandpass';
-            f.frequency.value = 1400 * mult * side.tune;
+            f.frequency.value = hz;
             f.Q.value = q;
             const g = audioContext.createGain();
             g.gain.value = amp;
-            src.connect(f); f.connect(g); g.connect(dest);
-            // `mult` carries the detune, so updateSurfaceSound can move the
-            // whole thing with one fundamental and keep the two sides apart
-            const pt = { filt: f, mult: mult * side.tune };
-            mine.push(pt); parts.push(pt);
+            osc.connect(f); breathG.connect(f);
+            f.connect(g); g.connect(dest);
+            const fm = { filt: f, hz: hz };
+            bank.push(fm); formants.push(fm);
         }
-        // and the scrub bed it sits on
-        const bed = audioContext.createBiquadFilter();
-        bed.type = 'bandpass';
-        bed.frequency.value = 3000;
-        bed.Q.value = 1.2;
-        const bedG = audioContext.createGain();
-        bedG.gain.value = 0.07;
-        src.connect(bed); bed.connect(bedG); bedG.connect(dest);
-        beds.push(bed);
 
-        // the warble
-        const lfo = audioContext.createOscillator();
-        lfo.type = 'sine';
-        // Faster and deeper than a hum: rubber does not hold a steady note,
-        // and the flutter is most of what separates a screech from a test
-        // tone. The two sides run at different rates on purpose.
-        lfo.frequency.value = side.rate;
-        for (const pt of mine) {
-            const d = audioContext.createGain();
-            d.gain.value = 60 * pt.mult;      // a few per cent of each peak
-            lfo.connect(d); d.connect(pt.filt.frequency);
-        }
-        lfo.start();
-        lfos.push(lfo);
+        // ---- strain -----------------------------------------------------
+        // vibrato: slow and wide enough to hear as a wobble
+        const vib = audioContext.createOscillator();
+        vib.type = 'sine';
+        vib.frequency.value = side.vib;
+        const vibD = audioContext.createGain();
+        vibD.gain.value = 38;                  // cents
+        vib.connect(vibD); vibD.connect(osc.detune);
+        vib.start(); lfos.push(vib);
 
-        // read from a different place in the buffer: this is what makes the
-        // two sides different noise rather than the same noise twice
-        src.start(0, side.offset);
+        // tremble: fast, shallow, and the difference between a voice singing
+        // and a voice at the end of its range
+        const rasp = audioContext.createOscillator();
+        rasp.type = 'sine';
+        rasp.frequency.value = 31;
+        const raspD = audioContext.createGain();
+        raspD.gain.value = 16;
+        rasp.connect(raspD); raspD.connect(osc.detune);
+        rasp.start(); lfos.push(rasp);
+
+        // jitter: noise, slowed right down, wandering the pitch a few cents.
+        // Nothing periodic can do this job - the point is that it never
+        // repeats, and an LFO always does.
+        const jit = audioContext.createBufferSource();
+        jit.buffer = getNoiseBuffer();
+        jit.loop = true;
+        const jitLp = audioContext.createBiquadFilter();
+        jitLp.type = 'lowpass';
+        jitLp.frequency.value = 30;
+        const jitD = audioContext.createGain();
+        jitD.gain.value = 45;
+        jit.connect(jitLp); jitLp.connect(jitD); jitD.connect(osc.detune);
+        jit.start(0, side.offset);
+
+        osc.start();
+        breath.start(0, side.offset);
+        voices.push({ osc: osc, bank: bank });
     }
 
     gain.connect(audioOut());
-    return { parts: parts, beds: beds, gain: gain, level: level, lfos: lfos };
+    return { voices: voices, formants: formants, gain: gain, level: level, lfos: lfos };
 }
 
 // ---------------------------------------------------------------------------
@@ -574,7 +593,7 @@ function initSfx() {
         // grass: broadband, dull, and loud enough to be a warning
         grass: makeNoiseVoice('lowpass', 320, 0, 0.34),
         // rubber giving up - and it is a pitch, not a hiss. See above.
-        slide: makeSquealVoice(0.30)
+        slide: makeSquealVoice(0.11)
     };
     return sfx;
 }
@@ -602,16 +621,20 @@ function updateSurfaceSound(surface, slide, speed) {
     sfx.kerb.lfo.frequency.setTargetAtTime(5 + 18 * fast, t, 0.06);
     if (squeal > 0) {
         // The pitch rises as the slide worsens, which is what makes it a
-        // warning rather than an ornament - and the whole resonant stack has
-        // to move together or it stops being one sound and becomes three.
-        // 1250-2150Hz, down a step from 1500-2600: the stack sat high enough
-        // to whistle. The partials go with it, including the 0.5x that now
-        // runs under the fundamental at 625-1075Hz.
-        const f0 = 1250 + 900 * squeal;
-        for (const pt of sfx.slide.parts)
-            pt.filt.frequency.setTargetAtTime(f0 * pt.mult, t, 0.05);
-        for (const bed of sfx.slide.beds)
-            bed.frequency.setTargetAtTime(2500 + 1500 * squeal, t, 0.06);
+        // warning rather than an ornament. 620-1080Hz is where a shriek
+        // actually lives - a long way BELOW the 1250-2150 the old stack sat
+        // at, and it sounds far higher for it, because a voice is heard
+        // through its harmonics and the ones that matter here land at 2-4kHz
+        // where the formants are waiting.
+        const f0 = 620 + 460 * squeal;
+        for (const v of sfx.slide.voices)
+            v.osc.frequency.setTargetAtTime(f0, t, 0.05);
+        // The formants barely move, and that is deliberate - they are the
+        // throat, not the note. What they do is lift a little under strain,
+        // the way a voice being pushed does, so the last of the slide is
+        // brighter without being higher.
+        for (const fm of sfx.slide.formants)
+            fm.filt.frequency.setTargetAtTime(fm.hz * (1 + 0.13 * squeal), t, 0.08);
     }
 }
 
@@ -667,7 +690,7 @@ function sfxImpact(severity, pan, dist) {
 
     // A burst of noise through one filter, with a hard attack and an
     // exponential tail. Everything in the crash is one of these.
-    const burst = (when, dur, type, freq, q, amp, dend) => {
+    const burst = (when, dur, type, freq, q, amp, dend, att) => {
         if (amp < 0.004) return;
         const src = audioContext.createBufferSource();
         src.buffer = getNoiseBuffer();
@@ -696,7 +719,9 @@ function sfxImpact(severity, pan, dist) {
         // source has not started yet.
         g.gain.value = 0;
         g.gain.setValueAtTime(0.0001, when);
-        g.gain.linearRampToValueAtTime(amp, when + 0.002);
+        // 2ms unless asked otherwise. Mass is slower to get going than sheet
+        // metal is, and the mass layer below asks for 5.
+        g.gain.linearRampToValueAtTime(amp, when + (att || 0.002));
         g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
         src.connect(f); f.connect(g); g.connect(dest);
         src.start(when); src.stop(when + dur + 0.02);
@@ -719,12 +744,39 @@ function sfxImpact(severity, pan, dist) {
         // twenty kilohertz, so at equal amplitude the tail carries fifty times
         // the power. Measured before this was corrected, the whole impact had
         // 1% of its energy below 200Hz - a car crash with no weight in it.
-        burst(when, rnd(0.045, 0.075) + 0.045 * s, 'lowpass',
-              rnd(150, 260) + 220 * s, 0.9, 3.4 * level * fall, rnd(60, 95));
+        //
+        // AND IT WAS STILL TOO LIGHT. Nicola: "sembrano più dei carrelli
+        // della spesa vuoti che vanno a sbattere uno contro l'altro", which is
+        // an exact description of a spectrum with its weight in the mids -
+        // a trolley is a thin steel frame with nothing in it, and the sound
+        // says so. 13% under 200Hz was the measurement; a loaded car hitting
+        // a barrier is nearer half. So the body dropped an octave and got
+        // longer, and the mass layer below joined it.
+        burst(when, rnd(0.065, 0.105) + 0.075 * s, 'lowpass',
+              rnd(110, 180) + 140 * s, 0.9, 3.4 * level * fall, rnd(48, 70));
         // the panel: the crunch proper, mid and broad
         burst(when + rnd(0, 0.005), rnd(0.035, 0.065) + 0.035 * s, 'bandpass',
               rnd(700, 1200) + 700 * s, 1.1, 0.55 * level * fall, rnd(240, 420));
     }
+
+    // ---- the mass, which is the part you feel ---------------------------
+    // One low thump under the whole cluster, longer than any of them and cut
+    // off at the bottom of hearing. This is not a fourth grain and it is not
+    // a note: it is filtered noise, so it has no pitch to identify - what it
+    // has is a quarter of a second of energy under 120Hz, which is the
+    // difference between two objects colliding and two objects with weight
+    // colliding. It is slower to start than the crunch (5ms of attack rather
+    // than 2) because that is how mass behaves, and it starts a hair EARLY,
+    // so the low end is already moving when the panels arrive.
+    //
+    // The first go at this weighed 5.0 and ran for half a second, and the
+    // measurements said what that sounds like: 68% of the energy under 200Hz
+    // and a spectral flatness of 0.14, down from 0.61. That is not a heavy
+    // crash, it is a boom with a crash somewhere behind it - the low end had
+    // stopped supporting the sound and started replacing it. Half the weight
+    // and two thirds the length puts it under the crunch instead of over it.
+    burst(t0 - 0.004, 0.14 + 0.20 * s, 'lowpass',
+          rnd(80, 120) + 40 * s, 0.6, 2.2 * level, rnd(38, 55), 0.005);
 
     // ---- one metallic ring, brief and quiet -----------------------------
     // The only pitched thing in here. A crash does have a ring in it - a
@@ -746,7 +798,7 @@ function sfxImpact(severity, pan, dist) {
         // it would have helped.
         rg.gain.value = 0;
         rg.gain.setValueAtTime(0, t0);
-        rg.gain.linearRampToValueAtTime(0.10 * level, t0 + 0.004);
+        rg.gain.linearRampToValueAtTime(0.06 * level, t0 + 0.004);
         rg.gain.exponentialRampToValueAtTime(0.0001, t0 + rnd(0.09, 0.18));
         ring.connect(rg); rg.connect(dest);
         ring.start(t0); ring.stop(t0 + 0.24);
@@ -756,8 +808,11 @@ function sfxImpact(severity, pan, dist) {
     // Loud enough to be heard under the crunch and long enough to outlive it:
     // measured, this is what stops the sound ENDING, which is the difference
     // between something breaking and something being hit.
+    // Quieter than it was, and so is the ring above it. Both are the RATTLE,
+    // and a rattle over a thin body is exactly the trolley: the fix is as much
+    // about what sits on top of the weight as about the weight itself.
     const tail = 0.30 + 0.70 * s;
-    burst(t0 + 0.03, tail, 'highpass', rnd(2400, 3200), 0.7, 0.15 * level, 4200);
+    burst(t0 + 0.03, tail, 'highpass', rnd(2400, 3200), 0.7, 0.13 * level, 4200);
 }
 
 // One short tone. The start lights, the flag and the VSC are all this.

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom50">
+    <link rel="stylesheet" href="style.css?v=zoom51">
 </head>
 <body>
     <div id="game-container">
@@ -168,8 +168,9 @@
                             <!-- Name a season and you can run it again. The seed
                                  fixes the calendar and the rain and nothing
                                  else, so a second attempt is a second attempt
-                                 and not a replay. Blank rolls a new one and
-                                 writes it back here. -->
+                                 and not a replay. The box is emptied when a
+                                 season starts, so the next one is a new one
+                                 unless you ask for a repeat with ↺. -->
                             <div class="seed-row">
                                 <input type="text" id="season-seed" placeholder="random"
                                        autocomplete="off" spellcheck="false">
@@ -177,7 +178,8 @@
                                 <button type="button" id="seed-again" title="Repeat the last season">↺</button>
                             </div>
                             <div class="seed-hint">Same seed, same circuits and the
-                                same rain &mdash; so two seasons can be compared.</div>
+                                same rain &mdash; so two seasons can be compared.
+                                Leave it blank for a new season; ↺ repeats the last.</div>
                         </div>
                         <div class="menu-row">
                             <div class="menu-group" data-modes="race champ">
@@ -365,7 +367,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom50 &nbsp;·&nbsp; 1 Sep 2026</div>
+                <div id="build-stamp">build zoom51 &nbsp;·&nbsp; 1 Sep 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -1089,12 +1091,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom50"></script>
-    <script src="track.js?v=zoom50"></script>
-    <script src="lines.js?v=zoom50"></script>
-    <script src="car.js?v=zoom50"></script>
-    <script src="ai.js?v=zoom50"></script>
-    <script src="audio.js?v=zoom50"></script>
+    <script src="racelog.js?v=zoom51"></script>
+    <script src="track.js?v=zoom51"></script>
+    <script src="lines.js?v=zoom51"></script>
+    <script src="car.js?v=zoom51"></script>
+    <script src="ai.js?v=zoom51"></script>
+    <script src="audio.js?v=zoom51"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1188,6 +1190,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom50"></script>
+    <script src="main.js?v=zoom51"></script>
 </body>
 </html>

@@ -9315,11 +9315,26 @@ function startChampionship() {
         // season you started - see noAiHandicapWanted()
         noAiHandicap: noAiHandicapBox() && difficulty !== 'alien'
     };
-    // Written back into the box and kept, so the season you have just started
-    // can be run again on a different tyre without having copied anything down.
+    // ...and the box is EMPTIED, which is the opposite of what it used to do.
+    //
+    // It used to write the seed back into the input, so that a season could be
+    // run again on a different tyre without copying anything down. The trouble
+    // is that the box is also the INPUT: seasonSeedText() takes whatever is in
+    // it, so the convenience quietly turned "start a championship" into "start
+    // that same championship again" for every season after the first. Nicola
+    // noticed it as new seasons arriving on the previous one's calendar, and it
+    // was the same for a seed typed by hand - type one once and every season
+    // after it was that season until you cleared the field yourself.
+    //
+    // Nothing is lost by emptying it. The seed is kept in storage for the ↺
+    // button beside the box, which is the deliberate way to ask for a repeat,
+    // it is written on the round header all season, and it goes into the
+    // archive with the results. Starting a season now means a new season
+    // unless you say otherwise, which is the only sane default for the button
+    // people press without reading it.
     rememberSeed(seedText);
     const seedEl = document.getElementById('season-seed');
-    if (seedEl) seedEl.value = seedText;
+    if (seedEl) seedEl.value = '';
 
     // Famous names list
     let availableNames = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
