@@ -353,11 +353,22 @@ function makeSquealVoice(level) {
     // ear reads brightness from the upper partials. So the stack gained a 2x
     // and a 4.5x, the weight moved up it (the third and fourth partials are
     // now worth as much as the second), and the whole thing sits higher - see
-    // updateSurfaceSound, where the fundamental runs 1150-2050Hz instead of
-    // 900-1520. Loud enough to be the sound of the corner, too: level 0.28
-    // against the grass at 0.34.
-    for (const [mult, q, amp] of [[1, 30, 3.0], [1.5, 28, 1.5], [2, 26, 1.5],
-                                  [3, 22, 1.1], [4.5, 16, 0.55]]) {
+    // updateSurfaceSound, where the fundamental has since gone up again, to
+    // 1500-2600Hz. Loud enough to be the sound of the corner, too: level 0.34
+    // against the grass at 0.34 - see the second pass below.
+    //
+    // HIGHER AND MORE DECIDED, second pass. Nicola drove the version above and
+    // asked for more of both, which are two separate knobs:
+    //   ACUTO is where the stack sits - the fundamental now runs 1500-2600Hz
+    //     (see updateSurfaceSound) instead of 1150-2050, so the second partial
+    //     is where the fundamental used to be.
+    //   DECISO is the shape of the peaks and the speed of the onset. The Qs
+    //     went up (a Q32 peak is 80Hz wide at 2.6kHz and rings; a Q20 one is
+    //     130Hz wide and breathes), the weight moved onto the 2x and 3x
+    //     partials, and the gain now ramps in over 15ms instead of 30 - a
+    //     squeal that fades up is a squeal you notice after the corner.
+    for (const [mult, q, amp] of [[1, 32, 2.4], [1.5, 30, 1.6], [2, 28, 1.8],
+                                  [3, 24, 1.4], [4.5, 18, 0.6]]) {
         const f = audioContext.createBiquadFilter();
         f.type = 'bandpass';
         f.frequency.value = 1400 * mult;
@@ -370,10 +381,10 @@ function makeSquealVoice(level) {
     // and the scrub bed it sits on
     const bed = audioContext.createBiquadFilter();
     bed.type = 'bandpass';
-    bed.frequency.value = 3000;
-    bed.Q.value = 2.2;
+    bed.frequency.value = 3600;
+    bed.Q.value = 2.4;
     const bedG = audioContext.createGain();
-    bedG.gain.value = 0.10;
+    bedG.gain.value = 0.08;
     src.connect(bed); bed.connect(bedG); bedG.connect(gain);
 
     // the warble
@@ -394,15 +405,105 @@ function makeSquealVoice(level) {
     return { src: src, parts: parts, bed: bed, gain: gain, level: level, lfo: lfo };
 }
 
+// ---------------------------------------------------------------------------
+//  A KERB, which is not a hiss either
+//
+//  A rumble strip is not a texture, it is a SEQUENCE: a row of ribs, and the
+//  wheel hits them one at a time. What you hear from inside the car is
+//  tum-tum-tum-tum, and how fast it comes at you is how fast you are going -
+//  which makes it the one sound on the car that is a speedometer.
+//
+//  The old kerb was a bandpass at 420Hz on looping noise. That is a continuous
+//  rattle: it got louder with speed and never once told you the ribs were
+//  discrete. So this is an impulse train instead, and the interesting part is
+//  that it is built without scheduling anything.
+//
+//      sawtooth LFO  ->  waveshaper  ->  the gain of the noise path
+//
+//  The shaper's curve is ((1 - x) / 2)^7, which turns the sawtooth's linear
+//  ramp into a spike: the instant the saw snaps back the output is 1, and it
+//  falls to half in about a twelfth of a cycle. Instant attack, quick decay,
+//  once per rib - a thud. The tail is a fraction of the PERIOD rather than a
+//  fixed time, so the hits shorten as they speed up, exactly as they do when
+//  the ribs start arriving faster than the tyre can finish ringing.
+//
+//  Doing it with one oscillator instead of a scheduler buys two things. The
+//  rate is an AudioParam, so speed changes glide instead of stepping, and
+//  there is nothing per-frame to get behind: a scheduler would have to run a
+//  lookahead, and everything it had already queued would keep thumping for as
+//  long as that lookahead after the wheel came off the kerb.
+function makeKerbVoice(level) {
+    const src = audioContext.createBufferSource();
+    src.buffer = getNoiseBuffer();
+    src.loop = true;
+
+    // What one rib sounds like: a low thump with a slap on top of it. The
+    // thump is the tyre wall deforming, the slap is the tread edge catching.
+    const body = audioContext.createBiquadFilter();
+    body.type = 'lowpass';
+    body.frequency.value = 240;
+    const bodyG = audioContext.createGain();
+    // A pulse train is silent between hits, so its RMS is a quarter of its
+    // peak where a continuous voice's is most of it: measured, the first
+    // draft came out at half the loudness of the hiss it replaced. These are
+    // set so the kerb is as present as it was, not as loud on paper.
+    bodyG.gain.value = 3.8;          // a 240Hz lowpass passes 240Hz of noise;
+                                     // the slap's bandpass passes over a kHz
+    const slap = audioContext.createBiquadFilter();
+    slap.type = 'bandpass';
+    slap.frequency.value = 1500;
+    slap.Q.value = 1.1;
+    const slapG = audioContext.createGain();
+    slapG.gain.value = 0.75;
+
+    // the gate: silent by itself, opened once per rib by the shaper below
+    const pulse = audioContext.createGain();
+    pulse.gain.value = 0;
+    src.connect(body); body.connect(bodyG); bodyG.connect(pulse);
+    src.connect(slap); slap.connect(slapG); slapG.connect(pulse);
+
+    const lfo = audioContext.createOscillator();
+    lfo.type = 'sawtooth';
+    lfo.frequency.value = 8;
+    const shaper = audioContext.createWaveShaper();
+    const CURVE = new Float32Array(2048);
+    for (let i = 0; i < CURVE.length; i++) {
+        const x = (i / (CURVE.length - 1)) * 2 - 1;      // -1 .. 1
+        CURVE[i] = Math.pow((1 - x) / 2, 7);             // 1 at the snap, then away
+    }
+    shaper.curve = CURVE;
+    lfo.connect(shaper); shaper.connect(pulse.gain);
+    lfo.start();
+
+    // and a thin continuous bed underneath, because a wheel on a kerb is also
+    // scrubbing across the paint between ribs. Quiet: if this is loud the
+    // rhythm stops being the sound and it is a rattle again.
+    const bed = audioContext.createBiquadFilter();
+    bed.type = 'bandpass';
+    bed.frequency.value = 900;
+    bed.Q.value = 0.8;
+    const bedG = audioContext.createGain();
+    bedG.gain.value = 0.12;
+    src.connect(bed); bed.connect(bedG);
+
+    const gain = audioContext.createGain();
+    gain.gain.value = 0;
+    pulse.connect(gain); bedG.connect(gain);
+    gain.connect(audioOut());
+    src.start();
+    return { src: src, gain: gain, level: level, lfo: lfo, body: body, slap: slap };
+}
+
 function initSfx() {
     if (sfx) return sfx;
     sfx = {
-        // rumble strips: a hard, midrange rattle
-        kerb: makeNoiseVoice('bandpass', 420, 1.2, 0.30),
+        // rumble strips: one thud per rib, and they come at you faster the
+        // quicker you are going. See above.
+        kerb: makeKerbVoice(0.50),
         // grass: broadband, dull, and loud enough to be a warning
         grass: makeNoiseVoice('lowpass', 320, 0, 0.34),
         // rubber giving up - and it is a pitch, not a hiss. See above.
-        slide: makeSquealVoice(0.28)
+        slide: makeSquealVoice(0.34)
     };
     return sfx;
 }
@@ -417,18 +518,25 @@ function updateSurfaceSound(surface, slide, speed) {
     const grass = surface === 'grass' ? 0.30 + 0.70 * fast : 0;
     // the squeal starts where the game starts laying rubber down (60 px/s of
     // lateral speed, car.js) and is at full cry twice that
-    const squeal = Math.max(0, Math.min(1, (slide - 60) / 90));
+    const squeal = Math.max(0, Math.min(1, (slide - 55) / 75));
     sfx.kerb.gain.gain.setTargetAtTime(kerb * sfx.kerb.level, t, 0.02);
     sfx.grass.gain.gain.setTargetAtTime(grass * sfx.grass.level, t, 0.05);
-    sfx.slide.gain.gain.setTargetAtTime(squeal * sfx.slide.level, t, 0.03);
+    // 0.015, not 0.03: three frames to full cry rather than seven. The squeal
+    // has to arrive WITH the slide to be a warning about it.
+    sfx.slide.gain.gain.setTargetAtTime(squeal * sfx.slide.level, t, 0.015);
+    // HOW FAST THE RIBS ARRIVE. This is the whole point of the kerb voice: the
+    // rate is the sound. 5Hz at walking pace, 23Hz flat out - fast enough to
+    // be a hammering, still slow enough that the ear counts the hits instead
+    // of fusing them into a tone, which is what happens somewhere past 30.
+    sfx.kerb.lfo.frequency.setTargetAtTime(5 + 18 * fast, t, 0.06);
     if (squeal > 0) {
         // The pitch rises as the slide worsens, which is what makes it a
         // warning rather than an ornament - and the whole resonant stack has
         // to move together or it stops being one sound and becomes three.
-        const f0 = 1150 + 900 * squeal;
+        const f0 = 1500 + 1100 * squeal;
         for (const pt of sfx.slide.parts)
             pt.filt.frequency.setTargetAtTime(f0 * pt.mult, t, 0.05);
-        sfx.slide.bed.frequency.setTargetAtTime(2400 + 1500 * squeal, t, 0.06);
+        sfx.slide.bed.frequency.setTargetAtTime(3000 + 1800 * squeal, t, 0.06);
     }
 }
 

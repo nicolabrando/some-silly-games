@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom48">
+    <link rel="stylesheet" href="style.css?v=zoom49">
 </head>
 <body>
     <div id="game-container">
@@ -365,7 +365,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom48 &nbsp;·&nbsp; 1 Sep 2026</div>
+                <div id="build-stamp">build zoom49 &nbsp;·&nbsp; 1 Sep 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -944,6 +944,12 @@
             </div>
             <div id="game-over" style="display: none; padding: 20px; min-width: 400px;">
                 <h1 id="result-message">You Won!</h1>
+                <!-- The four legs of a Grand Chelem, for whoever won the race:
+                     pole, the win, the fastest lap, and every lap led. Filled
+                     by main.js at the end of every race, and it sits directly
+                     under the headline because the whole question is answered
+                     at a glance or it is not worth asking. -->
+                <div id="chelem-strip" style="display: none;"></div>
                 <table id="stats-table" style="width: 100%; margin-bottom: 20px; border-collapse: collapse;">
                     <thead>
                         <tr style="border-bottom: 1px solid #fff;">
@@ -1083,12 +1089,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom48"></script>
-    <script src="track.js?v=zoom48"></script>
-    <script src="lines.js?v=zoom48"></script>
-    <script src="car.js?v=zoom48"></script>
-    <script src="ai.js?v=zoom48"></script>
-    <script src="audio.js?v=zoom48"></script>
+    <script src="racelog.js?v=zoom49"></script>
+    <script src="track.js?v=zoom49"></script>
+    <script src="lines.js?v=zoom49"></script>
+    <script src="car.js?v=zoom49"></script>
+    <script src="ai.js?v=zoom49"></script>
+    <script src="audio.js?v=zoom49"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1182,6 +1188,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom48"></script>
+    <script src="main.js?v=zoom49"></script>
 </body>
 </html>

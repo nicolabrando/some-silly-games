@@ -740,6 +740,103 @@ function fastestLapPointFor(isFastest, index, finished) {
     if (!isFastest || !finished) return 0;
     return index < FASTEST_LAP_TOP_N ? FASTEST_LAP_POINT : 0;
 }
+
+// ---------------------------------------------------------------------------
+//  THE GRAND CHELEM STRIP
+//
+//  Pole, the win, the fastest lap, and the lead of every single lap. All four
+//  in one race is a Grand Chelem, and the game has known how to spot one for a
+//  while - it writes it to the race log and stars it in the season tables.
+//  Neither of those is where you are looking when you have just done one.
+//
+//  So: a line under the headline of the results screen, at the end of EVERY
+//  race, showing all four legs whether they were taken or not. Nicola asked
+//  for a recap that says straight away whether a Chelem happened, and a banner
+//  that only appears when it does answers the question by its absence - which
+//  is a slower way of reading than four ticks and a cross.
+//
+//  Whose four legs: the WINNER's, always. Three of them are only reachable by
+//  the driver who took the fourth, so there is nobody else to ask, and it is
+//  the winner's name on the strip even when the winner is not you.
+//
+//  A leg that was missed says who took it instead. "Pole ✗" tells you nothing
+//  you did not know from the grid; "Pole — Senna" is a line about the race.
+//
+//  The rule itself is a function of its own, for the same reason
+//  fastestLapPointFor is one: the end-of-race block is two hundred lines deep
+//  inside the results screen and there is no way to hand it a made-up race, so
+//  a rule that only exists in there is a rule that can only be checked by
+//  getting lucky ten times in a row.
+//
+//  `leaders` is one colour per completed lap, in order. Its LENGTH matters as
+//  much as its contents: a race that ended some other way leaves it short, and
+//  a short list cannot prove somebody led every lap - only that they led every
+//  lap anybody counted.
+function chelemLegs(winner, fastestCar, poleColor, leaders, totalLaps) {
+    const list = leaders || [];
+    const led = winner ? list.filter(col => col === winner.color).length : 0;
+    const legs = {
+        pole: !!(winner && poleColor && poleColor === winner.color),
+        win: !!(winner && winner.finished),
+        fl: !!(winner && fastestCar === winner),
+        ledAll: !!(winner && totalLaps >= 1 &&
+                   list.length >= totalLaps && led >= totalLaps),
+        led: led,
+        counted: list.length
+    };
+    legs.all = legs.pole && legs.win && legs.fl && legs.ledAll;
+    return legs;
+}
+
+function renderChelemStrip(winner, fastestCar, legs) {
+    const el = document.getElementById('chelem-strip');
+    if (!el) return;
+    // Nobody finished, or there is nothing to have won: no strip. A results
+    // screen that reads "no Grand Chelem" under "No one finished!" is a joke
+    // at the player's expense.
+    if (!winner || !winner.finished || TOTAL_LAPS < 1) {
+        el.style.display = 'none';
+        return;
+    }
+
+    // Who a car is, for a strip that a person is reading about their own race.
+    const who = (c) => {
+        if (!c) return '—';
+        if (c.isPlayer) return twoPlayer ? humanLabel(c) : 'You';
+        return c.driverName || String(c.color || '').toUpperCase();
+    };
+    // The pole-sitter may not be in `cars` at all - skip a Grand Prix and the
+    // grid still had a P1, but your own car is in skipPlayers - so fall back
+    // to the colour that was recorded rather than showing a blank.
+    const poleCar = racePoleColor ? cars.find(c => c.color === racePoleColor) : null;
+    const poleName = poleCar ? who(poleCar)
+                             : (racePoleColor ? String(racePoleColor).toUpperCase() : '—');
+
+    const rows = [
+        { got: legs.pole, label: 'Pole', by: poleName },
+        { got: legs.win, label: 'Win', by: who(winner) },
+        { got: legs.fl, label: 'Fastest lap', by: who(fastestCar) },
+        { got: legs.ledAll, label: 'Led every lap',
+          by: `led ${legs.led} of ${legs.counted || TOTAL_LAPS}` }
+    ];
+
+    const cells = rows.map(l =>
+        `<span class="cs-leg ${l.got ? 'cs-got' : 'cs-missed'}">` +
+        `${l.got ? '✓' : '✗'} <b>${l.label}</b>` +
+        (l.got ? '' : `<span class="cs-by">${l.by}</span>`) +
+        `</span>`).join('');
+
+    el.className = legs.all ? 'cs-slam' : '';
+    el.innerHTML = legs.all
+        ? `<div class="cs-head">GRAND CHELEM</div>` +
+          `<div class="cs-who">${who(winner)} — pole, win, fastest lap, ` +
+          `and the lead on all ${TOTAL_LAPS} laps</div>` +
+          `<div class="cs-legs">${cells}</div>`
+        : `<div class="cs-head">Grand Chelem — not this time</div>` +
+          `<div class="cs-legs">${cells}</div>`;
+    el.style.display = 'block';
+}
+
 let pendingTyreCb = null;
 
 // --- Timing tower display order -----------------------------------------
@@ -7343,6 +7440,10 @@ function endPracticeSession() {
     restartBtn.style.display = 'inline-block';
     nextRoundBtn.style.display = 'none';
     gameOverScreen.style.display = 'block';
+    // The results screen is shared with the end of a race, and the Chelem
+    // strip belongs to a race: a practice session has no pole and no winner.
+    const csEl = document.getElementById('chelem-strip');
+    if (csEl) csEl.style.display = 'none';
 
     statsBody.innerHTML = '';
     if (!laps.length) {
@@ -7883,16 +7984,18 @@ function updateHUD() {
         // ---- Grand Chelem ------------------------------------------------
         // Pole, win, fastest lap and every single lap led. All four, one race.
         const winnerCar = sortedCars[0];
-        const ledEvery = lapLeaders.length >= TOTAL_LAPS && winnerCar &&
-                         lapLeaders.every(col => col === winnerCar.color);
-        const grandChelem = !!(winnerCar && winnerCar.finished &&
-            racePoleColor === winnerCar.color &&
-            fastestCar === winnerCar &&
-            ledEvery);
+        const chelem = chelemLegs(winnerCar, fastestCar, racePoleColor,
+                                  lapLeaders, TOTAL_LAPS);
+        const grandChelem = chelem.all;
         if (grandChelem) {
             RaceLog.event('CHELEM', `${winnerCar.driverName || winnerCar.color} — GRAND CHELEM ` +
                 `(pole, win, fastest lap, led all ${TOTAL_LAPS} laps)`);
         }
+        // ...and say so on the results screen, which until now it did not: the
+        // only place a Grand Chelem appeared was the race log and a star in a
+        // season table, so the one race where you actually did it went by
+        // without a word. See renderChelemStrip.
+        renderChelemStrip(winnerCar, fastestCar, chelem);
 
         // Work out points BEFORE the season record is written: it used to be
         // built first, so every bonus it stored was undefined.

@@ -2087,6 +2087,73 @@ button.menu-danger {
 }
 
 /* ---------------------------------------------------------------------------
+   THE GRAND CHELEM STRIP
+   Under the headline on the results screen, at the end of every race. Four
+   legs - pole, win, fastest lap, every lap led - and they are always all four
+   on show, taken or not, because "did anybody do it" is a question you answer
+   by looking rather than by counting.
+
+   Two states. Missed is grey and quiet and belongs to the results sheet it
+   sits above. All four is gold, bordered and spaced out: a Grand Chelem is
+   rare enough that the screen is allowed to stop and say so.
+   ------------------------------------------------------------------------ */
+#chelem-strip {
+    margin: -6px 0 16px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    font-size: 12px;
+}
+#chelem-strip .cs-head {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    opacity: 0.55;
+    margin-bottom: 6px;
+}
+#chelem-strip .cs-legs {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 10px;
+}
+#chelem-strip .cs-leg {
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.07);
+    white-space: nowrap;
+}
+#chelem-strip .cs-leg b { font-weight: 700; }
+#chelem-strip .cs-leg .cs-by { opacity: 0.55; margin-left: 4px; }
+#chelem-strip .cs-got { color: #a5d6a7; background: rgba(76, 175, 80, 0.16); }
+#chelem-strip .cs-missed { color: #b0bec5; }
+
+#chelem-strip.cs-slam {
+    background: linear-gradient(180deg, rgba(255, 214, 0, 0.20), rgba(255, 160, 0, 0.10));
+    border: 1px solid rgba(255, 214, 0, 0.65);
+    box-shadow: 0 0 18px rgba(255, 193, 7, 0.25);
+}
+#chelem-strip.cs-slam .cs-head {
+    font-size: 16px;
+    font-weight: 900;
+    letter-spacing: 5px;
+    color: #ffd600;
+    opacity: 1;
+    margin-bottom: 8px;
+}
+#chelem-strip.cs-slam .cs-who {
+    font-size: 13px;
+    letter-spacing: 0;
+    color: #fff8e1;
+    margin-bottom: 8px;
+}
+#chelem-strip.cs-slam .cs-leg {
+    color: #fff8e1;
+    background: rgba(255, 214, 0, 0.18);
+}
+
+/* ---------------------------------------------------------------------------
    THE SLOPE READOUT
    Only present on a circuit with relief (see renderSlopeIndicator). Four
    colours, and they are the SAME four the circuit is painted in - amber up,
