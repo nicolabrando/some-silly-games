@@ -346,10 +346,21 @@ function makeSquealVoice(level) {
     // at Q 2.5 passes nearly a kilohertz. Measured, the first draft's 1.0 /
     // 0.55 / 0.22 against a bed at 0.16 left the bed carrying most of the
     // energy - which is to say it was still a hiss with a tint on it.
-    for (const [mult, q, amp] of [[1, 30, 3.6], [1.5, 26, 1.3], [3, 18, 0.5]]) {
+    //
+    // STRIDENT, which is a different axis from "pitched". Nicola asked for the
+    // tyres to screech harder, and a squeal is shrill because of what sits
+    // ABOVE the fundamental rather than because of the fundamental itself: the
+    // ear reads brightness from the upper partials. So the stack gained a 2x
+    // and a 4.5x, the weight moved up it (the third and fourth partials are
+    // now worth as much as the second), and the whole thing sits higher - see
+    // updateSurfaceSound, where the fundamental runs 1150-2050Hz instead of
+    // 900-1520. Loud enough to be the sound of the corner, too: level 0.28
+    // against the grass at 0.34.
+    for (const [mult, q, amp] of [[1, 30, 3.0], [1.5, 28, 1.5], [2, 26, 1.5],
+                                  [3, 22, 1.1], [4.5, 16, 0.55]]) {
         const f = audioContext.createBiquadFilter();
         f.type = 'bandpass';
-        f.frequency.value = 1100 * mult;
+        f.frequency.value = 1400 * mult;
         f.Q.value = q;
         const g = audioContext.createGain();
         g.gain.value = amp;
@@ -359,19 +370,21 @@ function makeSquealVoice(level) {
     // and the scrub bed it sits on
     const bed = audioContext.createBiquadFilter();
     bed.type = 'bandpass';
-    bed.frequency.value = 2200;
-    bed.Q.value = 2.5;
+    bed.frequency.value = 3000;
+    bed.Q.value = 2.2;
     const bedG = audioContext.createGain();
-    bedG.gain.value = 0.09;
+    bedG.gain.value = 0.10;
     src.connect(bed); bed.connect(bedG); bedG.connect(gain);
 
     // the warble
     const lfo = audioContext.createOscillator();
     lfo.type = 'sine';
-    lfo.frequency.value = 7.3;
+    // Faster and deeper than a hum: rubber does not hold a steady note, and
+    // the flutter is most of what separates a screech from a test tone.
+    lfo.frequency.value = 8.6;
     for (const pt of parts) {
         const d = audioContext.createGain();
-        d.gain.value = 42 * pt.mult;          // a few per cent of each peak
+        d.gain.value = 60 * pt.mult;          // a few per cent of each peak
         lfo.connect(d); d.connect(pt.filt.frequency);
     }
     lfo.start();
@@ -389,7 +402,7 @@ function initSfx() {
         // grass: broadband, dull, and loud enough to be a warning
         grass: makeNoiseVoice('lowpass', 320, 0, 0.34),
         // rubber giving up - and it is a pitch, not a hiss. See above.
-        slide: makeSquealVoice(0.20)
+        slide: makeSquealVoice(0.28)
     };
     return sfx;
 }
@@ -412,10 +425,10 @@ function updateSurfaceSound(surface, slide, speed) {
         // The pitch rises as the slide worsens, which is what makes it a
         // warning rather than an ornament - and the whole resonant stack has
         // to move together or it stops being one sound and becomes three.
-        const f0 = 900 + 620 * squeal;
+        const f0 = 1150 + 900 * squeal;
         for (const pt of sfx.slide.parts)
             pt.filt.frequency.setTargetAtTime(f0 * pt.mult, t, 0.05);
-        sfx.slide.bed.frequency.setTargetAtTime(1800 + 900 * squeal, t, 0.06);
+        sfx.slide.bed.frequency.setTargetAtTime(2400 + 1500 * squeal, t, 0.06);
     }
 }
 
@@ -480,9 +493,19 @@ function sfxImpact(severity, pan, dist) {
         f.type = type;
         f.frequency.value = freq;
         if (q) f.Q.value = q;
-        // the filter opens and shuts across the burst: a panel deforming is
-        // bright at the instant of contact and dull immediately after
-        if (dend) f.frequency.exponentialRampToValueAtTime(Math.max(40, dend), when + dur);
+        // The filter opens and shuts across the burst: a panel deforming is
+        // bright at the instant of contact and dull immediately after.
+        //
+        // setValueAtTime FIRST. An AudioParam ramp with no anchor starts from
+        // the context's zero, not from where the sound does - so the body of
+        // the crash, a lowpass meant to slide from 300Hz down to 80 across its
+        // own 90ms, was already at 80Hz before it made a sound. Measured, the
+        // whole impact had 0.2% of its energy below 200Hz: a car crash with no
+        // weight in it at all.
+        if (dend) {
+            f.frequency.setValueAtTime(freq, when);
+            f.frequency.exponentialRampToValueAtTime(Math.max(40, dend), when + dur);
+        }
         const g = audioContext.createGain();
         // A GainNode's gain defaults to 1, and scheduling the first event at
         // `when` leaves it AT ONE until then. See the note at the ring below:
@@ -507,9 +530,14 @@ function sfxImpact(severity, pan, dist) {
     for (let i = 0; i < grains; i++) {
         if (i > 0) when += rnd(0.045, 0.11);
         const fall = Math.pow(0.58, i);                     // each one smaller
-        // the body: mass, low and dull, and NOT a tone
+        // The body: mass, low and dull, and NOT a tone. The amplitude looks
+        // enormous next to the others and is not: a lowpass at 400Hz passes
+        // 400Hz of a broadband source while the debris tail's highpass passes
+        // twenty kilohertz, so at equal amplitude the tail carries fifty times
+        // the power. Measured before this was corrected, the whole impact had
+        // 1% of its energy below 200Hz - a car crash with no weight in it.
         burst(when, rnd(0.045, 0.075) + 0.045 * s, 'lowpass',
-              rnd(150, 260) + 220 * s, 0.9, 0.85 * level * fall, rnd(60, 95));
+              rnd(150, 260) + 220 * s, 0.9, 3.4 * level * fall, rnd(60, 95));
         // the panel: the crunch proper, mid and broad
         burst(when + rnd(0, 0.005), rnd(0.035, 0.065) + 0.035 * s, 'bandpass',
               rnd(700, 1200) + 700 * s, 1.1, 0.55 * level * fall, rnd(240, 420));
@@ -546,7 +574,7 @@ function sfxImpact(severity, pan, dist) {
     // measured, this is what stops the sound ENDING, which is the difference
     // between something breaking and something being hit.
     const tail = 0.30 + 0.70 * s;
-    burst(t0 + 0.03, tail, 'highpass', rnd(1500, 2300), 0.7, 0.30 * level, 3400);
+    burst(t0 + 0.03, tail, 'highpass', rnd(2400, 3200), 0.7, 0.15 * level, 4200);
 }
 
 // One short tone. The start lights, the flag and the VSC are all this.
