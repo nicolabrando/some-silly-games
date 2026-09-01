@@ -333,14 +333,11 @@ function makeNoiseVoice(type, freq, q, level) {
 //  And a little of the old broadband underneath, because a tyre is also
 //  scrubbing tarmac - it just is not ONLY doing that.
 function makeSquealVoice(level) {
-    const src = audioContext.createBufferSource();
-    src.buffer = getNoiseBuffer();
-    src.loop = true;
     const gain = audioContext.createGain();
     gain.gain.value = 0;
 
     // the resonant stack
-    const parts = [];
+    const parts = [], beds = [], lfos = [];
     // The gains look large because a Q30 bandpass passes about f/Q = 50Hz of
     // a broadband source and throws the rest away, while the scrub bed below
     // at Q 2.5 passes nearly a kilohertz. Measured, the first draft's 1.0 /
@@ -367,42 +364,116 @@ function makeSquealVoice(level) {
     //     130Hz wide and breathes), the weight moved onto the 2x and 3x
     //     partials, and the gain now ramps in over 15ms instead of 30 - a
     //     squeal that fades up is a squeal you notice after the corner.
-    for (const [mult, q, amp] of [[1, 32, 2.4], [1.5, 30, 1.6], [2, 28, 1.8],
-                                  [3, 24, 1.4], [4.5, 18, 0.6]]) {
-        const f = audioContext.createBiquadFilter();
-        f.type = 'bandpass';
-        f.frequency.value = 1400 * mult;
-        f.Q.value = q;
-        const g = audioContext.createGain();
-        g.gain.value = amp;
-        src.connect(f); f.connect(g); g.connect(gain);
-        parts.push({ filt: f, mult: mult });
-    }
-    // and the scrub bed it sits on
-    const bed = audioContext.createBiquadFilter();
-    bed.type = 'bandpass';
-    bed.frequency.value = 3600;
-    bed.Q.value = 2.4;
-    const bedG = audioContext.createGain();
-    bedG.gain.value = 0.08;
-    src.connect(bed); bed.connect(bedG); bedG.connect(gain);
+    //
+    // AMPIO, third pass, and it is the OPPOSITE knob to the one above. That
+    // second pass narrowed every peak and moved the lot upwards, and past a
+    // point that stops being a screech and becomes a whistle: thin, all in one
+    // place, nothing underneath it. Nicola asked for wider and a little lower,
+    // which is three changes and one measure.
+    //
+    //   The measure is SPECTRAL SPREAD - the standard deviation of the
+    //   spectrum about its centroid, in Hz. It is a genuinely different axis
+    //   from everything else here: a sound can be bright, pitched, loud and
+    //   still narrow, and that is exactly what a row of Q30 resonances with
+    //   silence between them is.
+    //
+    //   1. A HALF-MULTIPLE UNDER THE FUNDAMENTAL. Real rubber howls an octave
+    //      below the squeal as well as above it, and a partial at 0.5x puts
+    //      body under the sound where there was nothing but the bed - it is
+    //      the single biggest change to the width, because width is about how
+    //      far the energy reaches, not how fat each peak is.
+    //   2. WIDER PEAKS. Q 32-18 down to 24-13: each resonance passes about a
+    //      third more band than it did. Still nowhere near the kerb's Q1-2
+    //      rush, and the test holds it there - the first attempt went to
+    //      20-11 with a bed at 0.18 and the measurements caught it drifting
+    //      back into the hiss this voice exists to not be (spectral flatness
+    //      0.22 -> 0.34, peak Q 30 -> 11), so both were walked back.
+    //   3. AND A BROADER BED, Q 2.4 down to 1.2 at 0.07 a side. The bed is the
+    //      tyre scrubbing tarmac rather than singing, and it fills the gaps
+    //      between the partials that the ear hears as "thin" - but it is
+    //      noise, and past a point noise is all you can hear.
+    //   4. AND IT IS NO LONGER A POINT. The whole stack used to be one voice
+    //      arriving from the middle of the stereo image, and a sound that
+    //      comes from a point is a small sound however it is filtered. There
+    //      are four tyres, they are in four places, and none of them agrees
+    //      with the others about anything. So the stack is built TWICE and
+    //      panned hard apart, and the two halves are made to disagree in the
+    //      three ways that matter:
+    //        - different noise. Both sides read the same buffer from a
+    //          different offset, so the source material is uncorrelated. Two
+    //          copies of the SAME noise panned apart is not width - it sums
+    //          back to the middle and sounds exactly like one voice.
+    //        - detuned +-1.2%, so the partials beat against each other.
+    //        - and separate warble LFOs at 8.6 and 7.4Hz, so the flutter never
+    //          lines up.
+    // Lower is the last of it: the fundamental runs 1250-2150Hz now, see
+    // updateSurfaceSound.
+    const TABLE = [[0.5, 14, 1.1], [1, 24, 2.4], [1.5, 23, 1.6],
+                   [2, 22, 1.7], [3, 18, 1.3], [4.5, 13, 0.55]];
+    for (const side of [{ pan: -0.6, rate: 8.6, tune: 0.988, offset: 0 },
+                        { pan: 0.6, rate: 7.4, tune: 1.012, offset: 0.31 }]) {
+        const src = audioContext.createBufferSource();
+        src.buffer = getNoiseBuffer();
+        src.loop = true;
 
-    // the warble
-    const lfo = audioContext.createOscillator();
-    lfo.type = 'sine';
-    // Faster and deeper than a hum: rubber does not hold a steady note, and
-    // the flutter is most of what separates a screech from a test tone.
-    lfo.frequency.value = 8.6;
-    for (const pt of parts) {
-        const d = audioContext.createGain();
-        d.gain.value = 60 * pt.mult;          // a few per cent of each peak
-        lfo.connect(d); d.connect(pt.filt.frequency);
+        // Panning is a nicety, not a requirement - an engine old enough to
+        // lack createStereoPanner still gets both halves, just on top of each
+        // other, where the detune and the two LFOs still do their half of the
+        // job.
+        let dest = gain;
+        if (typeof audioContext.createStereoPanner === 'function') {
+            const p = audioContext.createStereoPanner();
+            p.pan.value = side.pan;
+            p.connect(gain);
+            dest = p;
+        }
+
+        const mine = [];
+        for (const [mult, q, amp] of TABLE) {
+            const f = audioContext.createBiquadFilter();
+            f.type = 'bandpass';
+            f.frequency.value = 1400 * mult * side.tune;
+            f.Q.value = q;
+            const g = audioContext.createGain();
+            g.gain.value = amp;
+            src.connect(f); f.connect(g); g.connect(dest);
+            // `mult` carries the detune, so updateSurfaceSound can move the
+            // whole thing with one fundamental and keep the two sides apart
+            const pt = { filt: f, mult: mult * side.tune };
+            mine.push(pt); parts.push(pt);
+        }
+        // and the scrub bed it sits on
+        const bed = audioContext.createBiquadFilter();
+        bed.type = 'bandpass';
+        bed.frequency.value = 3000;
+        bed.Q.value = 1.2;
+        const bedG = audioContext.createGain();
+        bedG.gain.value = 0.07;
+        src.connect(bed); bed.connect(bedG); bedG.connect(dest);
+        beds.push(bed);
+
+        // the warble
+        const lfo = audioContext.createOscillator();
+        lfo.type = 'sine';
+        // Faster and deeper than a hum: rubber does not hold a steady note,
+        // and the flutter is most of what separates a screech from a test
+        // tone. The two sides run at different rates on purpose.
+        lfo.frequency.value = side.rate;
+        for (const pt of mine) {
+            const d = audioContext.createGain();
+            d.gain.value = 60 * pt.mult;      // a few per cent of each peak
+            lfo.connect(d); d.connect(pt.filt.frequency);
+        }
+        lfo.start();
+        lfos.push(lfo);
+
+        // read from a different place in the buffer: this is what makes the
+        // two sides different noise rather than the same noise twice
+        src.start(0, side.offset);
     }
-    lfo.start();
 
     gain.connect(audioOut());
-    src.start();
-    return { src: src, parts: parts, bed: bed, gain: gain, level: level, lfo: lfo };
+    return { parts: parts, beds: beds, gain: gain, level: level, lfos: lfos };
 }
 
 // ---------------------------------------------------------------------------
@@ -503,7 +574,7 @@ function initSfx() {
         // grass: broadband, dull, and loud enough to be a warning
         grass: makeNoiseVoice('lowpass', 320, 0, 0.34),
         // rubber giving up - and it is a pitch, not a hiss. See above.
-        slide: makeSquealVoice(0.34)
+        slide: makeSquealVoice(0.30)
     };
     return sfx;
 }
@@ -533,10 +604,14 @@ function updateSurfaceSound(surface, slide, speed) {
         // The pitch rises as the slide worsens, which is what makes it a
         // warning rather than an ornament - and the whole resonant stack has
         // to move together or it stops being one sound and becomes three.
-        const f0 = 1500 + 1100 * squeal;
+        // 1250-2150Hz, down a step from 1500-2600: the stack sat high enough
+        // to whistle. The partials go with it, including the 0.5x that now
+        // runs under the fundamental at 625-1075Hz.
+        const f0 = 1250 + 900 * squeal;
         for (const pt of sfx.slide.parts)
             pt.filt.frequency.setTargetAtTime(f0 * pt.mult, t, 0.05);
-        sfx.slide.bed.frequency.setTargetAtTime(3000 + 1800 * squeal, t, 0.06);
+        for (const bed of sfx.slide.beds)
+            bed.frequency.setTargetAtTime(2500 + 1500 * squeal, t, 0.06);
     }
 }
 
