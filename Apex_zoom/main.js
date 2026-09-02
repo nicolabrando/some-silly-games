@@ -3971,7 +3971,102 @@ function resumeChampionship() {
 //  wiped when the season ends. This is the history, and nothing wipes it.
 // ---------------------------------------------------------------------------
 const SEASON_ARCHIVE_KEY = 'apexzoom.seasons';
-const SEASON_ARCHIVE_MAX = 40;
+// 200, up from 40. Nicola went looking for his older seasons and they were
+// gone: forty is a low ceiling for somebody who runs a championship most
+// evenings, and the archive dropped the oldest to stay under it without ever
+// saying so. Forty was chosen when a season cost 22.6KB to store - nine
+// hundred kilobytes of shelf for the lot, which was as much as felt safe. They
+// cost about 6KB each now (see packSeason), so two hundred of them fit in less
+// room than forty used to take.
+const SEASON_ARCHIVE_MAX = 200;
+
+// ---------------------------------------------------------------------------
+//  WRITTEN NARROW
+//
+//  A season is 22.6KB in the shape the game holds it, and 92% of that is the
+//  results: ten rounds, twelve drivers a round, and every one of those hundred
+//  and twenty rows spelling out {"color":"purple","code":"VER","name":"Max
+//  Verstappen","pos":4,...} in full. The colours, the codes, the names and the
+//  compounds are the same handful of strings over and over.
+//
+//  So the storage layer packs and unpacks, and NOTHING ELSE CHANGES. Every
+//  reader in the game - the career strip, the Hall of Fame, the circuit pages,
+//  the detail screen, export - goes on seeing the shape it always saw, because
+//  the pack happens on the way into localStorage and the unpack on the way out.
+//  Doing it as a different in-memory shape instead would have meant editing
+//  every one of those readers, which is a much larger blast radius for the same
+//  bytes.
+//
+//  The trick is a per-season string table: every colour, code, name, compound
+//  and circuit key in the season is written once, and the rows become arrays of
+//  small integers pointing into it. A row carrying anything this does not know
+//  about is stored verbatim, so the pack cannot lose a field it has not been
+//  told about - and the test asserts the round trip on real seasons rather than
+//  trusting that.
+// ---------------------------------------------------------------------------
+const PACK_ORDER = ['color', 'code', 'name', 'pos', 'pts', 'bonus', 'tyre', 'dnf'];
+const PACK_QUALI = ['pos', 'color', 'ms', 'tyre'];
+const PACK_ROUND = ['track', 'wet', 'fastest', 'pole', 'chelem', 'qualiFrom'];
+// which of those hold strings, and so go through the table
+const PACK_STR = { color: 1, code: 1, name: 1, tyre: 1, track: 1,
+                   fastest: 1, pole: 1, chelem: 1, qualiFrom: 1 };
+
+function packSeason(entry) {
+    const strs = [], seen = new Map();
+    const S = (v) => {
+        if (v === null || v === undefined) return null;
+        if (typeof v !== 'string') return v;          // not a string: as it is
+        if (!seen.has(v)) { seen.set(v, strs.length); strs.push(v); }
+        return seen.get(v);
+    };
+    const row = (o, keys) => {
+        if (!o || typeof o !== 'object') return o;
+        // an unknown field means this row is not one this packer understands
+        for (const k of Object.keys(o)) if (keys.indexOf(k) < 0) return { _: o };
+        return keys.map(k => (PACK_STR[k] ? S(o[k]) : (o[k] === undefined ? null : o[k])));
+    };
+    const out = Object.assign({}, entry);
+    out.results = (entry.results || []).map(r => {
+        if (!r || typeof r !== 'object') return { _: r };
+        for (const k of Object.keys(r))
+            if (PACK_ROUND.indexOf(k) < 0 && k !== 'order' && k !== 'quali') return { _: r };
+        return {
+            h: PACK_ROUND.map(k => (PACK_STR[k] ? S(r[k]) : (r[k] === undefined ? null : r[k]))),
+            o: (r.order || []).map(x => row(x, PACK_ORDER)),
+            q: r.quali === undefined ? undefined : (r.quali || []).map(x => row(x, PACK_QUALI))
+        };
+    });
+    out.tracks = (entry.tracks || []).map(S);
+    out.s = strs;
+    out.p = 2;
+    return out;
+}
+
+function unpackSeason(entry) {
+    if (!entry || entry.p !== 2) return entry;         // written before this
+    const strs = entry.s || [];
+    const U = (v) => (typeof v === 'number' ? (strs[v] === undefined ? null : strs[v]) : v);
+    const row = (a, keys) => {
+        if (a && typeof a === 'object' && !Array.isArray(a) && '_' in a) return a._;
+        if (!Array.isArray(a)) return a;
+        const o = {};
+        keys.forEach((k, i) => { o[k] = PACK_STR[k] ? U(a[i]) : a[i]; });
+        return o;
+    };
+    const out = Object.assign({}, entry);
+    delete out.s; delete out.p;
+    out.tracks = (entry.tracks || []).map(U);
+    out.results = (entry.results || []).map(r => {
+        if (r && typeof r === 'object' && '_' in r) return r._;
+        if (!r || !Array.isArray(r.h)) return r;
+        const o = {};
+        PACK_ROUND.forEach((k, i) => { o[k] = PACK_STR[k] ? U(r.h[i]) : r.h[i]; });
+        o.order = (r.o || []).map(x => row(x, PACK_ORDER));
+        if (r.q !== undefined) o.quali = (r.q || []).map(x => row(x, PACK_QUALI));
+        return o;
+    });
+    return out;
+}
 
 // A season needs a name of its own the moment it exists: the seed is not one
 // (two seasons can share a seed - that is what a seed is FOR) and the start
@@ -4001,7 +4096,8 @@ function seasonsLoad() {
         const raw = window.localStorage.getItem(SEASON_ARCHIVE_KEY);
         if (!raw) return [];
         const box = JSON.parse(raw);
-        const list = (box && Array.isArray(box.seasons)) ? box.seasons : [];
+        const list = ((box && Array.isArray(box.seasons)) ? box.seasons : [])
+            .map(unpackSeason);
         // shape-checked on the way in, because this list is also fed by files
         // a player brings from somewhere else
         return list.filter(seasonEntryOk);
@@ -4012,6 +4108,12 @@ function seasonEntryOk(e) {
     return !!(e && typeof e.id === 'string' && Array.isArray(e.tracks) &&
               Array.isArray(e.results) && e.points && typeof e.points === 'object');
 }
+
+// How many seasons the last write had to throw away. Kept because losing
+// history quietly is the whole of the complaint this fixes: the archive used
+// to drop the oldest to stay under its cap and say nothing, so a season you
+// ran in July simply was not there in September.
+let seasonsDropped = 0;
 
 function seasonsSave(list) {
     _circuitStats = null;         // the per-circuit counts are read from this
@@ -4026,7 +4128,8 @@ function seasonsSave(list) {
     while (keep.length) {
         try {
             window.localStorage.setItem(SEASON_ARCHIVE_KEY,
-                JSON.stringify({ v: 1, seasons: keep }));
+                JSON.stringify({ v: 1, seasons: keep.map(packSeason) }));
+            seasonsDropped = Math.max(0, list.length - keep.length);
             return keep;
         } catch (e) { keep = keep.slice(0, keep.length - 1); }
     }
@@ -5283,9 +5386,19 @@ function exRenderSeasons() {
     // lives there and an unfinished season has to be findable to be resumed.
     const c = careerTally(list.filter(e => e.complete));
     if (sub) {
-        sub.textContent = list.length + (list.length === 1 ? ' season' : ' seasons') +
+        let line = list.length + (list.length === 1 ? ' season' : ' seasons') +
             ' on record, ' + c.complete + ' run to the end \u2014 only those count in the stats. ' +
             'Pick one to open it.';
+        // ...and say so when the shelf is filling up, rather than letting the
+        // oldest disappear without a word. The button that saves them is
+        // eighteen pixels below this sentence.
+        if (seasonsDropped > 0 || list.length >= SEASON_ARCHIVE_MAX - 10) {
+            line += ' The shelf holds ' + SEASON_ARCHIVE_MAX + '; past that the oldest ' +
+                'are dropped as new ones are filed' +
+                (seasonsDropped > 0 ? ' \u2014 ' + seasonsDropped + ' just were' : '') +
+                '. Download everything to keep them.';
+        }
+        sub.textContent = line;
     }
     if (career) {
         const rate = c.races ? (100 * c.wins / c.races) : 0;
