@@ -1507,6 +1507,12 @@ document.getElementById('explore-seasons-btn')
     .addEventListener('click', () => showExploreSeasons());
 // Back is one step back here too: from an opened season to the list, and only
 // from the list out to the menu.
+document.getElementById('ex-seasons-stats')
+    .addEventListener('click', () => showExploreStats());
+document.getElementById('ex-stats-back').addEventListener('click', () => {
+    document.getElementById('explore-stats').style.display = 'none';
+    showExploreSeasons();
+});
 document.getElementById('ex-seasons-back').addEventListener('click', () => {
     const detail = document.getElementById('ex-season-detail');
     if (detail && detail.style.display !== 'none') {
@@ -4553,6 +4559,267 @@ function careerTally(list) {
     return out;
 }
 
+
+// ===========================================================================
+//  EVERY NUMBER IN THE ARCHIVE
+//
+//  Nicola asked for a statistics page and said to be generous with it. The
+//  archive already holds, for every round of every season: who started where,
+//  who finished where, on what tyre, in what car, in what weather, who took
+//  pole and the fastest lap, and who retired. Almost nothing here is new data
+//  - it is the same rows read down instead of across.
+//
+//  ONE PASS, ONE SHAPE. Everything below is derived from a flat list of the
+//  player's races, built once, plus a second list for the field. Writing each
+//  section as its own walk over the archive would have been twelve walks and
+//  twelve chances for two of them to disagree about what a race is.
+//
+//  WHAT COUNTS. Complete seasons only, which is the rule every other statistic
+//  in this game already follows - an abandoned season is a story without an
+//  ending. The page says how many are being left out rather than quietly
+//  dropping them.
+//
+//  WHAT IS MISSING, AND SAID SO. Grid positions come from the qualifying grid
+//  recorded with each round, and rounds archived before that was kept have
+//  none. Every grid-based number therefore reports the number of races it
+//  could actually be computed from, instead of averaging over a denominator
+//  that silently changes.
+// ===========================================================================
+function statsTally(list) {
+    const seasons = list.filter(e => e.complete);
+    const races = [];          // one row per race the player started
+    const field = {};          // every driver, by name
+    const seasonRows = [];     // one row per season, for the season records
+    const dr = (name) => (field[name] || (field[name] = {
+        name: name, races: 0, wins: 0, podiums: 0, poles: 0, fl: 0, chelem: 0,
+        dnf: 0, titles: 0, points: 0, posSum: 0, posN: 0
+    }));
+
+    for (const e of seasons) {
+        const rows = seasonTally(e);
+        const me = rows.find(r => r.isPlayer);
+        const champ = rows[0];
+        if (champ) dr(champ.name).titles++;
+        for (const r of rows) {
+            const d = dr(r.name);
+            d.races += r.races; d.wins += r.wins; d.podiums += r.podiums;
+            d.poles += r.poles; d.fl += r.fl; d.chelem += r.chelem;
+            d.dnf += r.dnf; d.points += r.total;
+            d.posSum += r.posSum; d.posN += r.posN;
+        }
+        if (!me) continue;
+
+        const place = rows.indexOf(me) + 1;
+        seasonRows.push({
+            id: e.id, seed: e.seed, at: e.endedAt || e.updatedAt || e.startedAt,
+            place: place, rounds: (e.results || []).length,
+            points: me.total, wins: me.wins, poles: me.poles, podiums: me.podiums,
+            difficulty: e.difficulty || null, nightmare: !!e.nightmare,
+            chassis: me.chassis || null
+        });
+
+        (e.results || []).forEach((r, i) => {
+            const mine = (r.order || []).find(o => o.color === me.color);
+            if (!mine || mine.dns) return;
+            // the grid, when the round kept one
+            let grid = null;
+            const q = (r.quali || []).find(x => x.color === me.color);
+            if (q && q.pos) grid = q.pos;
+            else if (r.pole === me.color) grid = 1;    // pole is a grid slot too
+            races.push({
+                season: e.id, round: i,
+                track: r.track || (e.tracks || [])[i] || null,
+                wet: !!r.wet,
+                at: e.endedAt || e.updatedAt || e.startedAt,
+                difficulty: e.difficulty || null,
+                nightmare: !!e.nightmare,
+                chassis: me.chassis || null,
+                tyre: mine.tyre || null,
+                grid: grid,
+                pos: mine.dnf ? null : (mine.pos || null),
+                dnf: !!mine.dnf,
+                pts: (mine.pts || 0) + (mine.bonus || 0),
+                pole: r.pole === me.color,
+                fl: r.fastest === me.color,
+                chelem: r.chelem === me.color,
+                // who else was classified ahead of and behind you, for the
+                // head-to-head table
+                ahead: (r.order || []).filter(o => !o.dns && o.pos && mine.pos &&
+                                                   o.pos < mine.pos && o.color !== me.color)
+                                      .map(o => o.name || o.color),
+                behind: (r.order || []).filter(o => !o.dns && o.pos && mine.pos &&
+                                                    o.pos > mine.pos && o.color !== me.color)
+                                       .map(o => o.name || o.color),
+                started: (r.order || []).filter(o => !o.dns).length
+            });
+        });
+    }
+
+    // ---- the flat numbers ------------------------------------------------
+    const n = races.length;
+    const fin = races.filter(r => r.pos !== null);
+    const sum = (a, f) => a.reduce((t, x) => t + f(x), 0);
+    const avg = (a, f) => (a.length ? sum(a, f) / a.length : null);
+    const pct = (k, of) => (of ? (100 * k / of) : 0);
+    const wins = races.filter(r => r.pos === 1).length;
+    const podiums = races.filter(r => r.pos !== null && r.pos <= 3).length;
+    const points = races.filter(r => r.pts > 0).length;
+    const dnfs = races.filter(r => r.dnf).length;
+
+    // ---- where you finish, and where you start ---------------------------
+    const bySlot = {};
+    const slot = (k) => (bySlot[k] || (bySlot[k] = {
+        grid: k, starts: 0, wins: 0, podiums: 0, dnf: 0, pts: 0, posSum: 0, posN: 0
+    }));
+    const finishHist = {}, gridHist = {};
+    for (const r of races) {
+        const key = r.pos === null ? 'dnf' : r.pos;
+        finishHist[key] = (finishHist[key] || 0) + 1;
+        if (r.grid) {
+            gridHist[r.grid] = (gridHist[r.grid] || 0) + 1;
+            const s = slot(r.grid);
+            s.starts++; s.pts += r.pts;
+            if (r.dnf) s.dnf++;
+            if (r.pos === 1) s.wins++;
+            if (r.pos !== null && r.pos <= 3) s.podiums++;
+            if (r.pos !== null) { s.posSum += r.pos; s.posN++; }
+        }
+    }
+    const gridded = races.filter(r => r.grid);
+    const moved = gridded.filter(r => r.pos !== null).map(r => r.grid - r.pos);
+
+    // ---- grouped tables --------------------------------------------------
+    const group = (key, label) => {
+        const by = {};
+        for (const r of races) {
+            const k = key(r);
+            if (k === null || k === undefined) continue;
+            const g = by[k] || (by[k] = { key: k, label: label ? label(k) : String(k),
+                                          races: 0, wins: 0, podiums: 0, dnf: 0,
+                                          pts: 0, posSum: 0, posN: 0,
+                                          gridSum: 0, gridN: 0, best: null });
+            g.races++; g.pts += r.pts;
+            if (r.dnf) g.dnf++;
+            if (r.pos === 1) g.wins++;
+            if (r.pos !== null && r.pos <= 3) g.podiums++;
+            if (r.pos !== null) {
+                g.posSum += r.pos; g.posN++;
+                if (g.best === null || r.pos < g.best) g.best = r.pos;
+            }
+            if (r.grid) { g.gridSum += r.grid; g.gridN++; }
+        }
+        return Object.keys(by).map(k => by[k]);
+    };
+
+    // ---- streaks ---------------------------------------------------------
+    // In the order the races were run, which for an archive sorted by season
+    // is season order and then round order.
+    const inOrder = races.slice().sort((a, b) => (a.at || 0) - (b.at || 0) ||
+                                                 (a.round - b.round));
+    const streak = (test) => {
+        let best = 0, cur = 0;
+        for (const r of inOrder) { cur = test(r) ? cur + 1 : 0; best = Math.max(best, cur); }
+        return { best: best, current: cur };
+    };
+
+    // ---- head to head ----------------------------------------------------
+    const h2h = {};
+    for (const r of races) {
+        if (r.pos === null) continue;
+        for (const name of r.ahead) {
+            const d = h2h[name] || (h2h[name] = { name: name, met: 0, ahead: 0, behind: 0 });
+            d.met++; d.behind++;
+        }
+        for (const name of r.behind) {
+            const d = h2h[name] || (h2h[name] = { name: name, met: 0, ahead: 0, behind: 0 });
+            d.met++; d.ahead++;
+        }
+    }
+
+    const gained = moved.length ? Math.max(...moved) : null;
+    const lost = moved.length ? Math.min(...moved) : null;
+    const bestGain = gained === null ? null :
+        gridded.find(r => r.pos !== null && r.grid - r.pos === gained);
+    const worstLoss = lost === null ? null :
+        gridded.find(r => r.pos !== null && r.grid - r.pos === lost);
+
+    return {
+        seasons: seasons.length,
+        skipped: list.length - seasons.length,
+        races: n,
+        headline: {
+            titles: seasonRows.filter(s => s.place === 1).length,
+            runnerUp: seasonRows.filter(s => s.place === 2).length,
+            avgChampPlace: avg(seasonRows, s => s.place),
+            races: n, wins: wins, winRate: pct(wins, n),
+            podiums: podiums, podiumRate: pct(podiums, n),
+            points: sum(races, r => r.pts),
+            pointsPerRace: n ? sum(races, r => r.pts) / n : 0,
+            inThePoints: points, inThePointsRate: pct(points, n),
+            poles: races.filter(r => r.pole).length,
+            fl: races.filter(r => r.fl).length,
+            chelem: races.filter(r => r.chelem).length,
+            dnf: dnfs, dnfRate: pct(dnfs, n),
+            avgFinish: avg(fin, r => r.pos),
+            medianFinish: (() => {
+                const a = fin.map(r => r.pos).sort((x, y) => x - y);
+                return a.length ? a[Math.floor(a.length / 2)] : null;
+            })(),
+            best: fin.length ? Math.min(...fin.map(r => r.pos)) : null,
+            worst: fin.length ? Math.max(...fin.map(r => r.pos)) : null,
+            avgGrid: avg(gridded, r => r.grid),
+            gridKnown: gridded.length,
+            avgMoved: moved.length ? moved.reduce((a, b) => a + b, 0) / moved.length : null,
+            bestGain: gained, bestGainAt: bestGain || null,
+            worstLoss: lost, worstLossAt: worstLoss || null,
+            wetRaces: races.filter(r => r.wet).length,
+            firstAt: inOrder.length ? inOrder[0].at : null,
+            lastAt: inOrder.length ? inOrder[inOrder.length - 1].at : null
+        },
+        finishHist: finishHist,
+        gridHist: gridHist,
+        bySlot: Object.keys(bySlot).map(k => bySlot[k]).sort((a, b) => a.grid - b.grid),
+        conversion: {
+            poleStarts: gridded.filter(r => r.grid === 1).length,
+            poleWins: gridded.filter(r => r.grid === 1 && r.pos === 1).length,
+            frontRow: gridded.filter(r => r.grid <= 2).length,
+            frontRowWins: gridded.filter(r => r.grid <= 2 && r.pos === 1).length,
+            topThree: gridded.filter(r => r.grid <= 3).length,
+            topThreePodiums: gridded.filter(r => r.grid <= 3 && r.pos !== null && r.pos <= 3).length,
+            outsideTop: gridded.filter(r => r.grid > 3).length,
+            outsideTopWins: gridded.filter(r => r.grid > 3 && r.pos === 1).length
+        },
+        circuits: group(r => r.track, k => (typeof TRACK_LABELS !== 'undefined' && TRACK_LABELS[k]) || k)
+            .sort((a, b) => b.races - a.races),
+        weather: group(r => (r.wet ? 'wet' : 'dry'),
+                       k => (k === 'wet' ? 'In the rain' : 'Dry')),
+        tyres: group(r => r.tyre,
+                     k => (typeof TYRES !== 'undefined' && TYRES[k] ? TYRES[k].label : k))
+            .sort((a, b) => b.races - a.races),
+        chassis: group(r => r.chassis,
+                       k => (typeof CHASSIS !== 'undefined' && CHASSIS[k] ? CHASSIS[k].label : k))
+            .sort((a, b) => b.races - a.races),
+        difficulty: group(r => (r.nightmare ? 'nightmare' : r.difficulty))
+            .sort((a, b) => b.races - a.races),
+        streaks: {
+            wins: streak(r => r.pos === 1),
+            podiums: streak(r => r.pos !== null && r.pos <= 3),
+            points: streak(r => r.pts > 0),
+            finishes: streak(r => !r.dnf)
+        },
+        h2h: Object.keys(h2h).map(k => h2h[k]).sort((a, b) => b.met - a.met),
+        seasonRows: seasonRows.sort((a, b) => (b.at || 0) - (a.at || 0)),
+        records: {
+            mostWins: seasonRows.reduce((b, s) => (!b || s.wins > b.wins ? s : b), null),
+            mostPoints: seasonRows.reduce((b, s) => (!b || s.points > b.points ? s : b), null),
+            mostPoles: seasonRows.reduce((b, s) => (!b || s.poles > b.poles ? s : b), null)
+        },
+        field: Object.keys(field).map(k => field[k])
+            .filter(d => d.races > 0)
+            .sort((a, b) => b.titles - a.titles || b.wins - a.wins || b.points - a.points)
+    };
+}
+
 // ---------------------------------------------------------------------------
 //  THE GHOST
 //  Practice used to be a lap with nobody to measure against until the tower
@@ -5354,6 +5621,207 @@ function seasonEndedAt(e) {
 function exCell(k, v, title) {
     return '<div class="ex-cell"' + (title ? ' title="' + title + '"' : '') + '>' +
            '<div class="ex-k">' + k + '</div><div class="ex-v">' + v + '</div></div>';
+}
+
+
+// ---------------------------------------------------------------------------
+//  ...AND THE PAGE THAT SHOWS THEM
+//  Bars are divs with a width, tables are the same tables the rest of Explore
+//  uses. No library, nothing to load, and it renders from one call to
+//  statsTally so the page cannot disagree with itself.
+// ---------------------------------------------------------------------------
+function exNum(v, dp) {
+    if (v === null || v === undefined || !isFinite(v)) return '&mdash;';
+    return dp ? (+v).toFixed(dp) : String(Math.round(v));
+}
+function exPct(v) { return (v === null || !isFinite(v)) ? '&mdash;' : v.toFixed(1) + '%'; }
+function exWhen(ms) {
+    if (!ms) return '—';
+    const d = new Date(ms);
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+// A row of the histogram: a label, a bar as wide as its share, and the count.
+function exBar(label, count, max, tone) {
+    const w = max ? Math.max(2, Math.round(100 * count / max)) : 0;
+    return '<div class="ex-barrow"><span class="ex-barlab">' + label + '</span>' +
+           '<span class="ex-bartrack"><i class="ex-bar' + (tone ? ' ' + tone : '') +
+           '" style="width:' + w + '%"></i></span>' +
+           '<span class="ex-barval">' + count + '</span></div>';
+}
+function exSection(title, body, note) {
+    return '<div class="ex-statsec"><div class="ex-rec-h">' + title + '</div>' +
+           (note ? '<div class="ex-statnote">' + note + '</div>' : '') + body + '</div>';
+}
+// A table from headers and rows of already-rendered cells.
+function exTable(heads, rows, cls) {
+    if (!rows.length) return '<div class="ex-empty">Nothing here yet.</div>';
+    return '<div class="ex-scroll"><table class="ex-seasons ' + (cls || '') + '"><thead><tr>' +
+           heads.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>' +
+           rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') +
+           '</tbody></table></div>';
+}
+
+function showExploreStats() {
+    menu.style.display = 'none';
+    document.getElementById('explore-seasons').style.display = 'none';
+    exRenderStats();
+    document.getElementById('explore-stats').style.display = 'block';
+}
+
+function exRenderStats() {
+    const host = document.getElementById('ex-stats-body');
+    const sub = document.getElementById('ex-stats-sub');
+    if (!host) return;
+    const all = seasonsLoad();
+    const s = statsTally(all);
+
+    if (!s.races) {
+        if (sub) sub.textContent = 'Nothing to count yet.';
+        host.innerHTML = '<div class="ex-empty">No finished season on record. Statistics are ' +
+            'counted from championships run to the end &mdash; the numbers from a season you ' +
+            'walked away from would be a season and a half of a story.</div>';
+        return;
+    }
+    const h = s.headline;
+    if (sub) {
+        sub.textContent = s.races + ' races across ' + s.seasons +
+            (s.seasons === 1 ? ' finished season' : ' finished seasons') +
+            (s.skipped ? ', ' + s.skipped + ' unfinished left out' : '') +
+            ' — ' + exWhen(h.firstAt) + ' to ' + exWhen(h.lastAt) + '.';
+    }
+
+    let html = '';
+
+    // ---- the headline ----------------------------------------------------
+    html += exSection('The career', '<div class="ex-grid ex-career-grid">' +
+        exCell('Titles', h.titles + (h.runnerUp ? '<span class="ex-sml"> · ' + h.runnerUp + ' 2nd</span>' : '')) +
+        exCell('Avg. championship', exNum(h.avgChampPlace, 1), 'where you finish a season, on average') +
+        exCell('Races', h.races) +
+        exCell('Wins', h.wins + '<span class="ex-sml"> · ' + exPct(h.winRate) + '</span>') +
+        exCell('Podiums', h.podiums + '<span class="ex-sml"> · ' + exPct(h.podiumRate) + '</span>') +
+        exCell('In the points', h.inThePoints + '<span class="ex-sml"> · ' + exPct(h.inThePointsRate) + '</span>') +
+        exCell('Points', h.points + '<span class="ex-sml"> · ' + exNum(h.pointsPerRace, 1) + '/race</span>') +
+        exCell('Poles', h.poles) +
+        exCell('Fastest laps', h.fl) +
+        exCell('Grand Chelems', h.chelem) +
+        exCell('Retirements', h.dnf + '<span class="ex-sml"> · ' + exPct(h.dnfRate) + '</span>') +
+        exCell('Avg. finish', exNum(h.avgFinish, 2), 'retirements are left out of this one') +
+        exCell('Median finish', exNum(h.medianFinish)) +
+        exCell('Best · worst', exNum(h.best) + ' · ' + exNum(h.worst)) +
+        exCell('Avg. grid', exNum(h.avgGrid, 2),
+               h.gridKnown + ' of ' + h.races + ' races have a grid on record') +
+        exCell('Avg. places gained', (h.avgMoved === null ? '&mdash;' :
+               (h.avgMoved > 0 ? '+' : '') + exNum(h.avgMoved, 2))) +
+        exCell('Wet races', h.wetRaces) +
+        exCell('Longest win streak', s.streaks.wins.best) +
+        '</div>');
+
+    // ---- where you finish ------------------------------------------------
+    const fmax = Math.max(...Object.keys(s.finishHist).map(k => s.finishHist[k]));
+    let finBars = '';
+    for (let p = 1; p <= 12; p++)
+        if (s.finishHist[p]) finBars += exBar('P' + p, s.finishHist[p], fmax,
+            p === 1 ? 'ex-bar-gold' : (p <= 3 ? 'ex-bar-pod' : ''));
+    if (s.finishHist.dnf) finBars += exBar('DNF', s.finishHist.dnf, fmax, 'ex-bar-bad');
+    html += exSection('Where you finish', '<div class="ex-bars">' + finBars + '</div>');
+
+    // ---- where you start -------------------------------------------------
+    if (h.gridKnown) {
+        const gmax = Math.max(...Object.keys(s.gridHist).map(k => s.gridHist[k]));
+        let gBars = '';
+        for (let p = 1; p <= 12; p++)
+            if (s.gridHist[p]) gBars += exBar('P' + p, s.gridHist[p], gmax, p === 1 ? 'ex-bar-gold' : '');
+        html += exSection('Where you start', '<div class="ex-bars">' + gBars + '</div>' +
+            exTable(['Grid', 'Starts', 'Wins', 'Win rate', 'Podiums', 'DNF', 'Avg. finish', 'Points'],
+                s.bySlot.map(g => ['P' + g.grid, g.starts, g.wins,
+                    exPct(g.starts ? 100 * g.wins / g.starts : null), g.podiums, g.dnf,
+                    exNum(g.posN ? g.posSum / g.posN : null, 2), g.pts])),
+            'From the qualifying grid kept with each round: ' + h.gridKnown + ' of ' +
+            h.races + ' races. Rounds archived before grids were recorded are left out.');
+
+        const c = s.conversion;
+        html += exSection('Converting a start', '<div class="ex-grid ex-career-grid">' +
+            exCell('From pole', c.poleWins + ' / ' + c.poleStarts +
+                   '<span class="ex-sml"> · ' + exPct(c.poleStarts ? 100 * c.poleWins / c.poleStarts : null) + '</span>',
+                   'wins from pole position') +
+            exCell('From the front row', c.frontRowWins + ' / ' + c.frontRow +
+                   '<span class="ex-sml"> · ' + exPct(c.frontRow ? 100 * c.frontRowWins / c.frontRow : null) + '</span>') +
+            exCell('Top three to podium', c.topThreePodiums + ' / ' + c.topThree +
+                   '<span class="ex-sml"> · ' + exPct(c.topThree ? 100 * c.topThreePodiums / c.topThree : null) + '</span>') +
+            exCell('Wins from row two back', c.outsideTopWins + ' / ' + c.outsideTop) +
+            exCell('Best comeback', h.bestGain === null ? '&mdash;' : '+' + h.bestGain +
+                   (h.bestGainAt ? '<span class="ex-sml"> · ' +
+                    ((typeof TRACK_LABELS !== 'undefined' && TRACK_LABELS[h.bestGainAt.track]) ||
+                     h.bestGainAt.track || '') + '</span>' : ''),
+                   'places gained in one race') +
+            exCell('Worst afternoon', h.worstLoss === null ? '&mdash;' : String(h.worstLoss) +
+                   (h.worstLossAt ? '<span class="ex-sml"> · ' +
+                    ((typeof TRACK_LABELS !== 'undefined' && TRACK_LABELS[h.worstLossAt.track]) ||
+                     h.worstLossAt.track || '') + '</span>' : ''),
+                   'places lost in one race') +
+            '</div>');
+    }
+
+    // ---- a table maker for the grouped sections --------------------------
+    const groupTable = (rows, firstHead) => exTable(
+        [firstHead, 'Races', 'Wins', 'Win rate', 'Podiums', 'DNF', 'Avg. grid', 'Avg. finish', 'Best', 'Pts/race'],
+        rows.map(g => [g.label, g.races, g.wins,
+            exPct(g.races ? 100 * g.wins / g.races : null), g.podiums, g.dnf,
+            exNum(g.gridN ? g.gridSum / g.gridN : null, 1),
+            exNum(g.posN ? g.posSum / g.posN : null, 2),
+            g.best === null ? '&mdash;' : 'P' + g.best,
+            exNum(g.races ? g.pts / g.races : null, 1)]));
+
+    html += exSection('Circuit by circuit', groupTable(s.circuits, 'Circuit'));
+    html += exSection('Rain and shine', groupTable(s.weather, 'Weather'));
+    if (s.tyres.length) html += exSection('By compound', groupTable(s.tyres, 'Tyre'),
+        'The compound you started the race on.');
+    if (s.chassis.length) html += exSection('By car', groupTable(s.chassis, 'Chassis'));
+    if (s.difficulty.length) html += exSection('By difficulty', groupTable(s.difficulty, 'Setting'));
+
+    // ---- streaks ---------------------------------------------------------
+    const st = s.streaks;
+    html += exSection('Runs', '<div class="ex-grid ex-career-grid">' +
+        exCell('Wins in a row', st.wins.best + (st.wins.current ? '<span class="ex-sml"> · ' + st.wins.current + ' now</span>' : '')) +
+        exCell('Podiums in a row', st.podiums.best + (st.podiums.current ? '<span class="ex-sml"> · ' + st.podiums.current + ' now</span>' : '')) +
+        exCell('Points in a row', st.points.best + (st.points.current ? '<span class="ex-sml"> · ' + st.points.current + ' now</span>' : '')) +
+        exCell('Finishes in a row', st.finishes.best + (st.finishes.current ? '<span class="ex-sml"> · ' + st.finishes.current + ' now</span>' : '')) +
+        '</div>', 'Counted across seasons, in the order the races were run.');
+
+    // ---- season records --------------------------------------------------
+    const rec = s.records;
+    const recCell = (k, row, val) => exCell(k, row ? (val(row) +
+        '<span class="ex-sml"> · ' + (row.seed || row.id) + '</span>') : '&mdash;');
+    html += exSection('Season records', '<div class="ex-grid ex-career-grid">' +
+        recCell('Most wins', rec.mostWins, r => r.wins) +
+        recCell('Most points', rec.mostPoints, r => r.points) +
+        recCell('Most poles', rec.mostPoles, r => r.poles) +
+        exCell('Seasons finished', s.seasons) +
+        '</div>');
+    html += exSection('Season by season', exTable(
+        ['Season', 'Ended', 'Rounds', 'Finished', 'Wins', 'Poles', 'Podiums', 'Points', 'Car'],
+        s.seasonRows.map(r => [r.seed || r.id, exWhen(r.at), r.rounds,
+            'P' + r.place, r.wins, r.poles, r.podiums, r.points,
+            r.chassis ? ((typeof CHASSIS !== 'undefined' && CHASSIS[r.chassis]) ?
+                          CHASSIS[r.chassis].label : r.chassis) : '&mdash;'])));
+
+    // ---- head to head ----------------------------------------------------
+    html += exSection('Head to head', exTable(
+        ['Driver', 'Raced together', 'You ahead', 'They ahead', 'Your share'],
+        s.h2h.map(d => [d.name, d.met, d.ahead, d.behind,
+            exPct(d.met ? 100 * d.ahead / d.met : null)])),
+        'Counted only where both of you were classified: a race one of you retired ' +
+        'from settles nothing.');
+
+    // ---- everybody -------------------------------------------------------
+    html += exSection('Everyone who has raced', exTable(
+        ['Driver', 'Titles', 'Races', 'Wins', 'Podiums', 'Poles', 'FL', '★', 'DNF', 'Avg. finish', 'Points'],
+        s.field.map(d => [d.name, d.titles || '', d.races, d.wins, d.podiums,
+            d.poles, d.fl, d.chelem || '', d.dnf,
+            exNum(d.posN ? d.posSum / d.posN : null, 2), d.points])),
+        'Every driver in the archive, you included.');
+
+    host.innerHTML = html;
 }
 
 function showExploreSeasons() {

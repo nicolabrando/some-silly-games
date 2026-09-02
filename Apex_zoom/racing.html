@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom56">
+    <link rel="stylesheet" href="style.css?v=zoom57">
 </head>
 <body>
     <div id="game-container">
@@ -367,7 +367,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom56 &nbsp;·&nbsp; 1 Sep 2026</div>
+                <div id="build-stamp">build zoom57 &nbsp;·&nbsp; 1 Sep 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -893,6 +893,10 @@
                 <div id="ex-season-list"></div>
                 <div id="ex-season-detail" style="display: none;"></div>
                 <div class="ex-io">
+                    <!-- every number the archive can be asked for, on its own
+                         page: the list is about individual seasons, this is
+                         about all of them at once -->
+                    <button type="button" id="ex-seasons-stats" class="menu-quiet">Statistics</button>
                     <button type="button" id="ex-seasons-export" class="menu-quiet">Download everything</button>
                     <!-- a LABEL, not a button: clicking a label bound to a file
                          input opens the picker natively, in every browser, with
@@ -902,6 +906,18 @@
                     <span class="ex-io-msg" id="ex-seasons-msg"></span>
                 </div>
                 <button id="ex-seasons-back" class="ex-back">Back</button>
+            </div>
+
+            <!-- Everything the season archive can be asked, read down instead
+                 of across: where you finish, where you start, what you do with
+                 a grid slot, circuit by circuit, wet and dry, by tyre, by car,
+                 by difficulty, in runs, against each driver. Filled by
+                 showExploreStats(). -->
+            <div id="explore-stats" style="display: none;">
+                <h1 class="ex-title">Statistics</h1>
+                <div class="ex-sub" id="ex-stats-sub"></div>
+                <div id="ex-stats-body"></div>
+                <button id="ex-stats-back" class="ex-back">Back</button>
             </div>
 
             <div id="explore-tracks" style="display: none;">
@@ -1091,12 +1107,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom56"></script>
-    <script src="track.js?v=zoom56"></script>
-    <script src="lines.js?v=zoom56"></script>
-    <script src="car.js?v=zoom56"></script>
-    <script src="ai.js?v=zoom56"></script>
-    <script src="audio.js?v=zoom56"></script>
+    <script src="racelog.js?v=zoom57"></script>
+    <script src="track.js?v=zoom57"></script>
+    <script src="lines.js?v=zoom57"></script>
+    <script src="car.js?v=zoom57"></script>
+    <script src="ai.js?v=zoom57"></script>
+    <script src="audio.js?v=zoom57"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1190,6 +1206,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom56"></script>
+    <script src="main.js?v=zoom57"></script>
 </body>
 </html>

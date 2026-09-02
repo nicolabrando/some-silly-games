@@ -59,7 +59,8 @@ canvas {
 /* Every centred panel must be listed here: #ui-layer is pointer-events:none,
    so a panel left out of this rule renders unstyled AND its buttons are dead. */
 #menu, #game-over, #championship-final, #quali-screen, #gp-preview, #tyre-screen,
-#chassis-screen, #explore-tracks, #explore-drivers, #explore-seasons, #recap-screen {
+#chassis-screen, #explore-tracks, #explore-drivers, #explore-seasons, #explore-stats,
+#recap-screen {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -1569,7 +1570,7 @@ button.chassis-opt:hover {
    Two reference screens off the menu: the circuits and the drivers. They are
    wide - a grid of cards is the point - and they scroll, because seventeen
    circuits and ten drivers do not fit on a phone otherwise. */
-#explore-tracks, #explore-drivers, #explore-seasons {
+#explore-tracks, #explore-drivers, #explore-seasons, #explore-stats {
     min-width: 720px;
     max-width: 92vw;
     text-align: left;
@@ -1779,6 +1780,27 @@ td.ex-actions { white-space: nowrap; text-align: right; padding-left: 4px; }
 .ex-scroll { overflow-x: auto; }
 .ex-standings { margin-top: 16px; min-width: 640px; }
 .ex-standings th { padding-bottom: 6px; }
+
+/* ---------------------------------------------------------------------------
+   THE STATISTICS PAGE
+   Sections separated by a rule rather than by boxes - there are a dozen of
+   them and a dozen boxes is a page you scroll past rather than read - and the
+   histograms are bars made of divs, because a chart library for two histograms
+   is a megabyte to draw sixteen rectangles.
+   ------------------------------------------------------------------------ */
+#explore-stats { max-width: 96vw; }
+.ex-statsec { margin-bottom: 22px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); }
+.ex-statsec:first-child { border-top: 0; padding-top: 0; }
+.ex-statnote { font-size: 11px; opacity: 0.5; margin: -4px 0 8px; max-width: 640px; }
+.ex-bars { display: flex; flex-direction: column; gap: 3px; max-width: 560px; }
+.ex-barrow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.ex-barlab { width: 34px; text-align: right; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.ex-bartrack { flex: 1; height: 13px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+.ex-bar { display: block; height: 100%; background: #4a6b8a; border-radius: 3px; }
+.ex-bar-gold { background: #ffd600; }
+.ex-bar-pod { background: #78909c; }
+.ex-bar-bad { background: #b71c1c; }
+.ex-barval { width: 34px; font-variant-numeric: tabular-nums; opacity: 0.8; }
 
 /* download and load, on the two screens that offer them */
 .ex-io {
