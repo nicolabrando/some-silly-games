@@ -411,11 +411,19 @@ function makeSquealVoice(level) {
     // whose harmonics are 1kHz apart can fall BETWEEN two of them and go
     // silent; Q 5-7 up there always catches at least one, and which one it
     // catches keeps changing as the pitch moves, which is the shimmer.
-    const FORMANTS = [[950, 7, 0.5], [2050, 7, 2.0], [3150, 6, 2.4],
-                      [4400, 5, 2.0], [5800, 4.5, 1.2]];
+    // ...and NARROWER than the first draft's 7-4.5. Wide formants smear a
+    // pitch across a band, which is the opposite of "netto": the sound has to
+    // arrive as a line, not as a region. The risk of narrow formants over a
+    // source whose harmonics are a kilohertz apart - a formant falling between
+    // two of them and going quiet - is now carried by the whistle, which needs
+    // no formant at all.
+    const FORMANTS = [[950, 11, 0.5], [2050, 13, 1.8], [3150, 12, 2.2],
+                      [4400, 10, 1.8], [5800, 8, 1.1]];
 
-    for (const side of [{ pan: -0.6, vib: 5.4, tune: -21, offset: 0 },
-                        { pan: 0.6, vib: 6.1, tune: 21, offset: 0.31 }]) {
+    // +-8 cents rather than +-21: at 21 the two sides beat about twenty times
+    // a second, which is heard as roughness rather than as width.
+    for (const side of [{ pan: -0.6, vib: 5.4, tune: -8, offset: 0 },
+                        { pan: 0.6, vib: 6.1, tune: 8, offset: 0.31 }]) {
         let dest = gain;
         if (typeof audioContext.createStereoPanner === 'function') {
             const p = audioContext.createStereoPanner();
@@ -434,8 +442,37 @@ function makeSquealVoice(level) {
         breath.buffer = getNoiseBuffer();
         breath.loop = true;
         const breathG = audioContext.createGain();
-        breathG.gain.value = 0.55;             // under the buzz, never over it
+        breathG.gain.value = 0.15;             // under the buzz, never over it
         breath.connect(breathG);
+
+        // ---- and the whistle itself -------------------------------------
+        // "Una sorta di fischio netto." A voice with formants on it is a
+        // shout; what makes something a WHISTLE is one component so much
+        // stronger and so much purer than everything around it that the ear
+        // hears a single line rather than a timbre. So there is a sine on the
+        // second harmonic, straight out with no formant in front of it -
+        // 1240-2160Hz, which is where a whistle lives - carrying the pitch,
+        // with the buzz and its formants left behind it as the body.
+        //
+        // The THIRD harmonic, not the fundamental and not the second: at
+        // 620-1080Hz a pure tone is a hum, and at twice that the line sat at
+        // 1240-2160 and pulled the whole sound's centre of gravity down to
+        // 2.3kHz with it. Three times puts it at 1860-3240 - a whistle
+        // register, above the second formant, where it cuts instead of
+        // filling in.
+        const whistle = audioContext.createOscillator();
+        whistle.type = 'sine';
+        whistle.frequency.value = 2400;
+        whistle.detune.value = side.tune;
+        const whistleG = audioContext.createGain();
+        // 0.22, and the first try at 0.85 is the reason the number is written
+        // down. At 0.85 the sine was not a line THROUGH the sound, it was the
+        // sound: spectral flatness fell from 0.16 to 0.003, the spread from
+        // 0.65 of the centroid to 0.33, and what came out was a test tone with
+        // a rumour of a voice behind it. A whistle is a dominant partial in
+        // something, not a partial on its own.
+        whistleG.gain.value = 0.22;
+        whistle.connect(whistleG); whistleG.connect(dest);
 
         // ---- the tract: fixed resonances, one bank per side -------------
         const bank = [];
@@ -458,7 +495,10 @@ function makeSquealVoice(level) {
         vib.type = 'sine';
         vib.frequency.value = side.vib;
         const vibD = audioContext.createGain();
-        vibD.gain.value = 38;                  // cents
+        // 20 cents, down from 38. Vibrato is what stops a tone being a test
+        // signal; past a point it is also what stops it being a definite
+        // pitch, and "netto" is a request for the second thing back.
+        vibD.gain.value = 20;                  // cents
         vib.connect(vibD); vibD.connect(osc.detune);
         vib.start(); lfos.push(vib);
 
@@ -468,7 +508,7 @@ function makeSquealVoice(level) {
         rasp.type = 'sine';
         rasp.frequency.value = 31;
         const raspD = audioContext.createGain();
-        raspD.gain.value = 16;
+        raspD.gain.value = 5;
         rasp.connect(raspD); raspD.connect(osc.detune);
         rasp.start(); lfos.push(rasp);
 
@@ -482,13 +522,16 @@ function makeSquealVoice(level) {
         jitLp.type = 'lowpass';
         jitLp.frequency.value = 30;
         const jitD = audioContext.createGain();
-        jitD.gain.value = 45;
+        // 10 cents, down from 45: enough that it is not a machine, little
+        // enough that the line stays a line
+        jitD.gain.value = 10;
         jit.connect(jitLp); jitLp.connect(jitD); jitD.connect(osc.detune);
         jit.start(0, side.offset);
 
         osc.start();
+        whistle.start();
         breath.start(0, side.offset);
-        voices.push({ osc: osc, bank: bank });
+        voices.push({ osc: osc, whistle: whistle, bank: bank });
     }
 
     gain.connect(audioOut());
@@ -627,8 +670,11 @@ function updateSurfaceSound(surface, slide, speed) {
         // through its harmonics and the ones that matter here land at 2-4kHz
         // where the formants are waiting.
         const f0 = 620 + 460 * squeal;
-        for (const v of sfx.slide.voices)
+        for (const v of sfx.slide.voices) {
             v.osc.frequency.setTargetAtTime(f0, t, 0.05);
+            // the whistle rides the third harmonic, so it is the same slide
+            v.whistle.frequency.setTargetAtTime(f0 * 3, t, 0.05);
+        }
         // The formants barely move, and that is deliberate - they are the
         // throat, not the note. What they do is lift a little under strain,
         // the way a voice being pushed does, so the last of the slide is
@@ -752,8 +798,8 @@ function sfxImpact(severity, pan, dist) {
         // says so. 13% under 200Hz was the measurement; a loaded car hitting
         // a barrier is nearer half. So the body dropped an octave and got
         // longer, and the mass layer below joined it.
-        burst(when, rnd(0.065, 0.105) + 0.075 * s, 'lowpass',
-              rnd(110, 180) + 140 * s, 0.9, 3.4 * level * fall, rnd(48, 70));
+        burst(when, rnd(0.075, 0.125) + 0.09 * s, 'lowpass',
+              rnd(95, 155) + 110 * s, 0.9, 4.0 * level * fall, rnd(42, 62));
         // the panel: the crunch proper, mid and broad
         burst(when + rnd(0, 0.005), rnd(0.035, 0.065) + 0.035 * s, 'bandpass',
               rnd(700, 1200) + 700 * s, 1.1, 0.55 * level * fall, rnd(240, 420));
@@ -775,8 +821,20 @@ function sfxImpact(severity, pan, dist) {
     // crash, it is a boom with a crash somewhere behind it - the low end had
     // stopped supporting the sound and started replacing it. Half the weight
     // and two thirds the length puts it under the crunch instead of over it.
-    burst(t0 - 0.004, 0.14 + 0.20 * s, 'lowpass',
-          rnd(80, 120) + 40 * s, 0.6, 2.2 * level, rnd(38, 55), 0.005);
+    burst(t0 - 0.004, 0.22 + 0.32 * s, 'lowpass',
+          rnd(62, 95) + 35 * s, 0.6, 4.4 * level, rnd(32, 46), 0.007);
+
+    // ---- and the settle, which is the second half of weight -------------
+    // A heavy thing that hits something does not stop when the noise does: it
+    // rocks, drops back onto its suspension and thumps a second time, a tenth
+    // of a second later and lower than the first. This is the cheapest weight
+    // in the whole sound, because it adds low energy WITHOUT piling it at the
+    // same instant as everything else - the failure mode of simply turning the
+    // bass up is a boom, and a boom is one event, while this is two.
+    if (s > 0.35) {
+        burst(t0 + rnd(0.09, 0.16), 0.20 + 0.26 * s, 'lowpass',
+              rnd(52, 78), 0.6, 2.1 * level, rnd(28, 40), 0.008);
+    }
 
     // ---- one metallic ring, brief and quiet -----------------------------
     // The only pitched thing in here. A crash does have a ring in it - a
@@ -811,8 +869,18 @@ function sfxImpact(severity, pan, dist) {
     // Quieter than it was, and so is the ring above it. Both are the RATTLE,
     // and a rattle over a thin body is exactly the trolley: the fix is as much
     // about what sits on top of the weight as about the weight itself.
-    const tail = 0.30 + 0.70 * s;
-    burst(t0 + 0.03, tail, 'highpass', rnd(2400, 3200), 0.7, 0.13 * level, 4200);
+    // ...and it went UP again when the mass layer went in. Nothing about the
+    // debris changed; the head of the impact got half as loud again, and a
+    // tail measured against a bigger head is a quieter tail. The rule this
+    // sound is held to is that something is still skittering long after the
+    // bang, so the tail has to keep pace with whatever the bang becomes.
+    // ...and it was lengthened rather than turned up. Turning it up to 0.19
+    // did restore the ratio, and it did it by adding as much to the top of the
+    // spectrum as the mass layer had added to the bottom - which is a louder
+    // crash, not a heavier one. Duration puts energy in the late window where
+    // the ratio is measured without putting any in the head at all.
+    const tail = 0.45 + 1.00 * s;
+    burst(t0 + 0.03, tail, 'highpass', rnd(2400, 3200), 0.7, 0.145 * level, 4200);
 }
 
 // One short tone. The start lights, the flag and the VSC are all this.

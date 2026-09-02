@@ -2225,6 +2225,33 @@ function makeTrackRaw(trackType) {
 
 // The field for a single race: the player (unless spectating) plus AI on
 // shuffled legendary names. Championship keeps its own persistent list.
+// ---------------------------------------------------------------------------
+//  THE DRIVERS, AND HOW BIG A GRID CAN BE
+//
+//  The ten names were written out twice - once in buildField and once in
+//  startChampionship - which was harmless while nothing else needed to know
+//  them. It stopped being harmless when the grid boxes went onto the road:
+//  they are painted at the game's FULL field size, and a field size derived
+//  from one copy of a list that exists twice is a number that goes wrong the
+//  first time somebody adds a driver to the other one.
+//
+//  So: one list, and the count DERIVED from it and from the dropdown rather
+//  than typed. Two seats at the keyboard plus as many AI as there are drivers,
+//  capped by the largest field the opponents menu can ask for - twelve today,
+//  and whatever it should be the day either of those changes.
+// ---------------------------------------------------------------------------
+const LEGEND_NAMES = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton',
+    'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen',
+    'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
+const MAX_SEATS = 2;
+function gridSlotCount() {
+    const sel = document.getElementById('opponents-select');
+    const maxOpp = sel && sel.options.length
+        ? Math.max(...Array.from(sel.options).map(o => parseInt(o.value, 10) || 0))
+        : LEGEND_NAMES.length;
+    return MAX_SEATS + Math.min(maxOpp, LEGEND_NAMES.length);
+}
+
 function buildField() {
     if (isChampionship) return [...championshipState.participants];
 
@@ -2239,7 +2266,7 @@ function buildField() {
         aiColors = aiColors.filter(c => c !== h.color);
     }
 
-    const legendaryDrivers = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
+    const legendaryDrivers = LEGEND_NAMES;
     const randomDrivers = [...legendaryDrivers].sort(() => Math.random() - 0.5);
     // Never spawn more cars than there are drivers: at 10 opponents spectator
     // mode would have asked for 11 and put the same name on two cars.
@@ -6117,89 +6144,12 @@ function startGame(forceTrackType = null) {
     spectateCar = null;   // a tower pick belongs to one race only
     raceSpeed = 1;        // and so does the fast-forward
 
-    // Find the waypoint just BEFORE the start line - NOT the closest one.
-    // The closest can sit past the line: waypoints on a straight are spaced
-    // length/15 apart, and Riviera's 1750px sea-front spaces them 117px, so
-    // the waypoint nearest x=420 sat 47px BEYOND the line. Pole was then
-    // placed 35px back from it - 12px past the line - never logged lap 1,
-    // and spent the race being shown blue flags as a backmarker (the 28 Aug
-    // log has P1 blue-flagged at t=0.008s). The crossing pair is found with
-    // the same test the lap counter itself uses, so the grid and the
-    // odometer can never again disagree about which side of the line the
-    // race starts on; the leftover distance from that waypoint to the line
-    // is folded into the setback below.
-    let startIdx = 0;
-    let startGap = 0;      // waypoint -> start line, along the track
-    {
-        let found = false;
-        for (let i = 0; i < track.waypoints.length; i++) {
-            const a = track.waypoints[i];
-            const b2 = track.waypoints[(i + 1) % track.waypoints.length];
-            if (track.checkLapCross(a.x, a.y, b2.x, b2.y)) {
-                startIdx = i;
-                const t = (track.startX - a.x) / ((b2.x - a.x) || 1);
-                startGap = Math.max(0, Math.min(1, t)) *
-                           Math.hypot(b2.x - a.x, b2.y - a.y);
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            // no crossing pair (should be impossible on a registered
-            // circuit): fall back to the old nearest-waypoint behaviour
-            let minDist = Infinity;
-            track.waypoints.forEach((wp, idx) => {
-                const d = Math.hypot(wp.x - track.startX, wp.y - track.startY);
-                if (d < minDist) { minDist = d; startIdx = idx; }
-            });
-        }
-    }
-    
-    const getGridPos = (distBackward, lateralOffset) => {
-        let traveled = 0;
-        let currIdx = startIdx;
-        let prevWP = track.waypoints[currIdx];
-        
-        // Edge case: if we want distance 0
-        if (distBackward === 0) {
-            let nextIdx = (currIdx - 1 + track.waypoints.length) % track.waypoints.length;
-            let nextWP = track.waypoints[nextIdx];
-            let dx = prevWP.x - nextWP.x;
-            let dy = prevWP.y - nextWP.y;
-            let len = Math.hypot(dx, dy);
-            let nx = dy / len;
-            let ny = -dx / len;
-            return { x: prevWP.x + nx * lateralOffset, y: prevWP.y + ny * lateralOffset, angle: Math.atan2(dy, dx) };
-        }
-        
-        while(traveled < distBackward) {
-            let nextIdx = (currIdx - 1 + track.waypoints.length) % track.waypoints.length;
-            let nextWP = track.waypoints[nextIdx];
-            let segmentDist = Math.hypot(nextWP.x - prevWP.x, nextWP.y - prevWP.y);
-            
-            if (traveled + segmentDist >= distBackward) {
-                let t = (distBackward - traveled) / segmentDist;
-                if (segmentDist === 0) t = 0;
-                let px = prevWP.x + (nextWP.x - prevWP.x) * t;
-                let py = prevWP.y + (nextWP.y - prevWP.y) * t;
-                
-                let dx = prevWP.x - nextWP.x;
-                let dy = prevWP.y - nextWP.y;
-                let len = Math.hypot(dx, dy);
-                let nx = dy / len;
-                let ny = -dx / len;
-                
-                let angle = Math.atan2(dy, dx);
-                
-                return { x: px + nx * lateralOffset, y: py + ny * lateralOffset, angle: angle };
-            }
-            
-            traveled += segmentDist;
-            currIdx = nextIdx;
-            prevWP = nextWP;
-        }
-        return { x: prevWP.x, y: prevWP.y, angle: 0 };
-    };
+    // Where the cars go is the TRACK's question now, not this function's.
+    // The walk that used to live here - find the waypoint before the start
+    // line with the lap counter's own crossing test, then step backwards
+    // along the waypoints - moved to Track.gridSlots, because the grid boxes
+    // are painted on the road for every circuit and paint and cars drawn from
+    // two copies of one walk is a disagreement waiting to happen.
     
     let currentParticipants = [];
     let gridSource = 'simulated qualifying';
@@ -6315,17 +6265,11 @@ function startGame(forceTrackType = null) {
     RaceLog.event('SESSION', `grid set from ${gridSource}: ` +
         currentParticipants.map((p, i) => `${i + 1}.${p.driverName || p.color}`).join(' '));
 
-    // Spawn positions, one per starter: staggered 30px back each row and
-    // alternating 20px either side of the centre line. The base setback is
-    // measured from the START LINE, not from the reference waypoint: the
-    // waypoint sits startGap short of the line, so 35px behind the line is
-    // (35 - startGap) behind the waypoint - floored so pole never lands
-    // ahead of the waypoint on a coarsely-sampled straight.
-    const poleBack = Math.max(6, 35 - startGap);
-    const gridPositions = [];
-    for (let i = 0; i < currentParticipants.length; i++) {
-        gridPositions.push(getGridPos(poleBack + i * 30, i % 2 === 0 ? 20 : -20));
-    }
+    // Spawn positions, one per starter - and they come from the TRACK, which
+    // is also what paints them on the road (Track.gridSlots / drawGridBoxes).
+    // One function for both, so a car can never start somewhere other than on
+    // its own box.
+    const gridPositions = track.gridSlots(currentParticipants.length);
 
     // 4. Instantiate cars at their assigned grid positions
     for (let i = 0; i < currentParticipants.length; i++) {
@@ -9337,7 +9281,7 @@ function startChampionship() {
     if (seedEl) seedEl.value = '';
 
     // Famous names list
-    let availableNames = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton', 'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen', 'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
+    let availableNames = [...LEGEND_NAMES];
     // Shuffle names
     availableNames.sort(() => Math.random() - 0.5);
     

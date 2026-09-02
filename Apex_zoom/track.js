@@ -118,6 +118,27 @@ class SegmentedTrack {
         // more, but the hook is here because a circuit that needs one needs it
         // in the physics, not only in the paint.
         this.dividers = [];
+        // ---------------------------------------------------------------
+        //  FENCED GROUND
+        //  A circuit may declare pieces of ground - {x, y, r} - where the
+        //  verge is fenced off at the EDGE OF THE ASPHALT instead of at the
+        //  usual wall radius, and the armco is painted along that edge.
+        //
+        //  It exists for one shape: a tongue of verge that sticks out in front
+        //  of solid ground. The wall is a fixed distance from the nearest
+        //  centre line, so where two stretches of road converge the solid
+        //  ground between them tapers away before the grass does, and what is
+        //  left is forty pixels of crossable green with a wall behind it and
+        //  nothing drawn on it. Nicola drove into that at Vallone twice and
+        //  described it exactly: a barrier where nothing can be seen.
+        //
+        //  Fencing it at the road edge makes the two agree. The armco is drawn
+        //  where the tarmac stops, which is the only line in that corner a
+        //  driver can actually see, and it is also where the car is now
+        //  stopped. Nothing about the racing surface changes - the zone only
+        //  ever applies to ground that was already off the road.
+        // ---------------------------------------------------------------
+        this.fencedZones = [];
         // True on circuits flipped by mirrorVertically(). The ghost store
         // reads it: a lap recorded one way round cannot drive the other.
         this.mirrored = false;
@@ -242,6 +263,9 @@ class SegmentedTrack {
         for (const d of (this.dividers || [])) {
             d.x1 += ox; d.y1 += oy; d.x2 += ox; d.y2 += oy;
         }
+        // ...and any ground the circuit has declared fenced, stated in the
+        // circuit's own coordinates like everything else
+        for (const z of (this.fencedZones || [])) { z.x += ox; z.y += oy; }
         // Everything else - the racing line, the wall, the barrier, the
         // stands, the bridge - is derived from the segments on first use and
         // cached after, and this runs from the constructor, before any of
@@ -984,8 +1008,47 @@ class SegmentedTrack {
     // #3f8f45, both muted, and the flag's own #009246 next to them would read
     // as more grass. It is lifted to a saturated emerald that neither of them
     // can be mistaken for.
-    drawBarrier(ctx) {
+    // The armco, as runs. Kept behind a method because the tests ask for it
+    // as data - "is anything painted where a car is stopped" is a question
+    // about these coordinates, not about pixels.
+    _barrierRuns() {
+        if (this._barrierPaint) return this._barrierPaint;
         const runs = this.getWalls(this.wallRadius(), this.barrierOffset());
+
+        // ...plus the fence along the edge of the asphalt inside any fenced
+        // zone, built as POLYLINE DATA and handed to the same drawing code as
+        // the rest of the armco. Not stroked onto the canvas separately: the
+        // test that asks "is anything painted where a car is stopped" reads
+        // this array, and a fence that only exists as pixels is a fence the
+        // test cannot see. It is also the level-set walker that is avoided
+        // here rather than reused - it drops its vertices exactly where two
+        // stretches of road come close together, which is the one place this
+        // fence has to be. The road edge is an offset of the centre line and
+        // needs no walker at all.
+        const off = this.trackWidth + this.barrierOffset() - 5;
+        for (const z of (this.fencedZones || [])) {
+            const wps = this.waypoints, N = wps.length;
+            for (const sign of [1, -1]) {
+                let cur = [];
+                for (let i = 0; i <= N; i++) {
+                    const a = wps[i % N], b = wps[(i + 1) % N];
+                    const dx = b.x - a.x, dy = b.y - a.y;
+                    const L = Math.hypot(dx, dy) || 1;
+                    const x = a.x + (dy / L) * off * sign;
+                    const y = a.y - (dx / L) * off * sign;
+                    const inside = (x - z.x) * (x - z.x) + (y - z.y) * (y - z.y) <= z.r * z.r;
+                    if (inside) cur.push(x, y);
+                    else { if (cur.length >= 4) runs.push(cur); cur = []; }
+                }
+                if (cur.length >= 4) runs.push(cur);
+            }
+        }
+        this._barrierPaint = runs;
+        return runs;
+    }
+
+    drawBarrier(ctx) {
+        const runs = this._barrierRuns();
         const COLS = ['#00d152', '#f7f7f7', '#e02b2b'];
 
         ctx.save();
@@ -1190,8 +1253,28 @@ class SegmentedTrack {
         return { dist: Math.sqrt(bd), projX: bx, projY: by, segType: 'line', seg: null };
     }
 
+    inFencedZone(x, y) {
+        const z = this.fencedZones;
+        if (!z || !z.length) return false;
+        for (const o of z)
+            if ((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y) <= o.r * o.r) return true;
+        return false;
+    }
+
     checkBarrierCollision(car) {
         let distData = this.getClosestPoint(car.x, car.y);
+        // Inside a fenced zone the wall is the edge of the asphalt rather than
+        // the usual radius - see fencedZones. The push is the same push; only
+        // the radius it is measured against changes, so a car leaning on this
+        // fence is treated exactly like a car leaning on any other.
+        if (this.inFencedZone(car.x, car.y) && distData.dist > this.trackWidth) {
+            const dx = car.x - distData.projX, dy = car.y - distData.projY;
+            const len = Math.hypot(dx, dy) || 1;
+            const push = len - this.trackWidth;
+            car.x -= (dx / len) * push;
+            car.y -= (dy / len) * push;
+            return;
+        }
         if (this.hasBridge) {
             const own = this.closestOnOwnRoad(car);
             if (own && own.dist > distData.dist &&
@@ -2498,6 +2581,8 @@ class SegmentedTrack {
         this.drawRelief(ctx);
 
         this.drawStartLine(ctx);
+        // The grid, painted on the road for a full field whoever turns up.
+        this.drawGridBoxes(ctx);
         this.drawBarrier(ctx);
         // On top of the asphalt, under the cars.
         this.drawPuddles(ctx);
@@ -2750,6 +2835,160 @@ class SegmentedTrack {
         ctx.lineWidth = this.trackWidth * 2;
         ctx.strokeStyle = '#555';
         ctx.stroke();
+        ctx.restore();
+    }
+
+    // =====================================================================
+    //  THE STARTING GRID, AS GEOMETRY
+    //
+    //  This walk used to live inside initCars as a local closure, which meant
+    //  the only way to know where slot seven was, was to start a race with at
+    //  least seven cars in it. It is on the track now because the grid is a
+    //  property of the CIRCUIT - the boxes are painted on the road whether
+    //  anybody is standing on them or not - and because the paint and the cars
+    //  must come from one function or they will eventually disagree, which is
+    //  the sort of bug that looks like a rendering glitch for a month.
+    //
+    //  Two waypoints and the leftover: pole sits 35px behind the start LINE,
+    //  not behind the reference waypoint. The waypoint before the line sits
+    //  `startGap` short of it, so the setback from the waypoint is 35 - gap,
+    //  floored at 6 so that on a coarsely-sampled straight pole can never land
+    //  ahead of the waypoint it is measured from. Rows are 30px apart and
+    //  alternate 20px either side of the centre line.
+    // =====================================================================
+    gridAnchor() {
+        if (this._gridAnchor) return this._gridAnchor;
+        let startIdx = 0, startGap = 0, found = false;
+        for (let i = 0; i < this.waypoints.length; i++) {
+            const a = this.waypoints[i];
+            const b = this.waypoints[(i + 1) % this.waypoints.length];
+            // the same crossing test the LAP COUNTER uses, so the grid and the
+            // odometer can never disagree about which side of the line a race
+            // starts on
+            if (this.checkLapCross(a.x, a.y, b.x, b.y)) {
+                startIdx = i;
+                const t = (this.startX - a.x) / ((b.x - a.x) || 1);
+                startGap = Math.max(0, Math.min(1, t)) * Math.hypot(b.x - a.x, b.y - a.y);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            let minDist = Infinity;
+            this.waypoints.forEach((wp, idx) => {
+                const d = Math.hypot(wp.x - this.startX, wp.y - this.startY);
+                if (d < minDist) { minDist = d; startIdx = idx; }
+            });
+        }
+        this._gridAnchor = { startIdx: startIdx, startGap: startGap };
+        return this._gridAnchor;
+    }
+
+    // One point on the racing surface, `back` pixels behind the start line
+    // measured ALONG the track, and `side` pixels off the centre line.
+    gridPoint(back, side) {
+        const wps = this.waypoints;
+        let currIdx = this.gridAnchor().startIdx;
+        let prevWP = wps[currIdx];
+        let traveled = 0;
+        const at = (px, py, dx, dy) => {
+            const len = Math.hypot(dx, dy) || 1;
+            return { x: px + (dy / len) * side, y: py + (-dx / len) * side,
+                     angle: Math.atan2(dy, dx) };
+        };
+        if (back === 0) {
+            const nextWP = wps[(currIdx - 1 + wps.length) % wps.length];
+            return at(prevWP.x, prevWP.y, prevWP.x - nextWP.x, prevWP.y - nextWP.y);
+        }
+        for (let guard = 0; guard < wps.length + 2 && traveled < back; guard++) {
+            const nextIdx = (currIdx - 1 + wps.length) % wps.length;
+            const nextWP = wps[nextIdx];
+            const segmentDist = Math.hypot(nextWP.x - prevWP.x, nextWP.y - prevWP.y);
+            if (traveled + segmentDist >= back) {
+                let t = segmentDist === 0 ? 0 : (back - traveled) / segmentDist;
+                return at(prevWP.x + (nextWP.x - prevWP.x) * t,
+                          prevWP.y + (nextWP.y - prevWP.y) * t,
+                          prevWP.x - nextWP.x, prevWP.y - nextWP.y);
+            }
+            traveled += segmentDist;
+            currIdx = nextIdx;
+            prevWP = nextWP;
+        }
+        return { x: prevWP.x, y: prevWP.y, angle: 0 };
+    }
+
+    gridSlots(n) {
+        const back0 = Math.max(6, 35 - this.gridAnchor().startGap);
+        const out = [];
+        for (let i = 0; i < n; i++)
+            out.push(this.gridPoint(back0 + i * 30, i % 2 === 0 ? 20 : -20));
+        return out;
+    }
+
+    // =====================================================================
+    //  ...AND THE GRID, AS PAINT
+    //
+    //  Painted on the asphalt of every circuit, all the time, at the game's
+    //  FULL field size whatever size the field actually is - because that is
+    //  what a real grid is. The boxes at Monza are painted for twenty cars in
+    //  April and they are still painted for twenty when eleven of them retire;
+    //  nobody repaints the road to match the entry list. A grid that appeared
+    //  and shrank with the entry list would be a HUD element pretending to be
+    //  a circuit.
+    //
+    //  Three lines each, closed at the front and open at the back the way a
+    //  real grid box is - the front line is where the car stops its nose, and
+    //  it is open behind because that is the side the car arrives from. And
+    //  nothing else on them: no
+    //  number, no fill. Twelve numbered and shaded boxes down a straight turn
+    //  the start of every circuit into a diagram of itself, and the position
+    //  they would spell out is already on the timing tower. Baked into the
+    //  circuit's pre-render with everything else, so none of it costs a frame.
+    // =====================================================================
+    drawGridBoxes(ctx) {
+        // main.js derives the number from the driver list and the opponents
+        // dropdown; the 12 is only for a harness that has loaded track.js on
+        // its own, and is what that derivation currently comes to.
+        const slots = this.gridSlots(
+            typeof gridSlotCount === 'function' ? gridSlotCount() : 12);
+        const L = 24, W = 14;                  // box length and half-width
+        // The sides are stubs, not rails. On a real grid the marking is a line
+        // across the front with a short return down each side, not a three
+        // sided pen the length of the car - and twelve full-length pens down a
+        // straight read as a car park.
+        const SL = 9;
+        ctx.save();
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'miter';
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            // gridPoint's angle is the DIRECTION OF TRAVEL - the same angle
+            // the cars themselves are given - so local +x is forwards and the
+            // side to leave open is the one at +L/2.
+            ctx.save();
+            ctx.translate(s.x, s.y);
+            ctx.rotate(s.angle);
+            // Three lines and nothing else - no number, no fill. A first pass
+            // had both; painted twelve times down a straight they turned the
+            // start of every circuit into a diagram of itself, which is a lot
+            // of ink for information that is already on the timing tower.
+            //
+            // CLOSED AT THE FRONT, open at the back, which is the way round a
+            // real grid box goes and the way round the first version did not:
+            // the line across the front is the one the car stops its nose at,
+            // and the box is open behind it because the car arrives from
+            // there. Drawn open at the front it reads as a box the car is
+            // about to drive out of.
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(L * 0.5 - SL, -W);
+            ctx.lineTo(L * 0.5, -W);
+            ctx.lineTo(L * 0.5, W);
+            ctx.lineTo(L * 0.5 - SL, W);
+            ctx.stroke();
+            ctx.restore();
+        }
         ctx.restore();
     }
 
@@ -4359,6 +4598,14 @@ class ValloneTrack extends SegmentedTrack {
 
         this.startX = 330;
         this.startY = 0;
+
+        // The tongue on the exit of the bottom-right corner. See fencedZones
+        // in the base constructor: where this hairpin's exit and the straight
+        // after it converge, the solid ground between them runs out before the
+        // grass does, leaving forty pixels of crossable green with a wall
+        // behind it and nothing painted on any of it. Fenced at the edge of
+        // the asphalt, which is where it looks like the road ends anyway.
+        this.fencedZones = [{ x: 300, y: 875, r: 55 }];
 
         this.waypoints = this.generateWaypoints();
     }
