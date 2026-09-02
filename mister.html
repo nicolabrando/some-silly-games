@@ -649,7 +649,7 @@ function newGame(teamIdx, seed){
     divD: teams.filter(t=>t.div==='D').map(t=>t.id),
     fixturesA:null, fixturesB:null, fixturesC:null, fixturesD:null, calendar:null,
     cup:null, ecup:null, euroQ:[],
-    freeAgents:[], listed:[], offersIn:[],
+    freeAgents:[], listed:[], offersIn:[], nextPid:1,
     news:[], history:[],
     club:{ confidence:60, staff:{vice:0,med:0,oss:0,prep:0}, youth:1,
            training:'equilibrato', sponsor:0 },
@@ -1822,6 +1822,36 @@ function upgradeYouth(){
   return {ok:true,msg:'Settore giovanile potenziato!'};
 }
 
+/* ---------- integrità degli identificativi dei giocatori ----------
+   Il contatore _pid vive in memoria: ricaricando la pagina ripartiva da 1
+   e i giocatori generati dopo (svincolati, vivaio, rinforzi dell'IA)
+   finivano per avere un id già in uso, con il risultato che una ricerca
+   per id restituiva un altro giocatore. Qui si ripara e si riallinea.   */
+function repairIds(){
+  const tutti = [];
+  for(const t of G.teams) for(const p of t.players) tutti.push(p);
+  if(G.euroTeams) for(const t of G.euroTeams) for(const p of t.players) tutti.push(p);
+  for(const p of (G.freeAgents||[])) tutti.push(p);
+  let maxId = 0;
+  for(const p of tutti) if(typeof p.id==='number' && p.id>maxId) maxId = p.id;
+  _pid = Math.max(_pid, maxId + 1, (G.nextPid||0));
+  const visti = new Set();
+  let riparati = 0;
+  for(const p of tutti){
+    if(typeof p.id!=='number' || visti.has(p.id)){ p.id = _pid++; riparati++; }
+    visti.add(p.id);
+  }
+  if(riparati){
+    // i riferimenti per id potevano puntare al giocatore sbagliato: si rifanno
+    G.xiPids = bestXI(playerTeam()).map(p=>p.id);
+    refreshListedPlayers();
+    G.offersIn = [];
+    addNews(`Archivio della lega riordinato: ${riparati} tesserati avevano un codice duplicato.`,'lega');
+  }
+  G.nextPid = _pid;
+  return riparati;
+}
+
 /* ---------- migrazione dei salvataggi v1 (senza Serie C/D) ---------- */
 function migrateSave(){
   if(!G || (G.ver||1)>=2) return false;
@@ -2633,7 +2663,10 @@ function closeModal(){ const m=$('modal'); if(m) m.remove(); }
 /* ---------- salvataggio ---------- */
 const SAVE_KEY = 'mister_save_v1';
 function saveGame(){
-  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(G)); }catch(e){ /* memoria non disponibile */ }
+  try{
+    G.nextPid = _pid;                       // il contatore degli id va salvato con la partita
+    localStorage.setItem(SAVE_KEY, JSON.stringify(G));
+  }catch(e){ /* memoria non disponibile */ }
 }
 function loadGame(){
   try{
@@ -2641,11 +2674,115 @@ function loadGame(){
     if(!s) return false;
     G = JSON.parse(s);
     if(!(G && G.teams && G.teams.length)) return false;
-    if(migrateSave()) saveGame(); // carriere nate prima di Serie C/D
+    _pid = G.nextPid || 1;
+    const migrata = migrateSave();          // carriere nate prima di Serie C/D
+    const riparati = repairIds();           // e riallineamento degli id dei giocatori
+    if(migrata || riparati) saveGame();
     return true;
   }catch(e){ return false; }
 }
 function resetSave(){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
+
+/* ---------- esportazione / importazione della carriera ---------- */
+function esportaCarriera(){
+  try{
+    saveGame();
+    const t = playerTeam();
+    const nome = ('mister_' + t.short + '_S' + G.season + '_G' + G.week + '.json')
+      .replace(/[^A-Za-z0-9_.\-]/g, '');
+    const blob = new Blob([JSON.stringify(G)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 2000);
+    openModal(`<h2>CARRIERA ESPORTATA</h2>
+      <p class="sm">Il file <b>${esc(nome)}</b> è stato scaricato. Conservalo dove vuoi:
+      da qualsiasi browser potrai ricaricarlo con <b>CARICA DA FILE</b> e riprendere esattamente da qui.</p>
+      <button class="btn acc wide mt" onclick="closeModal()">OK</button>`);
+  }catch(e){
+    openModal(`<h2>NON RIUSCITO</h2><p class="sm">Il browser non ha permesso il salvataggio del file.</p>
+      <button class="btn wide mt" onclick="closeModal()">OK</button>`);
+  }
+}
+/* controlla che il file sia davvero una carriera di MISTER */
+function carrieraValida(d){
+  if(!d || typeof d!=='object') return 'Il file non contiene dati leggibili.';
+  if(!Array.isArray(d.teams) || d.teams.length < 32) return 'Non sembra una carriera di MISTER.';
+  if(typeof d.teamId!=='number' || !d.teams[d.teamId]) return 'La squadra allenata non risulta nel file.';
+  if(typeof d.season!=='number' || typeof d.week!=='number') return 'Il file è incompleto o rovinato.';
+  if(!Array.isArray(d.calendar) || !d.calendar.length) return 'Il calendario della stagione è assente.';
+  for(const t of d.teams) if(!Array.isArray(t.players)) return 'Le rose delle squadre sono assenti.';
+  return null;
+}
+function importaCarriera(daTitolo){
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.json,application/json';
+  inp.style.display = 'none';
+  document.body.appendChild(inp);
+  inp.onchange = ()=>{
+    const f = inp.files && inp.files[0];
+    inp.remove();
+    if(!f) return;
+    const fr = new FileReader();
+    fr.onload = ()=>{
+      let dati = null, errore = null;
+      try{ dati = JSON.parse(fr.result); }catch(e){ errore = 'Il file non è leggibile: forse non è quello giusto.'; }
+      if(!errore) errore = carrieraValida(dati);
+      if(errore){
+        openModal(`<h2>FILE NON VALIDO</h2><p class="sm">${esc(errore)}</p>
+          <button class="btn wide mt" onclick="closeModal()">OK</button>`);
+        return;
+      }
+      const t = dati.teams[dati.teamId];
+      const conferma = `<h2>CARICARE QUESTA CARRIERA?</h2>
+        <p class="sm"><b>${esc(t.name)}</b> · stagione ${dati.season}, ${fmtDate(dati.week)} · Serie ${t.div}</p>
+        ${daTitolo && !localStorage.getItem(SAVE_KEY) ? ''
+          : '<p class="sm badT">La carriera attualmente in corso verrà sostituita.</p>'}
+        <div class="row mt">
+          <button class="btn acc grow" id="btnConfImp">CARICA</button>
+          <button class="btn grow" onclick="closeModal()">ANNULLA</button>
+        </div>`;
+      openModal(conferma);
+      $('btnConfImp').onclick = ()=>{ closeModal(); applicaImport(dati); };
+    };
+    fr.onerror = ()=>{
+      openModal(`<h2>LETTURA FALLITA</h2><p class="sm">Non sono riuscito a leggere il file.</p>
+        <button class="btn wide mt" onclick="closeModal()">OK</button>`);
+    };
+    fr.readAsText(f);
+  };
+  inp.click();
+}
+function applicaImport(dati){
+  G = dati;
+  // difese contro file di versioni diverse o parzialmente rovinati
+  G.opts = Object.assign({sound:true, speed:2, autoXI:true}, G.opts||{});
+  G.club = Object.assign({confidence:60, staff:{vice:0,med:0,oss:0,prep:0}, youth:1,
+                          training:'equilibrato', sponsor:0}, G.club||{});
+  G.club.staff = Object.assign({vice:0,med:0,oss:0,prep:0}, G.club.staff||{});
+  G.news = Array.isArray(G.news)? G.news : [];
+  G.history = Array.isArray(G.history)? G.history : [];
+  G.freeAgents = Array.isArray(G.freeAgents)? G.freeAgents : [];
+  G.listed = Array.isArray(G.listed)? G.listed : [];
+  G.offersIn = Array.isArray(G.offersIn)? G.offersIn : [];
+  _pid = G.nextPid || 1;
+  migrateSave();
+  repairIds();
+  if(!Array.isArray(G.xiPids) || G.xiPids.length!==11)
+    G.xiPids = bestXI(playerTeam()).map(p=>p.id);
+  G.gameOver = null;
+  saveGame();
+  const tp = $('titlepage'); if(tp) tp.remove();
+  const se = $('seasonend'); if(se) se.remove();
+  const go = $('gameover'); if(go) go.remove();
+  startUI();
+  const t = playerTeam();
+  openModal(`<h2>CARRIERA CARICATA</h2>
+    <p class="sm">Bentornato alla guida del <b>${esc(t.name)}</b>: stagione ${G.season}, ${fmtDate(G.week)}.</p>
+    <button class="btn acc wide mt" onclick="closeModal()">AL LAVORO</button>`);
+}
 
 /* ---------- barra superiore e navigazione ---------- */
 const NAVS = [
@@ -3369,6 +3506,10 @@ function renderClub(s){
     body = `
       <div class="teampick" onclick="uiSound()"><div class="nm">Audio<small>stadio ed effetti</small></div>
         <span class="${G.opts.sound?'okT':'badT'}">${G.opts.sound?'ON':'OFF'}</span></div>
+      <div class="teampick" onclick="esportaCarriera()"><div class="nm">Esporta carriera
+        <small>scarica un file da conservare o portare altrove</small></div><span class="accT">⤓</span></div>
+      <div class="teampick" onclick="importaCarriera()"><div class="nm">Carica da file
+        <small>riprendi una carriera esportata</small></div><span class="accT">⤒</span></div>
       <div class="teampick" onclick="uiResetAsk()"><div class="nm badT">Cancella carriera<small>riparti da zero</small></div></div>
       <p class="tiny faint mt">MISTER — manager di calcio retrò. Gioco originale in un solo file, generato con Claude. Squadre e giocatori sono di fantasia.</p>`;
   }
@@ -3599,11 +3740,13 @@ function showTitle(hasSave){
     </div>
     <div style="max-width:340px;margin:0 auto">
       ${hasSave?'<button class="btn acc wide mb" id="btnResume">▶ RIPRENDI LA CARRIERA</button>':''}
-      <button class="btn wide ${hasSave?'':'acc'}" id="btnNew">✚ NUOVA CARRIERA</button>
+      <button class="btn wide mb ${hasSave?'':'acc'}" id="btnNew">✚ NUOVA CARRIERA</button>
+      <button class="btn wide" id="btnCarica">📂 CARICA DA FILE</button>
     </div>
     <p class="center tiny faint mt" style="margin-top:26px">Gioco originale · squadre e giocatori di fantasia</p>`;
   document.getElementById('app').appendChild(page);
   if(hasSave) $('btnResume').onclick = ()=>{ sndClick(); page.remove(); startUI(); };
+  $('btnCarica').onclick = ()=>{ sndClick(); importaCarriera(true); };
   $('btnNew').onclick = ()=>{ sndClick();
     if(hasSave){
       openModal(`<h2>ATTENZIONE</h2><p class="sm">C'è già una carriera salvata: iniziarne una nuova la cancella.</p>
