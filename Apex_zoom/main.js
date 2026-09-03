@@ -276,7 +276,8 @@ function drawTrackFrame(g) {
     const W = curWorldW(), H = curWorldH();
     const S = layerScale();
     if (!trackLayer || trackLayer.track !== track ||
-        trackLayer.scale !== S || trackLayer.puddles !== track.puddles) {
+        trackLayer.scale !== S || trackLayer.puddles !== track.puddles ||
+        trackLayer.pit !== pitModeOn) {
         const cv = document.createElement('canvas');
         cv.width = Math.round(W * S);
         cv.height = Math.round(H * S);
@@ -286,7 +287,25 @@ function drawTrackFrame(g) {
         track._stands = [];
         track.draw(t);                 // transparent outside its own strokes
         track._stands = st;
-        trackLayer = { canvas: cv, track: track, scale: S, puddles: track.puddles };
+        // The pit box, when the rules include one: a marked slot on the edge
+        // of the start straight, just before the line.
+        if (pitModeOn && typeof pitSpotFor === 'function') {
+            const sp = pitSpotFor(track);
+            t.save();
+            t.translate(sp.x, sp.y);
+            t.strokeStyle = 'rgba(255,255,255,0.85)';
+            t.lineWidth = 2;
+            t.setLineDash([5, 4]);
+            t.strokeRect(-17, -11, 34, 22);
+            t.setLineDash([]);
+            t.fillStyle = 'rgba(255,255,255,0.85)';
+            t.font = 'bold 9px sans-serif';
+            t.textAlign = 'center';
+            t.fillText('PIT', 0, 3.5);
+            t.restore();
+        }
+        trackLayer = { canvas: cv, track: track, scale: S,
+                       puddles: track.puddles, pit: pitModeOn };
     }
     const tick = Math.floor(Date.now() / 260);   // drawStands' own clock
     if (!standsLayer || standsLayer.track !== track || standsLayer.scale !== S) {
@@ -510,6 +529,24 @@ let pendingQualiInfo = null;// and, from a REAL session only, each driver's lap
 let pendingWeather = null;  // weather chosen at qualifying, reused for the race
 let pendingWetLevel = null; // 'damp' | 'soaked', pinned with it
 let wetLevel = null;        // the live one, read by car.js and ai.js
+// Pit stops. Declared here rather than beside the rest of the pit code
+// because things that run while the page is still loading - the menu, the
+// pre-render - ask about them, and `let` in a block six thousand lines down
+// is a temporal dead zone until then: typeof does not save you from it.
+let pitModeOn = false;      // this session has stops (see the PIT STOPS block)
+let pitRoadWear = false;    // ...and measures a set in road rather than in
+                            // laps of its own distance. True for a race with
+                            // stops; FALSE in qualifying, which has the box
+                            // open but keeps the session wear law - see
+                            // pitRoadWearAhead for why.
+let pitPanelSeat = 0;       // 0 = the box panel is closed, else whose it is
+let pitPanelPausedAt = 0;   // wall-clock moment the race was held at
+// Hoisted up here with the other pit globals, and not left beside
+// chooseTyres where it was declared: pitRulesOn reads it now, and a `let`
+// in a classic script is in its temporal dead zone until its own line runs
+// - typeof does not protect you - so a call from anything that runs during
+// load would have thrown rather than answered.
+let pendingTyreIsRace = false;   // the tyre screen up now is for a RACE
 let racePoleColor = null;   // who started P1 in the race now running
 // The grid of the race now running, with the lap each slot was earned on and
 // where that lap came from. Kept because the archive used to record only WHO
@@ -1215,6 +1252,20 @@ function typingInAField(e) {
 
 window.addEventListener('keydown', (e) => {
     if (typingInAField(e)) return;          // W in the lap box is a W
+    // B = box, seat one; C = box, seat two - C rather than N because N sits
+    // under the same hand as the arrow keys, which is the hand already
+    // steering. While the box panel is open a number key fits that compound.
+    const k = (e.key || '').toLowerCase();
+    if (typeof pitPanelSeat !== 'undefined' && pitPanelSeat &&
+        /^[1-9]$/.test(k) && pitPickIndex(parseInt(k, 10))) {
+        e.preventDefault(); return;
+    }
+    if (k === 'b' && typeof playerCar !== 'undefined' && playerCar) {
+        pitToggleBox(playerCar, 1); e.preventDefault(); return;
+    }
+    if (k === 'c' && typeof player2Car !== 'undefined' && player2Car) {
+        pitToggleBox(player2Car, 2); e.preventDefault(); return;
+    }
     if (routeKey(e.key, true)) e.preventDefault();
 });
 
@@ -1274,13 +1325,20 @@ function syncControlsUi() {
     const hint = document.getElementById('controls-hint');
     if (hint) {
         const s1 = schemeOf(1), s2 = schemeOf(2);
-        hint.innerHTML = two
+        // The box key, only when there is a box to call. A control that is
+        // not in the session does not belong on the line that lists them.
+        const boxKey = (typeof pitStopsEnabled === 'function' && pitStopsEnabled())
+            ? (two ? ' &nbsp;·&nbsp; <b>B</b> / <b>C</b> call the box'
+                   : ' &nbsp;·&nbsp; <b>B</b> calls the box')
+            : '';
+        hint.innerHTML = (two
             ? `<b>Player 1</b> ${s1.short} &nbsp;·&nbsp; <b>Player 2</b> ${s2.short}` +
               ' — both cars are on track at once, on one keyboard.'
-            : `${s1.short} — up throttles, down brakes, left and right steer.`;
+            : `${s1.short} — up throttles, down brakes, left and right steer.`) + boxKey;
     }
 }
-['players-select', 'controls-select', 'color-select', 'p2-color-select'].forEach(id => {
+['players-select', 'controls-select', 'color-select', 'p2-color-select',
+ 'pit-checkbox'].forEach(id => {
     const el = document.getElementById(id);
     if (el && el.addEventListener) el.addEventListener('change', syncControlsUi);
 });
@@ -1381,6 +1439,13 @@ function dismissRaceRecap() {
 
 function showMenu() {
     menu.style.display = 'block';
+    // The pit wall closes with the session. Left open it would hold the next
+    // one: see the guard in gameLoop.
+    if (typeof pitPanelSeat !== 'undefined') {
+        pitPanelSeat = 0;
+        pitPanelPausedAt = 0;
+        if (typeof renderPitPanel === 'function') renderPitPanel();
+    }
     // quitting under the recap must not leave the countdown frozen forever
     dismissRaceRecap();
     if (typeof refreshChampResume === 'function') refreshChampResume();
@@ -1422,11 +1487,11 @@ startBtn.addEventListener('click', () => {
     // one decision.
     chooseChassisForWeekend(() => {
         if (qualifyingEnabled()) {
-            chooseTyres('Qualifying tyres', 'One flying lap is all that matters here.',
+            chooseTyres('Qualifying tyres', qualiTyreSubtitle(),
                 QUALI_LAPS - 1, () => startQualifying(null));
         } else {
-            chooseTyres('Race tyres', 'This set has to last the whole race.',
-                laps, () => startGame());
+            chooseTyres('Race tyres', raceTyreSubtitle(),
+                laps, () => startGame(), true);
         }
     });
 });
@@ -1847,11 +1912,15 @@ function renderPausePanel() {
 function setPaused(want) {
     if (gameState !== 'playing' && gameState !== 'countdown') return;
     if (want === isPaused) return;
+    // The pit wall is its own hold, with its own clock debt: leave it be. Two
+    // clocks handing back the same seconds would pay them twice.
+    if (typeof pitPanelSeat !== 'undefined' && pitPanelSeat) return;
     isPaused = want;
 
     if (isPaused) {
         pauseStartedAt = performance.now();
         renderPausePanel();          // a snapshot, taken before the clock stops
+        renderPauseBox();            // ...and the box call, live rather than a snapshot
         pauseOverlay.style.display = 'flex';
         pauseBtn.innerText = '▶ Resume';
         if (typeof stopAudio === 'function') stopAudio();
@@ -1933,11 +2002,11 @@ document.getElementById('gp-start-btn').addEventListener('click', () => {
     const trackType = championshipState.tracks[championshipState.currentTrackIndex];
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
     if (qualifyingEnabled()) {
-        chooseTyres('Qualifying tyres', 'One flying lap is all that matters here.',
+        chooseTyres('Qualifying tyres', qualiTyreSubtitle(),
             QUALI_LAPS - 1, () => startQualifying(trackType));
     } else {
-        chooseTyres('Race tyres', 'This set has to last the whole race.',
-            laps, () => startGame(trackType));
+        chooseTyres('Race tyres', raceTyreSubtitle(),
+            laps, () => startGame(trackType), true);
     }
 });
 
@@ -1946,8 +2015,8 @@ document.getElementById('gp-skip-btn').addEventListener('click', skipGrandPrix);
 qualiRaceBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
     const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
-    chooseTyres('Race tyres', 'A fresh set. This one has to last the whole race.',
-        laps, () => startGame(qualiTrackType));
+    chooseTyres('Race tyres', raceTyreSubtitle(),
+        laps, () => startGame(qualiTrackType), true);
 });
 
 qualiMenuBtn.addEventListener('click', () => {
@@ -2071,6 +2140,14 @@ if (isMobile) {
     bindTouch(btnLeft, 'left');
     bindTouch(btnRight, 'right');
 
+    // The pit button, thumb-side, above the steering pair. Same conversation
+    // as the B key: tap to call for the box, tap again to stay out.
+    const btnBox = document.getElementById('btnBox');
+    if (btnBox) btnBox.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (playerCar) pitToggleBox(playerCar, 1);
+    });
+
     // The whole strip is the control, not just the knob: wherever the thumb
     // lands is where the lever goes, and sliding from there adjusts it. The
     // 18px inset means the very ends are reachable without fighting the edge
@@ -2171,6 +2248,884 @@ function noAiHandicapWanted() {
     if (isChampionship && championshipState)
         return !!championshipState.noAiHandicap;
     return noAiHandicapBox();
+}
+
+// ---------------------------------------------------------------------------
+//  PIT STOPS
+//  Off by default; the menu switch turns them on for races and championships
+//  (a season remembers its own setting in championshipState.pitStops, so a
+//  resumed championship keeps the rules it started under). Practice and
+//  qualifying never use them, and their tyre wear stays on the historical
+//  race-scaled law - see car.js for the two laws and PIT_LIVES.
+//
+//  There is no pit LANE - thirty-two circuits were not getting one each, and
+//  the one that was built for them was worse than none: a corridor squeezed
+//  in beside the start straight, holes cut in the armco to reach it, and two
+//  circuits with nowhere to put it at all. The box is a marked slot on the
+//  edge of the start straight, just BEFORE the line, and that placement is
+//  load-bearing: the stop ends and control returns a few pixels short of
+//  startX, so the car crosses the line under its own power and checkLapCross
+//  and the lap timer never learn the pits exist. A car in the pit sequence is
+//  driven kinematically (approach, stationary, out) and is a ghost to
+//  everyone else - no collisions, invisible to the AI's traffic eye, out of
+//  the VSC queue - because a parked car on the edge of the road must be a pit
+//  stop, not a mobile chicane.
+//
+//  B arms the box for seat one (C for seat two - not N, which sits under the
+//  right hand that is already busy with the arrow keys). Pressing it again
+//  stands the crew down. The COMPOUND is not chosen on the way in: it is
+//  chosen at the box, with the car stationary and the race held, from a panel
+//  that lists every tyre in the game - the two rain compounds and the drift
+//  included - with what each is worth here and what everybody else is on.
+//  The AI plans on the grid instead - see aiPitPlan - and arms itself on its
+//  planned lap, or at 97% wear if the plan has gone wrong.
+// ---------------------------------------------------------------------------
+const PIT_TIME = 2.2;          // seconds stationary, once the tyre is chosen
+const PIT_BOX_BACK = 70;       // box centre, px before the start line
+const PIT_LANE_IN = 16;        // px inside the track edge the car parks at
+
+function pitStopsEnabled() {
+    const box = document.getElementById('pit-checkbox');
+    return !!(box && box.checked);
+}
+// Will the race we are ABOUT to start have stops? The championship carries its
+// own rule, so the menu checkbox is the wrong place to ask mid-season - and
+// the tyre screen, which runs before startGame, has to ask this and not
+// pitModeOn (still false at that point).
+// IS THERE A BOX AT ALL THIS WEEKEND - which is a different question from
+// whether tyre life is measured in road (pitRoadWear, below).
+//
+// Free practice has no box because it has no wear: nothing to stop for.
+// Everything else has one when the option is ticked, QUALIFYING INCLUDED. The
+// rules of a session do not change - an out-lap and two flying laps - but
+// three laps is quite enough to realise you have put the wrong compound on,
+// and the box is where that gets fixed.
+//
+// It does not ask raceMode whether this is a race, and that is worth
+// remembering rather than tidying: raceMode is only moved off 'qualifying'
+// inside startGame, which runs AFTER the race tyre screen has been answered.
+// "raceMode is qualifying, therefore no stops" silently blanked every
+// pit-aware thing on the one screen whose entire subject is the stops.
+function pitRulesOn() {
+    if (raceMode === 'practice') return false;
+    if (isChampionship) return !!(championshipState && championshipState.pitStops);
+    return pitStopsEnabled();
+}
+// Does the session THIS TYRE SCREEN is choosing for measure a set in road (the
+// pit-stop law) or as a share of its own distance (the historical one)? A race
+// with the box open does. A qualifying session with the box open does NOT, and
+// that is deliberate: three laps of Monza against a soft worth a lap and a
+// half would make the soft impossible to qualify on, and the reason to visit
+// the box in qualifying is a compound you got WRONG, not one you wore out.
+function pitRoadWearAhead() {
+    return pendingTyreIsRace && pitRulesOn();
+}
+function pitSideFor(t) {
+    // the outer side of the start straight: away from the middle of the world
+    return (t.startY - (t.worldH || WORLD_H) / 2) >= 0 ? 1 : -1;
+}
+// Where the slot actually goes. The outer edge of the road, seventy pixels
+// before the line - but CHECKED, not assumed: the start straight is straight
+// at the line by construction and not necessarily seventy pixels back, and on
+// Circle, Triangle and Crossover the naive spot put part of the painted box
+// on the grass. So the whole 34x22 rectangle is tested against the surface,
+// walked inwards until it fits, and tried on the other side if it never does.
+function pitSpotFor(t) {
+    if (t._pitSpot) return t._pitSpot;
+    const x = t.startX - PIT_BOX_BACK;
+    const pref = pitSideFor(t);
+    const fits = (y) => {
+        for (const [dx, dy] of [[17, 11], [17, -11], [-17, 11], [-17, -11], [0, 0]])
+            if (t.getSurface(x + dx, y + dy) !== 'track') return false;
+        return true;
+    };
+    for (const side of [pref, -pref]) {
+        for (let inset = PIT_LANE_IN; inset <= t.trackWidth - 12; inset += 2) {
+            const y = t.startY + side * (t.trackWidth - inset);
+            if (fits(y)) return (t._pitSpot = { x: x, y: y });
+        }
+    }
+    return (t._pitSpot = { x: x, y: t.startY + pref * (t.trackWidth - PIT_LANE_IN) });
+}
+// Every tyre in the game, in the order the box offers them. Not the weather's
+// shortlist: the whole point of choosing at the stop is that you can take a
+// wet because it has started raining, or a drift because you fancy it.
+function pitFitOrder() {
+    return TYRE_KEYS.slice();
+}
+// The softest compound that still finishes the race from here, with 6% in
+// hand. What the AI fits, and what the box falls back on if a human somehow
+// leaves without choosing.
+function pitSuggestTyre(car) {
+    const line = track.getRacingLine('standard');
+    const left = Math.max(0.5, TOTAL_LAPS - car.lap) * line.length * 1.06;
+    const order = (typeof isRaining !== 'undefined' && isRaining)
+        ? (wetLevel === 'soaked' ? ['wet', 'inter'] : ['inter', 'wet'])
+        : ['soft', 'medium', 'hard'];
+    for (const k of order) {
+        if (pitLifePx(k, line.length) >= left) return k;
+    }
+    return order[order.length - 1];
+}
+
+// ---------------------------------------------------------------------------
+//  CHOOSING THE COMPOUND, AT THE BOX, WITH YOUR EYES OPEN
+//  Not on the way in. The panel opens when the car is STOPPED in the box and
+//  the crew is standing there waiting to be told, which is the moment the
+//  decision actually belongs to: by then you know what the safety car did,
+//  who came in with you and whether it has started to rain.
+//
+//  IT STOPS THE RACE, and it shows the whole field. A strategy call is not a
+//  reflex, and it cannot be made against your own tyres alone - what matters
+//  is who is around you, what they are on, and how much of it they have left.
+//  So the panel freezes the clock exactly the way the pause screen does (the
+//  race clock, the leader's time and the VSC countdown all get their seconds
+//  back) and lists every car: position, code, compound, life left. Yours is
+//  highlighted. It may cover the circuit while it is up - nothing is moving
+//  under it.
+// ---------------------------------------------------------------------------
+function pitPanelCar() {
+    if (pitPanelSeat === 2) return player2Car;
+    return pitPanelSeat === 1 ? playerCar : null;
+}
+// Opening and closing the panel stops and restarts the race. Same debt to the
+// clocks as setPaused: whatever real time passes with the panel up is handed
+// back, or a stop deliberated over for ten seconds would appear on the timing
+// screens as ten seconds of racing that nobody drove.
+function pitPanelPause(on) {
+    if (on) {
+        if (pitPanelPausedAt) return;
+        pitPanelPausedAt = performance.now();
+        clearKeys();                        // nobody left on full throttle
+        if (typeof stopAudio === 'function') stopAudio();
+    } else {
+        if (!pitPanelPausedAt) return;
+        const held = performance.now() - pitPanelPausedAt;
+        pitPanelPausedAt = 0;
+        raceStartTime += held;
+        if (firstFinisherTime) firstFinisherTime += held;
+        if (vscEndsAt !== null) vscEndsAt += held;
+        if (typeof initAudio === 'function') initAudio(!playerCar, humanCars().length);
+        lastTime = performance.now();
+    }
+}
+// The seat's own key: arm the box, or stand the crew down again. It is not a
+// compound picker any more - that happens at the stop.
+function pitToggleBox(car, seat, fromPause) {
+    if (!pitModeOn || !car || car.finished || car.isBroken || car.pitPhase) return;
+    if (car.qualiDone) return;
+    if (gameState !== 'playing' && gameState !== 'countdown') return;
+    // The pause screen is allowed through this: it is the same call, made with
+    // the world stopped, which is the whole point of putting a button there.
+    // The pit wall's own hold is a different matter and still blocks it.
+    if ((isPaused && !fromPause) || pitPanelSeat) return;
+    car.wantPit = !car.wantPit;
+    car.pitNextTyre = null;             // chosen at the box, not here
+    if (typeof RaceLog !== 'undefined')
+        RaceLog.event('PIT', `${car.driverName || car.color} ` +
+            (car.wantPit ? 'calls for the box' : 'stays out'));
+}
+
+// THE BOX BUTTON ON THE PAUSE SCREEN.
+//
+// B (and C for the second seat) is the right key when you have a hand free.
+// Mid-corner you have not, which is why this exists: pause, click, resume, and
+// the finger never leaves the space bar. It TOGGLES and the panel stays up -
+// the button says which state you are in, and clicking it again takes the call
+// back, neither of which a button that resumed for you could do.
+function renderPauseBox() {
+    const host = document.getElementById('pause-box');
+    if (!host) return;
+    const humans = typeof humanCars === 'function' ? humanCars() : [];
+    const live = humans.filter(c => !c.finished && !c.isBroken && !c.qualiDone);
+    if (!pitModeOn || !live.length) { host.innerHTML = ''; host.style.display = 'none'; return; }
+    host.innerHTML = live.map(c => {
+        const seat = c.playerIndex === 2 ? 2 : 1;
+        const many = live.length > 1;
+        const name = many ? ('Box player ' + seat) : 'Box';
+        const inBox = !!c.pitPhase;
+        return '<button class="pause-box-btn' + (c.wantPit ? ' pbx-on' : '') + '"' +
+               (inBox ? ' disabled' : '') + ' data-seat="' + seat + '">' +
+               '<span class="pbx-dot"></span>' +
+               (inBox ? (many ? 'Player ' + seat + ' in the box' : 'In the box')
+                      : (c.wantPit ? name + ' — called' : name)) +
+               '</button>';
+    }).join('');
+    host.style.display = 'flex';
+    Array.prototype.forEach.call(host.querySelectorAll('.pause-box-btn'), (b) => {
+        b.addEventListener('click', () => {
+            const seat = b.getAttribute('data-seat') === '2' ? 2 : 1;
+            const car = seat === 2 ? player2Car : playerCar;
+            pitToggleBox(car, seat, true);
+            renderPauseBox();
+        });
+    });
+}
+// The panel is opened by the car arriving, and closed by a number key.
+function pitOpenPanel(car) {
+    const seat = (car === player2Car) ? 2 : 1;
+    if (pitPanelSeat === seat) return;
+    pitPanelSeat = seat;
+    pitPanelPause(true);
+    renderPitPanel();
+}
+// A number key while the panel is open: that compound goes on, and the crew
+// starts work.
+function pitPickIndex(n) {
+    if (!pitPanelSeat) return false;
+    const car = pitPanelCar();
+    if (!car || car.pitPhase !== 'stopped') return false;
+    const order = pitFitOrder();
+    if (n < 1 || n > order.length) return false;
+    car.pitNextTyre = order[n - 1];
+    car.pitTimer = PIT_TIME;            // the clock starts when the call is made
+    pitPanelSeat = 0;
+    pitPanelPause(false);
+    renderPitPanel();
+    if (typeof RaceLog !== 'undefined')
+        RaceLog.event('PIT', `${car.driverName || car.color} takes ` +
+            `${TYRES[car.pitNextTyre].label}`);
+    return true;
+}
+function renderPitPanel() {
+    const el = document.getElementById('pit-panel');
+    if (!el) return;
+    const car = pitPanelCar();
+    if (!pitPanelSeat || !car || !pitModeOn) { el.style.display = 'none'; return; }
+    const order = pitFitOrder();
+    const lapPx = car._lapPixels || 2500;
+    const lapsLeft = Math.max(0.2, TOTAL_LAPS - car.lap);
+    const dry = !(typeof isRaining !== 'undefined' && isRaining);  // mid-race: the global is the truth
+    const rows = order.map((k, i) => {
+        const t = TYRES[k];
+        const rate = dry ? (t.dryWear || 1) : 1;
+        const n = pitTyreLaps(k, lapPx) / rate;
+        const ok = n >= lapsLeft;
+        // What corner speed a fresh set of this is worth - and in the rain the
+        // tread is the whole story, so that is the number the row shows.
+        const head = dry
+            ? (((t.grip * (t.bite === undefined ? 1 : t.bite)) - 1) * 100 >= 0 ? '+' : '') +
+              (((t.grip * (t.bite === undefined ? 1 : t.bite)) - 1) * 100).toFixed(1) + '%'
+            : 'wet ×' + (t.rainGrip || 1).toFixed(2);
+        return '<div class="pp-row">' +
+            '<span class="pp-key">' + (i + 1) + '</span>' +
+            '<span class="pp-dot" style="background:' + t.colour + '"></span>' +
+            '<span class="pp-name">' + t.label + '</span>' +
+            '<span class="pp-pace">' + head + '</span>' +
+            '<span class="pp-laps ' + (ok ? 'pp-ok' : 'pp-short') + '">' +
+            n.toFixed(1) + ' laps' + (ok ? ' ✓' : '') + '</span></div>';
+    }).join('');
+    // THE FIELD. Where everyone is, what they are on, and how much of it is
+    // left - the half of the decision that is not about you. A rival's
+    // remaining life is the same number your own bar shows, so a set about to
+    // fall off the cliff is visible as such; a car already in the box says
+    // that instead.
+    const field = (lastRunningOrder.length ? lastRunningOrder : cars.slice())
+        .filter(c => !c.isBroken);
+    const fieldRows = field.map((c, i) => {
+        const t = c.tyre || TYRES.medium;
+        const left = Math.max(0, Math.min(1, 1 - (c.tyreWear || 0)));
+        const col = left > 0.55 ? '#66bb6a' : (left > 0.3 ? '#ffc400' : '#ff5252');
+        const state = c.pitPhase ? 'in the pits'
+                    : (c.finished ? 'finished'
+                    : (c.wantPit ? 'to box' : 'lap ' + Math.min(TOTAL_LAPS, c.lap + 1)));
+        return '<div class="pf-row' + (c === car ? ' pf-you' : '') + '">' +
+            '<span class="pf-pos">' + (i + 1) + '</span>' +
+            '<span class="pf-name" style="color:' + (c.color || '#ddd') + '">' +
+            driverCode(c) + '</span>' +
+            '<span class="pf-state">' + state + '</span>' +
+            '<span class="pf-dot" style="background:' + t.colour + '"></span>' +
+            '<span class="pf-tyre">' + t.short + '</span>' +
+            '<span class="pf-bar"><span style="width:' + (left * 100).toFixed(0) +
+            '%;background:' + col + '"></span></span>' +
+            '<span class="pf-pct" style="color:' + col + '">' +
+            (left * 100).toFixed(0) + '%</span></div>';
+    }).join('');
+
+    el.innerHTML =
+        '<div class="pp-head">IN THE BOX' + (pitPanelSeat === 2 ? ' — Player 2' : '') +
+        '<span class="pp-sub">race held &middot; ' + lapsLeft.toFixed(0) +
+        ' laps to run &middot; the crew is waiting</span></div>' +
+        '<div class="pp-cols">' +
+          '<div class="pp-left"><div class="pp-title">FIT</div>' + rows + '</div>' +
+          '<div class="pp-right"><div class="pp-title">THE FIELD</div>' + fieldRows + '</div>' +
+        '</div>' +
+        '<div class="pp-foot">a number fits that tyre and starts the stop</div>';
+    el.style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------
+//  THE STRATEGY BOARD
+// ---------------------------------------------------------------------------
+//  What the television shows before a Grand Prix: two or three ways of getting
+//  to the flag, with the stops in them, ranked. It goes on the screen where
+//  the STARTING tyre is chosen, because that is the decision it is about - and
+//  clicking one picks its opening compound.
+//
+//  WHOSE PACE. The circuit's anchor is Nicola's own: the quickest dry lap he
+//  has here, out of the record book that has been filling since the first lap
+//  of the game. The gap BETWEEN compounds is the physics, not his lap times,
+//  and that split is the whole design.
+//
+//  A personal best is whatever lap you happened to nail, not a controlled
+//  comparison, and his book says so out loud: at the Oval his soft is 2.2%
+//  SLOWER than his medium, at Circle his hard is 6.5% quicker than both, at
+//  Suzuka his hard is 35% off his medium. Rank strategies on those numbers and
+//  the board recommends the hard at Circle and never offers the soft anywhere
+//  - not because of the tyres but because he has driven twenty-seven mediums
+//  and nine softs. So the compound spread comes from grip x bite, the same
+//  number the tyre buttons already print as "+10.1% / +0.0% / -0.7%", and his
+//  own per-compound times stay visible in the record table right below.
+//
+//  With no lap here at all, the anchor is the circuit's length at 275 px/s -
+//  the median of his 31 circuits, which run 239 (Anchor) to 303 (Pentagon).
+//  The board says which of the three it used.
+const PIT_EST_PXPS = 275;
+
+// Relative lap time of a fresh set: 1.0 is a medium. The 0.35% of lap time per
+// point of tyre performance is the measured chassis number - see aiPitPlan,
+// which prices its stints with the same figure.
+function tyrePaceFactor(key) {
+    const t = TYRES[key];
+    if (!t) return 1;
+    const fresh = t.grip * (t.bite === undefined ? 1 : t.bite);
+    return 1 - 0.35 * (fresh - 1);
+}
+
+// The lap this circuit is worth on this compound, in ms.
+//
+// THE ANCHOR IS HIS, THE SPREAD IS THE TYRES, and that split is not a shortcut
+// - it is what the record book says to do. Measured over the 73 per-compound
+// bests in Nicola's own export: his times sit a median 5.5% away from what the
+// compounds are worth relative to each other, and almost all of it is on the
+// slow side of the rubber he drives least. His Thunder soft is 30% off his
+// Thunder medium; his Suzuka hard 35% off. Rank strategies on those and the
+// board recommends the medium at every circuit in the game and never once
+// offers a soft - not because of the tyres but because he has set laps on
+// twenty-seven mediums and nine softs.
+//
+// So the circuit's pace comes from the quickest lap he has here, whatever it
+// was set on, and the gaps between compounds come from grip x bite - the same
+// number the tyre buttons print as "+10.1% / +0.0% / -0.7%". His own
+// per-compound times are on the same screen twice already: on each button and
+// in the record table below it.
+// THE DRIFT IS NOT ON THIS BOARD, and it is not an oversight. Every other
+// compound in the game is a scalar - a soft is worth the same 1% of lap time
+// wherever you take it - and that is the one assumption the whole board rests
+// on. The drift is not: its own fitting notes measure it at -3.2% at Pettine
+// and +4.0% at Circle, because it is steering-limited where it is quick and
+// grip-limited where it is slow. A single number cannot say that, and grip x
+// bite says +7.7% everywhere, which is a libel at one end of the calendar and
+// flattery at the other. So it is out of the search AND out of the anchor: a
+// drift lap standing as this circuit's reference would drag every other
+// compound's estimate 7% optimistic with it. It stays fittable at the stop -
+// this is a ranking that declines to rank it, not a tyre taken away.
+const STRAT_UNPRICED = { drift: true };
+function stratLapMs(trackKey, key, wet) {
+    const book = pbBook(trackKey);
+    const bucket = wet ? book.wet : book.dry;
+    let anchorMs = null, anchorKey = null;
+    for (const k of Object.keys(bucket)) {
+        if (STRAT_UNPRICED[k]) continue;
+        if (anchorMs === null || bucket[k].ms < anchorMs) { anchorMs = bucket[k].ms; anchorKey = k; }
+    }
+    const src = anchorMs === null ? 'estimate' : 'yours';
+    // No lap here at all: the circuit's length at 275 px/s, the median of his
+    // 31 circuits, which run 239 (Anchor) to 303 (Pentagon).
+    if (anchorMs === null) anchorMs = (lapPixelsFor(trackKey) / PIT_EST_PXPS) * 1000;
+    const from = anchorKey ? tyrePaceFactor(anchorKey) : 1;
+    return { ms: anchorMs * tyrePaceFactor(key) / from, src: src,
+             anchorMs: anchorMs, anchorKey: anchorKey };
+}
+
+// Seconds to run `laps` laps on a fresh set of this compound, walking the wear
+// curve in slices: the same falloff the car uses, the same wall past 100%, and
+// the same pace linearisation aiPitPlan prices its own stints with. One model,
+// so the board and the grid cannot disagree about what a stint costs.
+function pitStintSeconds(key, laps, lapSec, lifeLaps) {
+    const t = TYRES[key];
+    if (!t || laps <= 0) return 0;
+    const N = 24;
+    let sec = 0;
+    for (let i = 0; i < N; i++) {
+        const w = Math.min(1.6, ((i + 0.5) / N) * laps / Math.max(0.01, lifeLaps));
+        let perf = t.grip - t.falloff * Math.pow(w, 1.6);
+        if (w > 1) perf = Math.max(0.30, perf - 6.0 * (w - 1));
+        const factor = perf >= 0.85 ? (1 - 0.35 * (perf - 1))
+                                    : (1.0525 + 1.4 * (0.85 - perf));
+        sec += (laps / N) * lapSec * factor;
+    }
+    return sec;
+}
+
+// The n quickest ways to the flag: any number of stops, every split, every
+// compound the weather allows.
+//
+// Found by walking the race forwards rather than by enumerating plans. Three
+// stops is a real answer here - a 10-lap race at Kart is 10 laps against a
+// hard that is good for three of them - and enumerating every split of a
+// four-stop race is a quarter of a million plans, while the same question
+// asked as "the best way to have completed L laps" is forty states of a dozen
+// entries each. The first version only searched zero, one and two stops and
+// told Kart that no compound could reach the flag.
+//
+// A stint longer than its set can take is not a plan: wear runs about 12% past
+// the odometer once the car is leaning on it (ABUSE, fitted for the AI's own
+// planner), so a stint is allowed up to that much of the compound's life and
+// no further. Past 100% the tyre is finished rather than slow and the cost
+// function knows it - which is what keeps a suicidal no-stop out of the list
+// while leaving a marginal one in.
+//
+// ORDER WITHIN A PLAN MEANS NOTHING and the board must not pretend it does.
+// There is no fuel load and no track evolution in this game, so a stint costs
+// the same whenever it is run: S2-H5-H5 and H5-H5-S2 come out to the same
+// tenth. They are ONE idea, deduplicated as a multiset, and shown softest
+// first because that is the way a pit wall says it.
+function raceStrategies(trackKey, laps, wet, n) {
+    laps = Math.max(1, Math.min(40, Math.round(laps || 5)));
+    const lapPx = lapPixelsFor(trackKey);
+    const book = pbBook(trackKey);
+    const bucket = wet ? book.wet : book.dry;
+    // The compounds worth searching: the three of the weather, plus the drift
+    // if he has actually driven it here - it is the one tyre whose pace the
+    // grip x bite model libels, so it is only offered where there is a real
+    // lap behind the number.
+    const pool = (wet ? ['inter', 'wet'] : ['soft', 'medium', 'hard'])
+                    .filter(k => !STRAT_UNPRICED[k]);
+    const ABUSE = 1.12;
+    const life = {}, cost = {}, lapMs = {}, src = {}, maxStint = {};
+    for (const k of pool) {
+        const r = stratLapMs(trackKey, k, wet);
+        lapMs[k] = r.ms; src[k] = r.src;
+        const rate = wet ? 1 : (TYRES[k].dryWear || 1);
+        life[k] = pitTyreLaps(k, lapPx) / rate / ABUSE;
+        maxStint[k] = Math.max(0, Math.floor(life[k] * 1.02));
+        cost[k] = new Float64Array(laps + 1);
+        for (let i = 1; i <= laps; i++)
+            cost[k][i] = pitStintSeconds(k, i, r.ms / 1000, life[k]);
+    }
+    // A stop is the time on the jacks plus what the crawl in and out costs -
+    // 2.6s, the figure aiPitPlan has always used.
+    const STOP = PIT_TIME + 2.6;
+    const K = 8;
+    const key = st => st.map(x => x[0] + x[1]).sort().join('|');
+    // A one-lap stint is a stop bought for one lap of fresh rubber. The model
+    // will sometimes price it as worth it by a tenth; a pit wall would never
+    // say it out loud, and a board that suggests it reads as broken.
+    //
+    // SO THE FLOOR IS TWO LAPS - and it is a floor, not a nudge. The first
+    // attempt clamped the loop's start with Math.min(floor, maxStint), which
+    // quietly let the one-lap stint back in through exactly the door it was
+    // meant to shut: at Monza the soft is good for a single lap, so the clamp
+    // collapsed to 1 and the board's second suggestion was S1-S1-H2. A
+    // compound that cannot manage two laps is simply not in that search.
+    //
+    // Which is why there are two passes. Refusing one-lap stints can refuse
+    // the whole race - three laps where nothing lives past two - and a board
+    // that says "no strategy" when a legal one exists is worse than a board
+    // that admits an ugly one. So: solve with the floor, and only if nothing
+    // at all reaches the flag, solve again without it.
+    //
+    // THE K BEST ARE KEPT PER NUMBER OF STOPS, not overall, and that is what
+    // makes this a board rather than a list. Pruned to the twelve quickest
+    // plans full stop, a ten-lap Kart came out as M2-M2-H3-H3, M2-H2-H3-H3 and
+    // H2-H2-H3-H3: three rows, one dot of difference, a tenth between them.
+    // Three ways of saying the same thing is not three strategies. A real pit
+    // wall puts up the one-stopper, the two-stopper and the three-stopper, so
+    // the search keeps the best of each and the one-stopper survives even when
+    // it is ten seconds off - it is the alternative, that is the whole point.
+    const solve = (minStint, maxOnes) => {
+        const state = [{ 0: [{ t: 0, ones: 0, stints: [] }] }];
+        for (let l = 1; l <= laps; l++) {
+            const buckets = {}, seen = {};
+            for (const k of pool) {
+                const top = Math.min(l, maxStint[k]);
+                for (let i = minStint; i <= top; i++) {
+                    const prev = state[l - i];
+                    for (const s of Object.keys(prev)) {
+                        const ns = (+s) + 1;
+                        const arr = buckets[ns] || (buckets[ns] = []);
+                        for (const e of prev[s]) {
+                            const ones = e.ones + (i === 1 ? 1 : 0);
+                            if (ones > maxOnes) continue;
+                            const t = e.t + cost[k][i] + (l - i > 0 ? STOP : 0);
+                            const st = e.stints.concat([[k, i]]);
+                            const kk = key(st);
+                            if (seen[kk] !== undefined) {
+                                if (t < arr[seen[kk]].t) arr[seen[kk]] = { t: t, ones: ones, stints: st };
+                                continue;
+                            }
+                            seen[kk] = arr.length;
+                            arr.push({ t: t, ones: ones, stints: st });
+                        }
+                    }
+                }
+            }
+            for (const s of Object.keys(buckets)) {
+                buckets[s].sort((x, y) => x.t - y.t);
+                buckets[s] = buckets[s].slice(0, K);
+            }
+            state[l] = buckets;
+        }
+        let flat = [];
+        for (const s of Object.keys(state[laps])) flat = flat.concat(state[laps][s]);
+        return flat;
+    };
+    // Three passes, each giving up exactly one thing and no more: no short
+    // stints at all; then a single short stint, so a length that will not
+    // divide - five laps of a circuit where nothing lives past two - can still
+    // reach the flag; then, only if the race cannot be run any other way, as
+    // many as it takes. Without the middle pass a five-lap Spa answered
+    // S1-S1-S1-S1-S1 - a four-stop race, arithmetically true, worth nothing to
+    // anybody.
+    let flat = solve(2, 0);
+    if (!flat.length) flat = solve(1, 1);
+    if (!flat.length) flat = solve(1, Infinity);
+    // One line per stop count, quickest of each, quickest first - then, if the
+    // race only admits one shape, fill the board out with the next best of it.
+    const byStops = {};
+    for (const p of flat) {
+        const s = p.stints.length - 1;
+        if (!byStops[s] || p.t < byStops[s].t) byStops[s] = p;
+    }
+    const want = n || 3;
+    const heads = Object.keys(byStops).map(s => byStops[s]).sort((a2, b2) => a2.t - b2.t)
+                        .slice(0, want);
+    const fill = flat.filter(p => heads.indexOf(p) < 0).sort((a2, b2) => a2.t - b2.t)
+                     .slice(0, Math.max(0, want - heads.length));
+    // softest first inside each plan - the order costs nothing, so it may as
+    // well read the way a pit wall would say it
+    const rank = { soft: 0, inter: 0, medium: 1, drift: 2, hard: 3, wet: 3 };
+    const out = heads.concat(fill).sort((a2, b2) => a2.t - b2.t).map(pl => ({
+        t: pl.t,
+        stints: pl.stints.slice().sort((a2, b2) => (rank[a2[0]] - rank[b2[0]]) || (a2[1] - b2[1]))
+    }));
+    const anchor = stratLapMs(trackKey, pool[0], wet);
+    return { plans: out, lapMs: lapMs, src: src,
+             anchorKey: anchor.anchorKey, anchorMs: anchor.anchorMs,
+             anyBook: anchor.src === 'yours',
+             // compounds that cannot manage two laps of THIS circuit. Not a
+             // detail: it is the whole reason a long circuit offers one line
+             // where a short one offers three, and without it the board looks
+             // broken rather than short of choices.
+             short: pool.filter(k => maxStint[k] < 2),
+             sawDrift: !wet && !!bucket.drift };
+}
+
+// ...and the board itself.
+function renderStrategies(laps) {
+    const el = document.getElementById('tyre-strategies');
+    if (!el) return;
+    if (!pendingTyreIsRace || !pitRulesOn() || !laps || !isFinite(laps)) {
+        el.style.display = 'none'; el.innerHTML = ''; return;
+    }
+    const key = upcomingTrackKey();
+    const wet = !!upcomingWeather();
+    const r = raceStrategies(key, laps, wet, 3);
+    if (!r.plans.length) {
+        el.innerHTML = '<div class="st-head">STRATEGY</div>' +
+            '<div class="st-none">No compound can reach the flag in ' + laps +
+            ' laps here, even with two stops. Fewer laps, or a longer tyre.</div>';
+        el.style.display = 'block';
+        return;
+    }
+    const best = r.plans[0].t;
+    const rows = r.plans.map((p, i) => {
+        const stops = p.stints.length - 1;
+        const chain = p.stints.map(([k, n]) => {
+            const t = TYRES[k];
+            return '<span class="st-leg"><span class="st-dot" style="background:' + t.colour +
+                   '"></span>' + n + '</span>';
+        }).join('<span class="st-arrow">›</span>');
+        const gap = p.t - best;
+        const delta = i === 0 ? 'quickest'
+                    : (gap < 0.05 ? 'level' : '+' + gap.toFixed(1) + 's');
+        const mins = Math.floor(p.t / 60), secs = (p.t % 60).toFixed(1);
+        return '<button class="st-row" data-tyre="' + p.stints[0][0] + '" ' +
+            'title="start on the ' + TYRES[p.stints[0][0]].label + '">' +
+            '<span class="st-stops">' + (stops ? stops + ' stop' + (stops > 1 ? 's' : '') : 'no stop') + '</span>' +
+            '<span class="st-chain">' + chain + '</span>' +
+            '<span class="st-time">' + mins + ':' + secs.padStart(4, '0') + '</span>' +
+            '<span class="st-delta' + (i === 0 ? ' st-best' : '') + '">' + delta + '</span>' +
+            '</button>';
+    }).join('');
+    // Where the pace came from. A lap of his and a guess off the length of the
+    // circuit are not the same claim, so the board says which one it is on -
+    // and when it is his, it prints the lap, so the number can be argued with.
+    let note = r.anyBook
+        ? ('Pace from your best lap here — ' + fmtLapMs(r.anchorMs) + 's on the ' +
+           (TYRES[r.anchorKey] ? TYRES[r.anchorKey].label.toLowerCase() : 'medium') +
+           '. The gaps between compounds are the tyres.')
+        : 'No lap of yours here yet — pace estimated from the length of the circuit.';
+    if (r.plans.length < 3 && r.short && r.short.length) {
+        const names = r.short.map(k => TYRES[k].label.toLowerCase());
+        note += ' Few lines to choose from because the ' +
+                (names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]
+                                  : names[0]) +
+                ' cannot manage two laps of a circuit this long.';
+    }
+    // A single-lap stint only ever survives the second pass, so if one is on
+    // the board it is there because the first pass came back empty - say so,
+    // or it reads as the model losing its nerve.
+    if (r.plans.some(p => p.stints.some(s => s[1] === 1)))
+        note += ' A one-lap stint is in there because over ' + laps +
+                ' laps nothing longer divides up to the flag.';
+    if (r.sawDrift) note += ' The drift is left out: what it is worth depends on the corners, not the compound.';
+    el.innerHTML =
+        '<div class="st-head">STRATEGY <span class="st-sub">' + laps +
+        ' laps &middot; click one to start on that tyre</span></div>' +
+        rows + '<div class="st-note">' + note + '</div>';
+    el.style.display = 'block';
+    Array.prototype.forEach.call(el.querySelectorAll('.st-row'), (b) => {
+        b.addEventListener('click', () => {
+            const opt = document.querySelector('.tyre-opt[data-tyre="' + b.getAttribute('data-tyre') + '"]');
+            if (opt) opt.click();
+        });
+    });
+}
+
+// The AI's race, decided on the grid: try every start compound with zero or
+// one stop, integrate the wear curve for the pace each stint really gives
+// (tyrePerf = grip - falloff * w^1.6, and lap time moves ~0.35% per point of
+// it - the measured chassis number), price a stop at PIT_TIME plus the slow in
+// and out, and take the cheapest plan. A pinch of noise and a soft bias for
+// the attackers keep the grid from all reading the same memo.
+function aiPitPlan(styleName, lineLen) {
+    const raceLen = TOTAL_LAPS * lineLen;
+    const lapSec = lineLen / 250;                 // close enough to rank plans
+    const wet = typeof isRaining !== 'undefined' && isRaining;
+    const compounds = wet ? ['inter', 'wet'] : ['soft', 'medium', 'hard'];
+    // The stint priced the way the car will live it: the wear curve walked in
+    // slices, the same falloff, the same wall past 100% (car.js), and a pace
+    // model that goes steep once the set is genuinely finished - the
+    // 0.35%-per-point linearisation is the measured chassis number near perf
+    // 1.0, not a law of nature at perf 0.4.
+    // Same integration the strategy board prices its stints with - see
+    // pitStintSeconds. One model, so what the board recommends and what the
+    // grid does cannot drift apart.
+    const stintCost = (key, px) =>
+        pitStintSeconds(key, px / lineLen, lapSec, pitLifePx(key, lineLen) / lineLen);
+    const s = AI_DRIVER_STYLES[styleName];
+    const softBias = s ? ((s.overtake - 0.85) + (s.err - 0.7) * 0.5) * 0.6 : 0;
+    // The abuse term in the wear law (leaning on the tyre) runs real wear
+    // 8-15% past the odometer; the plan must budget for the car it will
+    // actually be, not the one on the brochure.
+    const ABUSE = 1.12;
+    let best = null;
+    for (const first of compounds) {
+        // No stop is always a CANDIDATE - the overrun penalty in stintCost
+        // prices the cliff, so a marginal gamble survives the maths where a
+        // suicidal one drowns in it. That is what keeps the no-stop hard alive
+        // at Circo Massimo and dead everywhere else.
+        {
+            const cost = stintCost(first, raceLen * ABUSE) +
+                         (Math.random() - 0.5) * 0.8;
+            if (!best || cost < best.cost) best = { cost, start: first, stopLap: null, tyre: null };
+        }
+        // one stop, pitting where the first set is ~85% spent for real
+        const life1 = pitLifePx(first, lineLen) / ABUSE;
+        const stopFrac = (life1 * 0.85) / raceLen;
+        if (stopFrac < 0.2 || stopFrac > 0.92) continue;
+        // a little personal spread on the stop lap, so a grid on the same
+        // compound does not queue for the box on the same lap - but never past
+        // the set's actual life
+        const stopLap = Math.max(1, Math.min(TOTAL_LAPS - 1,
+            Math.min(Math.floor(life1 * 0.98 / lineLen),
+            Math.round(stopFrac * TOTAL_LAPS + (Math.random() - 0.5) * 1.2))));
+        if (stopLap < 1) continue;
+        const px1 = stopLap * lineLen, px2 = raceLen - px1;
+        for (const second of compounds) {
+            if (pitLifePx(second, lineLen) / ABUSE < px2 * 0.98) continue;
+            let cost = stintCost(first, px1 * ABUSE) + stintCost(second, px2 * ABUSE) +
+                       PIT_TIME + 2.6 + (Math.random() - 0.5) * 0.8;
+            if (first === 'soft') cost -= softBias;
+            if (!best || cost < best.cost) best = { cost, start: first, stopLap, tyre: second };
+        }
+    }
+    // Two stops, for the circuits where one cannot arithmetically be enough -
+    // Kart's 18845px race against a longest set of 10500px. Stops at even
+    // thirds, jittered; every stint checked against its compound.
+    if (TOTAL_LAPS >= 3) {
+        // the jittered split first, the canonical thirds as the fallback: an
+        // unlucky draw (stops at 1 and 4 leaves a 3-lap middle stint no
+        // compound survives) must not silently hand the race to a no-stop that
+        // costs twenty seconds more - it did, once, to Verstappen
+        const c1 = Math.max(1, Math.round(TOTAL_LAPS / 3));
+        const c2 = Math.min(TOTAL_LAPS - 1, Math.max(c1 + 1, Math.round(2 * TOTAL_LAPS / 3)));
+        const j1 = Math.max(1, Math.round(TOTAL_LAPS / 3 + (Math.random() - 0.5)));
+        const j2 = Math.min(TOTAL_LAPS - 1,
+                            Math.max(j1 + 1, Math.round(2 * TOTAL_LAPS / 3 + (Math.random() - 0.5))));
+        const pairs = (j1 === c1 && j2 === c2) ? [[j1, j2]] : [[j1, j2], [c1, c2]];
+        for (const [l1, l2] of pairs) {
+            if (l2 <= l1) continue;
+            const px1 = l1 * lineLen, px2 = (l2 - l1) * lineLen,
+                  px3 = raceLen - l2 * lineLen;
+            for (const a of compounds) for (const b of compounds) for (const c of compounds) {
+                if (pitLifePx(a, lineLen) / ABUSE < px1 * 0.95) continue;
+                if (pitLifePx(b, lineLen) / ABUSE < px2 * 0.95) continue;
+                if (pitLifePx(c, lineLen) / ABUSE < px3 * 0.95) continue;
+                let cost = stintCost(a, px1 * ABUSE) + stintCost(b, px2 * ABUSE) +
+                           stintCost(c, px3 * ABUSE) + 2 * (PIT_TIME + 2.6) +
+                           (Math.random() - 0.5) * 0.8;
+                if (a === 'soft') cost -= softBias * 0.7;
+                if (!best || cost < best.cost)
+                    best = { cost, start: a, stopLap: l1, tyre: b, stopLap2: l2, tyre2: c };
+            }
+        }
+    }
+    return best || { start: wet ? 'inter' : 'medium', stopLap: null, tyre: null };
+}
+
+// The pit sequence itself: kinematic, so it cannot be bumped, rushed or
+// botched - the race happens on the road, not in the box.
+//
+// THE PIROUETTE, and why an angle is not a number.
+// car.angle ACCUMULATES: every steering input adds to it and nothing ever
+// wraps it, so after two laps of a right-handed circuit it reads 16.5 radians
+// - visually identical to 0.0, arithmetically two and a half turns away from
+// it. The approach used to ease the angle towards zero (angle *= 1 - dt*6),
+// which unwound all 16.5 of them: the car spun two and a half times on its way
+// into the box. Measured at 16.48 rad at the pit entry on Kettle, which is
+// 2.62 turns - exactly what Nicola was seeing. Wrapping it to the nearest
+// equivalent of straight-ahead makes the same easing a few degrees of tidying
+// instead.
+// A car's own bias for the VSC stop, drawn once and kept: see the note at the
+// call site. 0 to 0.22 of tyre life, which at Oval is most of a lap.
+function vscPitBias(car) {
+    if (car._vscBias === undefined) car._vscBias = Math.random() * 0.22;
+    return car._vscBias;
+}
+
+function pitWrapAngle(car) {
+    const TAU = Math.PI * 2;
+    car.angle -= TAU * Math.round(car.angle / TAU);
+}
+
+function pitUpdate(car, dt) {
+    const spot = pitSpotFor(track);
+    if (car.isBroken) { car.pitPhase = null; car._pitHeading = null; return; }
+    if (car.pitPhase === 'approach') {
+        // ARRIVING, NOT BEING SWITCHED OFF. The first version ran the car in at
+        // whatever speed it was carrying (the cap, remain * 2.4, only bit in
+        // the last hundred pixels) and then set the velocity to zero the frame
+        // it got there, while dragging the car sideways into the slot on a
+        // quarter-second time constant and snapping the heading straight. Three
+        // separate jumps in half a second, and Nicola saw all three as one.
+        //
+        // Now it is the manoeuvre a driver would make:
+        //   * v = sqrt(2 a s) - the braking curve, so the speed is whatever
+        //     still allows a stop AT the box and the car is doing walking pace
+        //     when it gets there instead of 300 px/s;
+        //   * the lateral offset is spent against the distance that is left, so
+        //     the car takes a straight diagonal into the slot rather than
+        //     sliding across the road;
+        //   * and the nose points along that diagonal, which is what makes it
+        //     read as steering rather than as the car being moved.
+        const remain = Math.max(0, spot.x - car.x);
+        // the SPEED, not the x component of it: the pickup window sits 250-360px
+        // before the line and on a short circuit that is still inside the last
+        // corner, where most of a 275 px/s car is travelling in y. Reading
+        // velocity.x there gave 77 and the car crawled into the box.
+        const carry = Math.hypot(car.velocity.x, car.velocity.y) || 120;
+        const BRAKE = 520;                          // px/s^2: firm, not a panic stop
+        const v = Math.max(25, Math.min(carry, Math.sqrt(2 * BRAKE * remain)));
+        const step = v * dt;
+        // IT STEERS IN. Measured at the pickup: cars arrive at 59 to 153 px/s
+        // with more of that in y than in x, because 250-360px before the line
+        // on a short circuit is still inside the last corner. The sequence used
+        // to move them in +x only, which meant a car mid-corner was rotated
+        // onto a straight and dragged 140px sideways in a quarter of a second -
+        // three jumps in half a second, and that is the "scatto" Nicola saw.
+        //
+        // So the car keeps a HEADING, starting from the direction it was really
+        // travelling, and that heading is turned towards the box - a floor of
+        // 70px under the distance keeps the bearing from going wild as the slot
+        // comes up, so the arc straightens out along the box line instead of
+        // whipping round at the end. That is the shape of a real pit entry.
+        let h = (car._pitHeading === undefined || car._pitHeading === null)
+            ? Math.atan2(car.velocity.y, car.velocity.x) : car._pitHeading;
+        let turn = Math.atan2(spot.y - car.y, Math.max(70, remain)) - h;
+        while (turn > Math.PI) turn -= Math.PI * 2;
+        while (turn < -Math.PI) turn += Math.PI * 2;
+        h += turn * Math.min(1, dt * 5);
+        car._pitHeading = h;
+        car.x += Math.cos(h) * step;
+        car.y += Math.sin(h) * step;
+        // A FUNNEL, not a rail. Steering converges on the box but does not
+        // PROMISE to arrive, and whatever offset is left when the car runs out
+        // of road becomes a sideways jump the moment it parks - measured at
+        // 58px in a single frame, which is precisely the thing this rewrite
+        // exists to delete. So the allowed offset shrinks with the distance
+        // left: it never bites while there is room to steer, and by the slot
+        // there is nothing left to snap.
+        const room = remain * 0.7 + 2;
+        if (Math.abs(car.y - spot.y) > room)
+            car.y = spot.y + (car.y > spot.y ? room : -room);
+        car.angle = h;
+        // the yaw the tyres were still carrying when we took over
+        car.powerOversteer = 0;
+        car.velocity.x = Math.cos(h) * v; car.velocity.y = Math.sin(h) * v;
+        if (remain < 4) {
+            car.velocity.x = 0; car.velocity.y = 0;
+            car.y = spot.y; car.angle = 0; car._pitHeading = null;
+            car.pitPhase = 'stopped';
+            // A HUMAN chooses at the box: the clock does not start until the
+            // call is made, so the panel is not a stopwatch running while you
+            // think. An AI arrives having already decided.
+            car.pitTimer = (car.isPlayer && !car.pitNextTyre) ? Infinity : PIT_TIME;
+        }
+    } else if (car.pitPhase === 'stopped') {
+        car.velocity.x = 0; car.velocity.y = 0;
+        if (car.isPlayer && !car.pitNextTyre) {
+            pitOpenPanel(car);            // the crew is waiting to be told
+            return;
+        }
+        car.pitTimer -= dt;
+        if (car.pitTimer <= 0) {
+            const k = car.pitNextTyre || pitSuggestTyre(car);
+            const old = car.tyre ? car.tyre.short : '?';
+            car.tyre = TYRES[k] || TYRES.medium;
+            car.tyreWear = 0;
+            (car.tyreHistory = car.tyreHistory || []).push(car.tyre.key);
+            car.pitCount = (car.pitCount || 0) + 1;
+            car.wantPit = false;
+            car.pitNextTyre = null;
+            // the stop consumes the plan; a two-stopper promotes its second
+            car.pitPlan = car._pitPlanNext || null;
+            car._pitPlanNext = null;
+            car.pitPhase = 'exit';
+            if (typeof RaceLog !== 'undefined')
+                RaceLog.event('PIT', `${car.driverName || car.color} pits — ` +
+                    `${old} to ${car.tyre.short}, ${PIT_TIME.toFixed(1)}s stationary`);
+        }
+    } else if (car.pitPhase === 'exit') {
+        // ...and it steers out, by the same rule and for the same reason: aimed
+        // at a point down the road rather than at the road, so the car rejoins
+        // on an angle that flattens instead of crabbing sideways to the line.
+        const v = Math.min(190, Math.hypot(car.velocity.x, car.velocity.y) + 300 * dt);
+        const step = v * dt;
+        let h = (car._pitHeading === undefined || car._pitHeading === null) ? 0 : car._pitHeading;
+        let turn = Math.atan2(track.startY - car.y, 210) - h;
+        while (turn > Math.PI) turn -= Math.PI * 2;
+        while (turn < -Math.PI) turn += Math.PI * 2;
+        h += turn * Math.min(1, dt * 4);
+        car._pitHeading = h;
+        car.x += Math.cos(h) * step;
+        car.y += Math.sin(h) * step;
+        car.velocity.x = Math.cos(h) * v; car.velocity.y = Math.sin(h) * v;
+        car.angle = h;
+        if (car.x >= track.startX - 14) {
+            // control back a few pixels SHORT of the line: the crossing that
+            // scores the lap happens on the road, in car.update, as ever. The
+            // ghost lingers a moment longer (pitGrace): a car rejoining at 190
+            // into a pack passing at 300 was being harvested from behind
+            // through no fault of either driver - two retirements in one test
+            // race, both at the pit exit.
+            car.pitPhase = null;
+            car._pitHeading = null;
+            car.pitGrace = 1.2;
+        }
+    }
 }
 
 // Every track made here is tagged with the key it was made from. Several
@@ -2568,6 +3523,14 @@ function startQualifying(forceTrackType) {
     applyDifficultyRules(isChampionship ? championshipState.difficulty
                                        : document.getElementById('difficulty-select').value);
     applySeasonRival();
+    // The box is open in qualifying when the option is on - a wrong compound
+    // is fixable - but the wear law stays the session's own: see
+    // pitRoadWearAhead for why three laps of Monza must not eat a soft.
+    pitModeOn = pitRulesOn();
+    pitRoadWear = false;
+    pitPanelSeat = 0;       // and no session inherits an open pit wall
+    pitPanelPausedAt = 0;
+    if (typeof renderPitPanel === 'function') renderPitPanel();
     TOTAL_LAPS = 9999;              // the session ends on lap count, not the flag
     vscActive = false;
     vscEndsAt = null;
@@ -2686,7 +3649,22 @@ function renderTyreIndicator(car) {
         '<span id="tyre-wear-bar"><span id="tyre-wear-fill" style="width:' +
         (left * 100).toFixed(0) + '%;background:' + col + ';"></span></span>' +
         '<span id="tyre-wear-pct" style="color:' + col + ';">' +
-        (left * 100).toFixed(0) + '%</span>';
+        (left * 100).toFixed(0) + '%</span>' +
+        pitStatusHtml(car);
+}
+
+// The pit line beside the tyre: that the box is called for, or how long is
+// left on the jacks. Present only when there is something to say.
+function pitStatusHtml(car) {
+    if (typeof pitModeOn === 'undefined' || !pitModeOn || !car) return '';
+    if (car.pitPhase === 'stopped') {
+        return '<span class="pit-status pit-live">PIT ' +
+               (isFinite(car.pitTimer) ? Math.max(0, car.pitTimer).toFixed(1) : '—') +
+               '</span>';
+    }
+    if (car.pitPhase) return '<span class="pit-status pit-live">PIT</span>';
+    if (car.wantPit) return '<span class="pit-status pit-armed">BOX</span>';
+    return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -2825,23 +3803,87 @@ const TYRE_NOTE = {
     wet:    'slower, but it drives through standing water'
 };
 
-function tyreLapsText(key, laps) {
-    // Free practice: unlimited running and no wear to speak of.
-    if (!laps || !isFinite(laps)) return 'no wear in free practice';
+// ---------------------------------------------------------------------------
+//  HOW LONG A SET REALLY LASTS
+//  The old text read `life x race laps` - the no-stops law - and in pit mode
+//  that is not merely imprecise, it is the wrong law: it told you a medium
+//  "lasts the distance" when the distance is 5 laps and the set is good for
+//  3.7 of them. In pit mode the answer is the compound's road on THIS circuit
+//  divided by its lap, and the circuit is known before the race starts even
+//  though `track` is not built yet - hence upcomingTrackKey().
+// ---------------------------------------------------------------------------
+// upcomingTrackKey() lives with the record book further down - one circuit,
+// one answer. Declared twice, the later declaration is the one every call
+// reaches, so a second copy here would be dead code that still LOOKS like the
+// rule.
+const _lapPxCache = {};
+function lapPixelsFor(key) {
+    if (_lapPxCache[key]) return _lapPxCache[key];
+    let len = 2500;
+    try { len = makeTrack(key).getRacingLine('standard').length; } catch (e) { }
+    return (_lapPxCache[key] = len);
+}
+// Laps a fresh set covers on this circuit, pit-mode law. One function, so the
+// tyre screen, the box panel, the AI's plan and the wear itself cannot end up
+// promising different numbers - see pitLifePx in car.js for the square root.
+function pitTyreLaps(key, lineLen) {
+    return pitLifePx(key, lineLen) / (lineLen || PIT_REF_LAP);
+}
+
+// One line of character per compound, for the choice screen. In pit mode
+// "still there at the end" is a lie about the hard on most circuits, and
+// "gone by the flag" undersells how early the soft goes.
+const TYRE_NOTE_PIT = {
+    soft:   'the quickest thing here, and the shortest',
+    medium: 'the compromise: some pace, most of the distance',
+    hard:   'slowest, goes furthest — the no-stop gamble, where it fits',
+    drift:  'a fifth slower in the quick stuff, quicker in the slow'
+};
+
+// How many laps of the circuit ahead a fresh set is worth, under whichever
+// law this session runs on. Always a NUMBER: "lasts the distance" is the one
+// thing the old line said that you cannot plan a race around.
+function tyreLifeLaps(key, laps) {
     const t = TYRES[key];
-    // Wear runs dryWear times faster on a road this tyre was not built for, so
-    // the number on the button has to depend on the weather. A full wet reads
-    // "lasts the distance" in the rain and "~1.5 of 5 laps" in the dry, which
-    // is the whole of what makes choosing it a decision.
-    // upcomingWeather(), not isRaining: the global is set when the session
-    // STARTS, and this runs on the screen before it, so it was reading the
-    // previous session's weather. Under a DAMP banner the intermediate read
-    // '~0.5 of 2 laps' - its life at the dry-road wear rate.
-    const dry = !upcomingWeather();
-    const rate = dry ? (t.dryWear || 1) : 1;
-    const life = t.life * laps / rate;
-    return life >= laps ? 'lasts the distance'
-                        : '~' + life.toFixed(1) + ' of ' + laps + ' laps';
+    if (!t) return 0;
+    const dryNow = !upcomingWeather();
+    const rate = dryNow ? (t.dryWear || 1) : 1;
+    if ((typeof pitRoadWear !== 'undefined' && pitRoadWear) || pitRoadWearAhead())
+        return pitTyreLaps(key, lapPixelsFor(upcomingTrackKey())) / rate;
+    // the historical law: a set is a share of the race
+    return (t.life * (laps && isFinite(laps) ? laps : 5)) / rate;
+}
+
+function tyreLapsText(key, laps) {
+    const n = tyreLifeLaps(key, laps);
+    // Free practice: nothing wears, but the number is still worth having -
+    // it is what the same set would be worth in a race here.
+    if (!laps || !isFinite(laps))
+        return 'no wear in free practice — about ' + n.toFixed(1) + ' race laps';
+    // Pit mode: the set is an amount of ROAD, so the honest answer is in laps
+    // OF THIS CIRCUIT - and it is usually fewer than the race.
+    if ((typeof pitRoadWear !== 'undefined' && pitRoadWear) || pitRoadWearAhead()) {
+        if (n >= laps) return 'about ' + n.toFixed(1) + ' laps — covers the ' + laps;
+        return 'about ' + n.toFixed(1) + ' of ' + laps + ' laps — you will stop';
+    }
+    // A QUALIFYING SESSION IS NOT A RACE and must not borrow the race's
+    // sentence. It runs the historical law over two flying laps, and "you will
+    // stop" is exactly the wrong thing to tell somebody about a set that will
+    // see six minutes: the box is there for a compound you got wrong, not for
+    // one you wore out.
+    if (!pendingTyreIsRace && raceMode !== 'practice') {
+        const many = laps === 1 ? 'flying lap' : 'flying laps';
+        return n >= laps ? 'about ' + n.toFixed(1) + ' laps — covers both ' + many
+                         : 'about ' + n.toFixed(1) + ' of ' + laps + ' ' + many;
+    }
+    // The historical law. It used to say "lasts the distance" with no number
+    // at all, which is the one thing you cannot plan a race around: a set good
+    // for 5.2 laps of a five-lap race and one good for thirteen both read the
+    // same. (The rate is the weather's: wear runs dryWear times faster on a
+    // road the tyre was not built for, and upcomingWeather() rather than
+    // isRaining because this screen comes up BEFORE the session sets it.)
+    return n >= laps ? 'about ' + n.toFixed(1) + ' laps — lasts the ' + laps
+                     : 'about ' + n.toFixed(1) + ' of ' + laps + ' laps';
 }
 
 // Each seat runs its own set. Two players choose one after the other, and
@@ -2923,7 +3965,29 @@ function upcomingWeather() {
          : (typeof isRaining !== 'undefined' && isRaining);
 }
 
-function chooseTyres(title, subtitle, laps, done) {
+// What the tyre screen should promise about the race ahead. With pit stops on
+// it is not "this set has to last" - no set does - it is the first stint.
+// ...and what it should promise about a session. The box is open there too
+// when the option is on, but for one reason only, so the subtitle says which.
+function qualiTyreSubtitle() {
+    return pitRulesOn()
+        ? 'One flying lap is all that matters. B (P2: C) calls the box if you pick wrong.'
+        : 'One flying lap is all that matters here.';
+}
+
+function raceTyreSubtitle() {
+    return pitRoadWearAhead()
+        ? 'Your STARTING set — no compound lasts the race. B (P2: C) calls the box.'
+        : 'This set has to last the whole race.';
+}
+
+// Set by chooseTyres: is this screen choosing tyres for a RACE - where the
+// strategy board belongs - or for qualifying and practice, where there are no
+// stops to plan? raceMode is 'race' on the QUALIFYING tyre screen too (it is
+// set before the weekend splits), so it cannot answer this on its own.
+
+function chooseTyres(title, subtitle, laps, done, isRace) {
+    pendingTyreIsRace = !!isRace;
     // Before the screen is drawn, not after it is answered.
     commitWeather();
     // NOBODY TO ASK. In spectator mode the race still needs its weather decided
@@ -3023,7 +4087,8 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
                 ? pace.toFixed(0) + '% fast corners, ' +
                   (hookPace >= 0 ? '+' : '') + hookPace.toFixed(0) + '% slow ones'
                 : (pace >= 0 ? '+' : '') + pace.toFixed(1) + '% pace');
-        const note = TYRE_NOTE[k] || '';
+        const note = (pitRoadWearAhead() && !wetNow && TYRE_NOTE_PIT[k])
+            ? TYRE_NOTE_PIT[k] : (TYRE_NOTE[k] || '');
         return '<button class="tyre-opt" data-tyre="' + k + '">' +
             '<span class="tyre-dot" style="background:' + t.colour + ';"></span>' +
             '<span class="tyre-name">' + t.label + '</span>' +
@@ -3044,6 +4109,9 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
     }).join('');
     const recBox = document.getElementById('tyre-records');
     if (recBox) recBox.innerHTML = pbBookHtml(book, wetNow, pbTrack);
+    // ...and, before all of it, the ways the race can be run - the board goes
+    // ABOVE the buttons because it is the thing that decides which button.
+    renderStrategies(laps);
 
     Array.prototype.forEach.call(tyreOptions.querySelectorAll('.tyre-opt'), (b) => {
         b.addEventListener('click', () => {
@@ -6706,6 +7774,18 @@ function startGame(forceTrackType = null) {
     applyDifficultyRules(isChampionship ? championshipState.difficulty : difficulty);
     applySeasonRival();
 
+    // Pit stops: a race rule, never a session one. The championship carries
+    // its own setting so a resumed season keeps the rules it started under.
+    pitModeOn = !isPractice &&
+        (isChampionship ? !!(championshipState && championshipState.pitStops)
+                        : pitStopsEnabled());
+    pitRoadWear = pitModeOn;
+    pitPanelSeat = 0;              // no session inherits an open pit wall
+    pitPanelPausedAt = 0;
+    renderPitPanel();
+    const boxBtn = document.getElementById('btnBox');
+    if (boxBtn) boxBtn.style.display = (pitModeOn && IS_MOBILE) ? 'block' : 'none';
+
     track = makeTrack(trackType);
 
     // Pre-compute the AI racing line here (a few ms) so the very first racing
@@ -6870,10 +7950,26 @@ function startGame(forceTrackType = null) {
         // Tyres. The player has just chosen; each AI picks from its own style,
         // so the grid is a mix rather than ten cars on the same rubber.
         car._lapPixels = track.getRacingLine ? track.getRacingLine('standard').length : 3000;
+        // With pit stops on, the AI's compound is the first stint of a PLAN
+        // (see aiPitPlan) rather than a reading of the whole race.
+        if (pitModeOn && !p.isPlayer) {
+            const plan = aiPitPlan(p.driverName, car._lapPixels);
+            car.pitPlan = plan.stopLap
+                ? { stopLap: plan.stopLap, tyre: plan.tyre,
+                    stopLap2: plan.stopLap2, tyre2: plan.tyre2 }
+                : null;
+            car._pitStartTyre = plan.start;
+        }
         const tKey = p.isPlayer ? seatTyre(car.playerIndex)
-                                : AI.chooseTyre(p.driverName, TOTAL_LAPS, isRaining, track);
+                                : (pitModeOn && car._pitStartTyre
+                                    ? car._pitStartTyre
+                                    : AI.chooseTyre(p.driverName, TOTAL_LAPS, isRaining, track));
         car.tyre = TYRES[tKey] || TYRES.medium;
         car.tyreWear = 0;
+        // The stints, in order, for the sheet at the end: what a driver's race
+        // was made of is the sequence, not whatever happened to be on the car
+        // when the flag fell.
+        car.tyreHistory = [car.tyre.key];
         car._tyreRaceLaps = TOTAL_LAPS;
         car.startX = gridPos.x;
         car.startY = gridPos.y;
@@ -7112,14 +8208,106 @@ function updatePhysics(dt) {
     // Player input
     applyHumanInputs();
 
-    // AI input
-    ais.forEach(ai => ai.update(track, dt));
+    // AI input - a car in the pit sequence is not being driven
+    ais.forEach(ai => { if (!ai.car.pitPhase) ai.update(track, dt); });
 
     // remember lap counts so completed laps can be logged below
     cars.forEach(c => { c._prevLap = c.lap; c._prevBlue = c.blueFlag; });
-    
-    // Update all cars
-    cars.forEach(car => car.update(dt, track));
+
+    // --- pit stops: arm the AI, catch the armed at the pit window ------
+    if (pitModeOn) {
+        if (pitPanelSeat) {
+            const pc = pitPanelCar();
+            // it closes itself if the moment passes: the car out of the race,
+            // or somehow no longer standing in the box
+            if (!pc || pc.finished || pc.isBroken || pc.pitPhase !== 'stopped') {
+                pitPanelSeat = 0;
+                pitPanelPause(false);
+                renderPitPanel();
+            }
+        }
+        for (const c of cars) {
+            if (c.pitGrace > 0) c.pitGrace -= dt;
+            if (c.finished || c.isBroken) continue;
+            // ENOUGH RACE LEFT TO BE WORTH IT. The pickup happens in the second
+            // half of a lap, so a call made with one lap on the board is a stop
+            // taken a few hundred pixels from the flag: five seconds thrown
+            // away for a set of tyres that will see one corner. The wear bail-
+            // out had this guard from the start and the PLAN branch did not,
+            // which is exactly the case Nicola watched - a car diving into the
+            // box on the last lap because its plan said lap 7 and it was on
+            // lap 7. One rule now, and it also disarms a car that was called in
+            // and has since run out of race.
+            const lapsLeft = TOTAL_LAPS - c.lap;
+            if (!c.isPlayer && c.wantPit && !c.pitPhase && lapsLeft < 1.3) c.wantPit = false;
+            // THE AI DOES NOT PIT IN QUALIFYING. The box is open there for
+            // one reason - a human who put the wrong compound on - and a
+            // session is three laps: an AI diving in would be throwing its
+            // own session away, and TOTAL_LAPS is 9999 in a session, so the
+            // "enough race left" guard above waves everything through.
+            // the AI follows its plan, or bails out at 97% worn
+            if (!c.isPlayer && !c.wantPit && !c.pitPhase && lapsLeft >= 1.3 &&
+                raceMode !== 'qualifying') {
+                const planNext = () => (c.pitPlan && c.pitPlan.stopLap2 &&
+                                        c.pitPlan.stopLap2 > c.lap)
+                    ? { stopLap: c.pitPlan.stopLap2, tyre: c.pitPlan.tyre2 }
+                    : null;
+                if (c.pitPlan && c.pitPlan.stopLap === c.lap) {
+                    c.wantPit = true;
+                    c.pitNextTyre = c.pitPlan.tyre || pitSuggestTyre(c);
+                    // a two-stopper's second call becomes the plan when the
+                    // first is taken (pitUpdate clears pitPlan at the box)
+                    c._pitPlanNext = c.pitPlan.stopLap2
+                        ? { stopLap: c.pitPlan.stopLap2, tyre: c.pitPlan.tyre2 }
+                        : null;
+                } else if (c.tyreWear > 0.97) {
+                    c.wantPit = true;
+                    c.pitNextTyre = pitSuggestTyre(c);
+                    c._pitPlanNext = planNext();
+                // THE FREE STOP. Under the VSC everybody is pegged to 90 px/s
+                // against a racing 275, so the ground a stop costs you is a
+                // third of what it costs under green - which is why a real pit
+                // wall empties itself the moment the boards come out. The car
+                // has to have a stop coming to it (a plan, or rubber far enough
+                // gone that it is going to have to stop anyway); this is taking
+                // a stop EARLY, never inventing one, and a no-stopper on a
+                // healthy set stays out.
+                // ...but not as a herd. There is one box, not a pit lane, so a
+                // field that all qualifies on the same threshold arrives at the
+                // same slot together. A fixed bias per car, drawn once, spreads
+                // the queue across the window the way the jitter on aiPitPlan's
+                // stop lap spreads it under green.
+                } else if (vscActive && (c.pitPlan && c.pitPlan.stopLap
+                                            ? c.tyreWear > 0.45 + vscPitBias(c)
+                                            : c.tyreWear > 0.80 + vscPitBias(c) * 0.5)) {
+                    c.wantPit = true;
+                    c.pitNextTyre = (c.pitPlan && c.pitPlan.tyre) || pitSuggestTyre(c);
+                    c._pitPlanNext = planNext();
+                    if (typeof RaceLog !== 'undefined')
+                        RaceLog.event('PIT', `${c.driverName || c.color} takes the VSC stop`);
+                }
+            }
+            // Armed and arriving: pick the car up at the pit window - but
+            // only in the SECOND HALF of its lap. The sequence carries the car
+            // forward to the line without car.update running, so the crossing
+            // that scores the lap has to be the one that was already coming:
+            // caught before halfway the car rejoins, crosses, scores nothing
+            // because the halfway marker is still ahead of it, and has to go
+            // round again. Measured over one eight-lap race at Oval, a car
+            // that stopped finished on lap seven of eight.
+            if (c.wantPit && !c.pitPhase && c.halfwayMarkerCrossed &&
+                (c.isPlayer || (TOTAL_LAPS - c.lap) >= 1.3) &&
+                c.velocity.x > 30 &&
+                Math.abs(c.y - track.startY) < track.trackWidth &&
+                c.x > track.startX - 360 && c.x < track.startX - 250) {
+                c.pitPhase = 'approach';
+                pitWrapAngle(c);      // see the note there: 16 radians of it
+            }
+        }
+    }
+
+    // Update all cars - the pit sequence replaces physics while it runs
+    cars.forEach(car => { if (car.pitPhase) pitUpdate(car, dt); else car.update(dt, track); });
 
     // A car that has been classified stops counting - see raceCmp.
     freezeClassified();
@@ -7214,6 +8402,8 @@ function updatePhysics(dt) {
             if (roadGap <= 0 || roadGap >= 250) continue;
             // and no tow through a bridge deck
             if (track.sameLevel && !track.sameLevel(car, otherCar)) continue;
+            // nor off a car that is standing in the pit box
+            if (otherCar.pitPhase || car.pitPhase) continue;
 
             // Where is it in MY frame: how far up the road, and how far off
             // the line I am travelling on?
@@ -7349,6 +8539,11 @@ function updatePhysics(dt) {
             if ((c1.isBroken && gone(c1)) || (c2.isBroken && gone(c2))) continue;
             // On a circuit with a bridge, two cars can share a pixel and be
             // ten metres apart vertically.
+            // A car in the pit sequence is in the pits, wherever it is drawn
+            // - and for a heartbeat after rejoining, while it gets back up to
+            // racing speed: it neither gives nor takes a hit.
+            if (c1.pitPhase || c2.pitPhase) continue;
+            if (c1.pitGrace > 0 || c2.pitGrace > 0) continue;
             if (track.sameLevel && !track.sameLevel(c1, c2)) continue;
             const dx = c2.x - c1.x;
             const dy = c2.y - c1.y;
@@ -7490,6 +8685,31 @@ function participantCode(p) {
            (p.driverName || p.color || '---').slice(0, 3).toUpperCase();
 }
 
+// A driver's tyres as the SEQUENCE they ran, one dot per stint, in order.
+// The dot and the letter said the same thing twice about the last set only,
+// which on a two-stop race is a third of the story.
+function tyreSeqHtml(car) {
+    const seq = (car.tyreHistory && car.tyreHistory.length)
+        ? car.tyreHistory
+        : (car.tyre ? [car.tyre.key] : []);
+    if (!seq.length) return '-';
+    return '<span class="tyre-seq">' + seq.map(k => {
+        const t = TYRES[k] || TYRES.medium;
+        return '<span class="tyre-pip" style="background:' + t.colour +
+               ';" title="' + t.label + '"></span>';
+    }).join('') + '</span>';
+}
+
+// The Stops column is only about a race that had any. Shown when this session
+// ran with the box open, hidden otherwise - an empty column of zeroes on every
+// classic race is a column about nothing.
+function showStopsColumn(on) {
+    const th = document.getElementById('th-stops');
+    if (th) th.style.display = on ? '' : 'none';
+    document.querySelectorAll('#stats-body .col-stops')
+        .forEach(td => { td.style.display = on ? '' : 'none'; });
+}
+
 function driverCode(car) {
     if (!car) return '---';
     if (car.isPlayer) return humanLabel(car);
@@ -7547,7 +8767,13 @@ function trackDirAt(c) {
 
 function applyVscHold() {
     if (!vscActive) { vscOrder = null; return; }
-    const running = cars.filter(c => !c.finished && !c.isBroken);
+    // A car in the pit sequence is not in the queue. It is stationary by
+    // definition, and the hold works by capping each car at the speed of the
+    // one ahead: leave it in and the whole field inherits its zero and parks
+    // on the start straight until the stop is over. It keeps its place in
+    // vscOrder - the classification is still frozen, it simply stops being an
+    // obstacle.
+    const running = cars.filter(c => !c.finished && !c.isBroken && !c.pitPhase);
     if (running.length < 2) return;
 
     if (!vscOrder) {
@@ -8666,7 +9892,8 @@ function updateHUD() {
                 <td>${index + 1}</td>
                 <td style="color: ${c.color}; font-weight: bold; text-transform: capitalize;">${nameDisplay}</td>
                 <td>${chasCell}</td>
-                <td>${c.tyre ? `<span class="tyre-pip" style="background:${c.tyre.colour};" title="${c.tyre.label}"></span>${c.tyre.short}` : '-'}</td>
+                <td>${tyreSeqHtml(c)}</td>
+                <td class="col-stops">${c.pitCount || 0}</td>
                 <td${isLapped || isDNF ? ' style="opacity: 0.55;"' : ''}>${lapsStr}</td>
                 <td${dim}>${timeStr}</td>
                 <td style="color: ${isFastest ? '#ce93d8' : '#4CAF50'}; font-weight: ${isFastest ? 'bold' : 'normal'};">${bestLapStr}</td>
@@ -8682,7 +9909,8 @@ function updateHUD() {
             `;
             statsBody.appendChild(tr);
         });
-        
+        showStopsColumn(pitModeOn);
+
         // You skipped this one: show yourself at the bottom of the sheet as
         // DNS rather than silently omitting you from your own championship.
         if (skipMode) {
@@ -8699,6 +9927,7 @@ function updateHUD() {
                     <td style="color: ${sp.color}; font-weight: bold;">${who} (${sp.color})</td>
                     <td>-</td>
                     <td>-</td>
+                    <td class="col-stops">-</td>
                     <td>DNS</td>
                     <td>DNS</td>
                     <td>-</td>
@@ -8877,6 +10106,30 @@ function gameLoop(timestamp) {
     // Paused: stop requesting frames and leave the last rendered frame on the
     // canvas. setPaused(false) restarts the loop.
     if (isPaused) return;
+
+    // The box panel is open: the race is HELD. Frames keep being requested -
+    // the browser stays responsive and the canvas stays painted under the
+    // panel - the world simply does not advance, and lastTime is kept level
+    // with the clock so the frame after it closes is an ordinary one rather
+    // than a ten-second leap.
+    if (pitPanelSeat) {
+        // ...but only while there is a race and a car for it to belong to. A
+        // seat left set - the panel open when the session was quit, or when
+        // the flag fell - would hold EVERY session that came after it: the
+        // loop returns here for ever, so the next qualifying shows its HUD
+        // over a canvas that is never drawn and nothing moves. The code that
+        // stands the crew down lives in updatePhysics, which this return is
+        // what stops from running: the deadlock could not clear itself.
+        if (!pitModeOn || !pitPanelCar()) {
+            pitPanelSeat = 0;
+            pitPanelPausedAt = 0;
+            renderPitPanel();
+        } else {
+            lastTime = timestamp;
+            requestAnimationFrame(gameLoop);
+            return;
+        }
+    }
 
     const framePrev = lastTime;
     let dt = (timestamp - lastTime) / 1000;
@@ -9838,7 +11091,8 @@ function startChampionship() {
         difficulty: difficulty,
         // fixed at creation, so a season resumed in a month is still the
         // season you started - see noAiHandicapWanted()
-        noAiHandicap: noAiHandicapBox() && difficulty !== 'alien'
+        noAiHandicap: noAiHandicapBox() && difficulty !== 'alien',
+        pitStops: pitStopsEnabled()
     };
     // ...and the box is EMPTIED, which is the opposite of what it used to do.
     //

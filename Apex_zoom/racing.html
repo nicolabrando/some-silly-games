@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom57">
+    <link rel="stylesheet" href="style.css?v=zoom62">
 </head>
 <body>
     <div id="game-container">
@@ -74,6 +74,9 @@
                          paused: what it says depends on whether this is a race
                          or a qualifying session. -->
                     <div id="pause-stats"></div>
+                    <!-- One per human seat, filled by renderPauseBox(): calling
+                         the box without having to find the B key mid-corner. -->
+                    <div id="pause-box" style="display:none;"></div>
                     <div id="pause-buttons">
                         <button id="resume-btn" style="background: #4CAF50; color: #002;">Resume</button>
                         <button id="pause-quit-btn" style="background: #37474f; color: #ddd;">Quit to menu</button>
@@ -210,6 +213,16 @@
                         <label class="menu-check" data-modes="race practice">
                             <input type="checkbox" id="wet-race-checkbox">
                             <span>Force wet race</span>
+                        </label>
+                        <!-- Pit stops. Ticked, a set of tyres is a fixed
+                             amount of road instead of a fixed share of the
+                             race, so no compound covers the distance and the
+                             question becomes which tyres and when. B (P2: C)
+                             calls the box; the compound is chosen at the stop,
+                             with the race held. -->
+                        <label class="menu-check" data-modes="race champ" title="Fixed tyre life in distance; press B in the race to call for the box">
+                            <input type="checkbox" id="pit-checkbox">
+                            <span>Pit stops &mdash; fixed tyre life</span>
                         </label>
                     </div>
 
@@ -367,7 +380,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom57 &nbsp;·&nbsp; 1 Sep 2026</div>
+                <div id="build-stamp">build zoom62 &nbsp;·&nbsp; 3 Sep 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -842,6 +855,12 @@
                      enough: it is easy to walk past and pick slicks for a wet
                      race, which is a 17% mistake you cannot undo. -->
                 <div id="tyre-weather" class="tw"></div>
+                <!-- The strategy board: two or three ways to the flag, ranked,
+                     the way a Grand Prix broadcast opens. Only on the race
+                     screen and only with the box open - filled by
+                     renderStrategies(). Clicking a row picks its opening
+                     compound. -->
+                <div id="tyre-strategies" style="display:none;"></div>
                 <div id="tyre-options"></div>
                 <!-- Your own times here, per compound and per weather. The
                      record book was already being written from the first lap;
@@ -974,7 +993,8 @@
                             <th>Pos</th>
                             <th>Driver</th>
                             <th title="the chassis this driver took for the season">Car</th>
-                            <th>Tyre</th>
+                            <th title="the compounds this driver ran, in order">Tyre</th>
+                            <th id="th-stops" title="pit stops made in the race">Stops</th>
                             <th>Laps</th>
                             <th>Time</th>
                             <th>Best Lap</th>
@@ -1084,11 +1104,15 @@
              throttle on the right as a strip you slide - up for gas, down for
              brake and reverse - so the amount is yours to choose rather than
              all or nothing. Never shown on a desktop, where nothing changes. -->
+        <!-- The box panel: opened when the car is stopped in the pit box,
+             closed by picking a tyre. The race is held while it is up. -->
+        <div id="pit-panel" style="display:none;"></div>
         <div id="mobile-controls" style="display: none;">
             <div id="mobile-steer">
                 <button id="btnLeft" aria-label="steer left">&#9664;</button>
                 <button id="btnRight" aria-label="steer right">&#9654;</button>
             </div>
+            <button id="btnBox" aria-label="pit stop" style="display:none; position:absolute; left: 12px; bottom: 152px; width: 74px; padding: 10px 0; font-weight: bold; border-radius: 10px; border: 1px solid #666; background: rgba(20,24,20,0.75); color: #ffd54f;">BOX</button>
             <div id="mobile-throttle" aria-label="throttle and brake">
                 <div id="mt-track">
                     <div id="mt-fill"></div>
@@ -1107,12 +1131,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom57"></script>
-    <script src="track.js?v=zoom57"></script>
-    <script src="lines.js?v=zoom57"></script>
-    <script src="car.js?v=zoom57"></script>
-    <script src="ai.js?v=zoom57"></script>
-    <script src="audio.js?v=zoom57"></script>
+    <script src="racelog.js?v=zoom62"></script>
+    <script src="track.js?v=zoom62"></script>
+    <script src="lines.js?v=zoom62"></script>
+    <script src="car.js?v=zoom62"></script>
+    <script src="ai.js?v=zoom62"></script>
+    <script src="audio.js?v=zoom62"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1206,6 +1230,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom57"></script>
+    <script src="main.js?v=zoom62"></script>
 </body>
 </html>

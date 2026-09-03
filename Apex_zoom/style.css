@@ -2226,3 +2226,263 @@ button.menu-danger {
     cursor: not-allowed;
 }
 .menu-check.menu-check-off input { cursor: not-allowed; }
+
+
+/* ---- THE PIT BOX -------------------------------------------------------- */
+/* The little tag beside the tyre readout: the box is called for, or the car
+   is in it. */
+.pit-status {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 7px;
+    border-radius: 9px;
+    border: 1px solid #777;
+    background: rgba(0, 0, 0, 0.45);
+    color: #e0e0e0;
+    font-size: 11px;
+    letter-spacing: 0.4px;
+}
+.pit-status.pit-armed {
+    border-color: #ff8a65;
+    color: #ff8a65;
+}
+.pit-status.pit-live {
+    border-color: #ffd54f;
+    color: #ffd54f;
+}
+
+/* The box panel: every compound, its real range here, and one key each -
+   next to what the rest of the field is on. Centred over the circuit,
+   because the race is held while it is open and there is nothing underneath
+   that needs watching. */
+#pit-panel {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 40;
+    min-width: 560px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #7e8f7e;
+    /* Nearly solid: the panel is read, not looked through. */
+    background: #0a0d0a;
+    color: #e8f0e8;
+    font-size: 13px;
+    pointer-events: none;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+}
+#pit-panel .pp-head {
+    font-weight: bold;
+    letter-spacing: 0.6px;
+    color: #ffd54f;
+    margin-bottom: 6px;
+}
+#pit-panel .pp-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+}
+#pit-panel .pp-key {
+    display: inline-block;
+    width: 18px;
+    text-align: center;
+    border: 1px solid #7c8a7c;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #cfd8cf;
+}
+#pit-panel .pp-dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.45);
+}
+#pit-panel .pp-name { flex: 0 0 74px; }
+#pit-panel .pp-pace { flex: 0 0 62px; color: #b0bec5; text-align: right; }
+#pit-panel .pp-laps { flex: 1; text-align: right; }
+#pit-panel .pp-ok { color: #66bb6a; }
+#pit-panel .pp-short { color: #ffa726; }
+#pit-panel .pp-foot {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #90a490;
+}
+/* Two columns: what you can fit, and what everyone else is on. */
+#pit-panel .pp-sub {
+    display: block;
+    font-weight: normal;
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    color: #9db09d;
+    margin-top: 2px;
+}
+#pit-panel .pp-cols {
+    display: flex;
+    gap: 18px;
+    margin-top: 4px;
+}
+#pit-panel .pp-left { flex: 0 0 310px; }
+#pit-panel .pp-right { flex: 1; border-left: 1px solid #3b463b; padding-left: 14px; }
+#pit-panel .pp-title {
+    font-size: 10px;
+    letter-spacing: 1.2px;
+    color: #8fa08f;
+    margin-bottom: 4px;
+}
+#pit-panel .pf-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+#pit-panel .pf-row.pf-you {
+    background: rgba(255, 213, 79, 0.14);
+    box-shadow: inset 2px 0 0 #ffd54f;
+}
+#pit-panel .pf-pos { flex: 0 0 14px; color: #9db09d; text-align: right; }
+#pit-panel .pf-name {
+    flex: 0 0 44px;
+    font-weight: bold;
+    /* Half the grid runs dark colours - blue, purple, black - and a car's own
+       colour on a black panel is a car you cannot read. The outline keeps the
+       identification without repainting anybody. */
+    text-shadow: 0 0 2px #000, 0 0 4px #000, 0 1px 0 #000;
+}
+#pit-panel .pf-state { flex: 0 0 62px; color: #9db09d; font-size: 11px; }
+#pit-panel .pf-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.45);
+}
+#pit-panel .pf-tyre { flex: 0 0 12px; }
+#pit-panel .pf-bar {
+    flex: 1;
+    height: 6px;
+    min-width: 46px;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid #4b564b;
+    overflow: hidden;
+}
+#pit-panel .pf-bar > span { display: block; height: 100%; }
+#pit-panel .pf-pct { flex: 0 0 30px; text-align: right; font-size: 11px; }
+
+
+/* ---- THE STRATEGY BOARD, ON THE TYRE SCREEN ----------------------------- */
+/* Two or three ways to the flag, ranked, above the buttons - because it is
+   the thing that decides which button. Each row is a control: it picks the
+   compound the plan starts on. */
+#tyre-strategies {
+    margin: 0 auto 14px;
+    max-width: 560px;
+    text-align: left;
+    border: 1px solid #4a5a4a;
+    border-radius: 8px;
+    background: rgba(8, 12, 8, 0.55);
+    padding: 8px 10px 6px;
+}
+#tyre-strategies .st-head {
+    font-size: 11px;
+    letter-spacing: 1.4px;
+    color: #8fa08f;
+    margin-bottom: 6px;
+}
+#tyre-strategies .st-sub {
+    letter-spacing: 0.3px;
+    text-transform: none;
+    opacity: 0.75;
+    margin-left: 8px;
+}
+#tyre-strategies .st-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin: 0 0 3px;
+    padding: 5px 8px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    color: #e8f0e8;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+}
+#tyre-strategies .st-row:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: #7e8f7e;
+}
+#tyre-strategies .st-stops { flex: 0 0 66px; color: #b0bec5; font-size: 12px; }
+#tyre-strategies .st-chain { flex: 1; display: flex; align-items: center; gap: 4px; }
+#tyre-strategies .st-leg { display: inline-flex; align-items: center; gap: 4px; }
+#tyre-strategies .st-dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.5);
+}
+#tyre-strategies .st-arrow { color: #6d7a6d; margin: 0 2px; }
+#tyre-strategies .st-time { flex: 0 0 58px; text-align: right; font-variant-numeric: tabular-nums; }
+#tyre-strategies .st-delta {
+    flex: 0 0 62px; text-align: right; font-size: 12px; color: #ffa726;
+    font-variant-numeric: tabular-nums;
+}
+#tyre-strategies .st-delta.st-best { color: #66bb6a; }
+#tyre-strategies .st-note,
+#tyre-strategies .st-none {
+    font-size: 11px;
+    color: #90a490;
+    margin-top: 5px;
+    line-height: 1.4;
+}
+
+/* The stint sequence on the results sheet: one dot per set, in the order they
+   went on. The dot-plus-letter it replaced said the same thing twice about the
+   last set only, which on a two-stop race is a third of the story. */
+.tyre-seq { display: inline-flex; align-items: center; gap: 3px; }
+.tyre-seq .tyre-pip { margin: 0; }
+
+/* ---- the Box button on the pause screen --------------------------------
+   B is the right key with a hand free; mid-corner there isn't one. Sized and
+   coloured like the pit-wall status strip rather than like Resume, so it reads
+   as part of the race and not as a menu action. */
+#pause-box {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin: 10px 0 2px;
+}
+.pause-box-btn {
+    /* the global `button` rule is width:100%, which turned a one-word call
+       into a banner the width of the panel */
+    width: auto;
+    flex: 0 1 auto;
+    margin-top: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 14px;
+    border: 1px solid #5a6b5a;
+    border-radius: 7px;
+    background: #26312a;
+    color: #cfe3cf;
+    font: 600 13px/1 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    letter-spacing: .02em;
+    cursor: pointer;
+}
+.pause-box-btn:hover:not(:disabled) { background: #31402f; border-color: #7d9c7d; }
+.pause-box-btn:disabled { opacity: .5; cursor: default; }
+.pause-box-btn .pbx-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #6d7a6d;
+    border: 1px solid rgba(0, 0, 0, .55);
+}
+.pause-box-btn.pbx-on {
+    background: #4a3a12;
+    border-color: #d9a520;
+    color: #ffd766;
+}
+.pause-box-btn.pbx-on .pbx-dot {
+    background: #ffc107;
+    box-shadow: 0 0 6px rgba(255, 193, 7, .85);
+}

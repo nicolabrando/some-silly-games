@@ -1175,6 +1175,9 @@ class AI {
 
             for (const other of cars) {
                 if (other === car || other.isBroken) continue;
+                // A car in the pit sequence is in the pits, not on the road:
+                // nothing to follow, nothing to defend against.
+                if (other.pitPhase) continue;
                 // A car on the bridge and a car under it are not traffic for
                 // one another, however close they look from above.
                 if (track.sameLevel && !track.sameLevel(car, other)) continue;

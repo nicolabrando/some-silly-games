@@ -77,6 +77,47 @@ let __carUid = 0;
 //  measured (driftsweep.js) at a constant fresh steering rate, walking grip
 //  from 0.78 to 0.74 doubles the deficit, 1.65% to 3.04%. A tyre meant to be
 //  loose rather than slow needs the two separated.
+// ---------------------------------------------------------------------------
+//  WITH PIT STOPS ON, A SET IS A FIXED AMOUNT OF ROAD
+//  pitLife, in pixels, absolute, whatever the race length. The numbers are
+//  deliberately SHORT of a five-lap race on a typical circuit (~14000px):
+//  with compounds priced 2-3% a lap apart, a ~5s stop can never pay for
+//  itself on pace in a 65-second sprint, so a mode where any compound cruises
+//  to the flag is a mode where nobody ever stops - measured, twice: at
+//  generous lives the whole grid picked the hard and the feature was
+//  furniture. With no set able to cover the distance, the race becomes WHICH
+//  tyres and WHEN, which is the game pit stops are for. The one honest
+//  exception survives: on the shortest circuits the hard (10500px against
+//  Circo Massimo's 10250px race) really can run through, so the no-stop
+//  gamble exists exactly where the arithmetic says it should - and only there.
+const PIT_LIVES = { soft: 6000, medium: 8300, hard: 10500,
+                    drift: 8800, inter: 8000, wet: 10500 };
+
+// ...AND HOW MUCH OF IT A LONG CIRCUIT EATS
+//
+// The table above was fitted when the game had twenty circuits, none of them
+// longer than 3769px a lap. It now has thirty-two, and the twelve added since
+// run 5000 to 7872px: at a flat distance a soft does not survive one lap of
+// Monza, and an eight-lap race there is six stops. A pit stop that is
+// compulsory four times a race is not a decision either.
+//
+// Two obvious answers, and both are wrong on their own. Keep the distance
+// flat and the long circuits are a farce. Give every circuit its own number
+// so a set is worth N laps everywhere and the CIRCUIT stops mattering: every
+// race becomes the same one stop and the only variable left is the lap count
+// you typed into the menu - which is exactly the model this mode replaced.
+//
+// So: the life scales with the SQUARE ROOT of the circuit's length. A lap
+// twice as long eats a set 1.4 times as fast, not twice as fast. Measured
+// across the calendar that takes the spread from 5.5x to 2.3x - Circle still
+// nurses a hard through a five-lap race and Monza still cannot - while the
+// twenty circuits the table was fitted on barely move at all, because 2500px
+// is about their median and the correction there is 1.0.
+const PIT_REF_LAP = 2500;
+function pitLifePx(key, lapPx) {
+    return (PIT_LIVES[key] || 9500) * Math.sqrt((lapPx || PIT_REF_LAP) / PIT_REF_LAP);
+}
+
 const TYRES = {
     soft:   { key: 'soft',   label: 'Soft',   short: 'S', colour: '#e53935',
               grip: 1.090, falloff: 0.2285, life: 0.90, bite: 1.010, slide: 1.00 },
@@ -1127,6 +1168,15 @@ class Car {
         this.tyreSteer = 1;
         this.tyreSlide = 1;
 
+        // --- Pit stops (only with the menu switch on; see main.js) -------
+        this.wantPit = false;        // box armed for the next time past the pits
+        this.pitNextTyre = null;     // compound waiting at the box
+        this.pitPhase = null;        // null | 'approach' | 'stopped' | 'exit'
+        this.pitTimer = 0;
+        this.pitCount = 0;
+        this.pitGrace = 0;           // ghosted for a beat after rejoining
+        this.pitPlan = null;         // AI: { stopLap, tyre } decided on the grid
+
         // ---- Lap telemetry --------------------------------------------
         // Enough to answer "where did this compound's time come from", which
         // lap times on their own cannot. The drift compound's whole mechanism
@@ -1259,13 +1309,46 @@ class Car {
             // the set is gone a third of the way in, and there are no stops.
             const dry = !(typeof isRaining !== 'undefined' && isRaining);
             const surfaceWear = dry ? (tyre.dryWear || 1) : 1;
+            // Two wear laws, one switch. The historical law scales a set to
+            // the RACE: life x race laps, so a soft always died at 90% of the
+            // distance whether the race was three laps or thirty - which is
+            // tidy, and means the length of the race never changes what a
+            // compound IS. With pit stops on, the other rule applies: a set is
+            // an amount of ROAD (pitLifePx), full stop. A soft is about three
+            // laps of a typical circuit wherever you are in the season; a long
+            // circuit like Monza eats a medium that a short one like Peanut
+            // would nurse home - the strategy becomes a property of the
+            // CIRCUIT, which is the point of having one.
+            // pitRoadWear, NOT pitModeOn: qualifying can have the box open
+            // (a wrong compound is fixable) while still measuring a set as a
+            // share of its own three laps. The two questions came apart the
+            // day the box opened in qualifying.
+            const pit = typeof pitRoadWear !== 'undefined' && pitRoadWear;
+            const lifeLaps = pit
+                ? pitLifePx(tyre.key, this._lapPixels) / this._lapPixels
+                : tyre.life * laps;
             this.tyreWear += lapFrac * abuse * scrub * chassisWear * surfaceWear /
-                             Math.max(0.05, tyre.life * laps);
+                             Math.max(0.05, lifeLaps);
         }
-        const w = Math.max(0, Math.min(1.25, this.tyreWear));
+        const pitWall = typeof pitRoadWear !== 'undefined' && pitRoadWear;
+        // In pit mode the clamp moves out to 1.6: the wear does not stop
+        // accruing just because the set is finished, and the wall below needs
+        // the number to keep counting.
+        const w = Math.max(0, Math.min(pitWall ? 1.6 : 1.25, this.tyreWear));
         // ^1.6: the first half of a set costs almost nothing, the last of it
         // falls away quickly - the cliff is what makes the choice interesting.
         this.tyrePerf = tyre.grip - tyre.falloff * Math.pow(w, 1.6);
+        // Past 100% in pit mode the set is not a slower tyre, it is a FINISHED
+        // one. The ordinary falloff is tuned for a game with no stops, where
+        // limping home had to be possible - and with a cap of 1.25 and a
+        // gentle slope, limping was always cheaper than a stop, measured: the
+        // whole grid ran the hard into the ground and nobody ever boxed. Six
+        // points of perf per point of overrun, floored at 0.30 so the
+        // arithmetic downstream (vGrip is a square root) stays real: a set 20%
+        // over is a crawl, and the crawl is the argument for the pit box.
+        if (pitWall && w > 1) {
+            this.tyrePerf = Math.max(0.30, this.tyrePerf - 6.0 * (w - 1));
+        }
         // The compound's own hold on the steering rate, fading with the set:
         // all of it on a fresh tyre, none of it on a spent one.
         const bite = tyre.bite === undefined ? 1 : tyre.bite;
@@ -2094,5 +2177,55 @@ class Car {
             ctx.fillText(this.driverName, this.x, this.y - this.height - 15);
             ctx.shadowBlur = 0; // reset
         }
+
+        // ...and, for whoever is actually driving, how much tyre is left.
+        if (this.isPlayer) this.drawTyreGauge(ctx);
+    }
+
+    // HOW MUCH RUBBER IS LEFT, under your own car and nobody else's.
+    //
+    // The number exists in three places already - the pit panel, the tyre
+    // screen, the HUD - and reading any of them costs you the corner you were
+    // looking at. So it goes where the eyes already are: under the car, drawn
+    // in world space like the health bar above it, and only under the cars with
+    // a human in them - both of them, in a two-player race.
+    //
+    // TWO CHANNELS, because it has to answer two questions at a glance and one
+    // bar cannot. The SHELL is the compound's own colour - which tyre am I on -
+    // and the FILL runs green to amber to red - how much of it is left.
+    // Colouring the fill by compound would have made every soft look like an
+    // emergency and every hard look fine.
+    drawTyreGauge(ctx) {
+        const t = this.tyre;
+        if (!t || this.isBroken) return;
+        // Thinner than the health bar above (24 x 4) on purpose: two bars of
+        // the same weight on the same car read as one instrument in two places.
+        const W = 26, H = 3;
+        const x = this.x - W / 2;
+        const y = this.y + this.height + 6;
+        const wear = Math.max(0, this.tyreWear || 0);
+        const left = Math.max(0, 1 - Math.min(1, wear));
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.62)';
+        ctx.fillRect(x - 1, y - 1, W + 2, H + 2);
+        ctx.strokeStyle = t.colour || '#fdd835';
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(x - 0.9, y - 0.9, W + 1.8, H + 1.8);
+
+        if (wear >= 1) {
+            // PAST THE ODOMETER the bar is not merely empty. In a pit-stop race
+            // the car keeps going on rubber that is finished, and losing 6% of
+            // grip per 1% over is not a thing to find out about in a corner, so
+            // the gauge pulses - the only thing on screen that does.
+            ctx.globalAlpha = 0.45 + 0.55 * Math.abs(Math.sin(Date.now() / 260));
+            ctx.fillStyle = '#F44336';
+            ctx.fillRect(x, y, W, H);
+            ctx.globalAlpha = 1;
+        } else {
+            ctx.fillStyle = left > 0.5 ? '#4CAF50' : (left > 0.22 ? '#FFC107' : '#F44336');
+            ctx.fillRect(x, y, W * left, H);
+        }
+        ctx.restore();
     }
 }
