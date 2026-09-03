@@ -31,7 +31,10 @@ const RaceLog = {
         this.event('SESSION', `${meta.mode} — ${meta.track}` +
             (meta.laps ? `, ${meta.laps} laps` : '') +
             (meta.difficulty ? `, ${meta.difficulty}` : '') +
-            `, ${meta.weather}`);
+            `, ${meta.weather}` +
+            // in the body as well as the header: this is the line a reader
+            // lands on, and PIT events further down mean nothing without it
+            (meta.pits ? `, ${meta.pits}` : ''));
         return this.current;
     },
 
@@ -77,7 +80,13 @@ const RaceLog = {
                    // The seed makes a season repeatable, so it belongs in the
                    // log: without it a championship you want to run again on
                    // another tyre is gone the moment you close the page.
-                   (m.seed ? ` | season ${m.seed}` : ''));
+                   (m.seed ? ` | season ${m.seed}` : '') +
+                   // WHETHER THE BOX WAS OPEN. Two seasons run on the same seed
+                   // and the same circuits are not the same experiment if one of
+                   // them could stop and the other could not - and the tyre
+                   // lines below mean something different in each. It is one
+                   // clause and it makes the log answerable.
+                   (m.pits ? ` | ${m.pits}` : ''));
         // Which rubber everyone started on. This was missing, and its absence
         // made a whole question unanswerable: two championships were run to
         // find out whether one compound was too strong and the logs could not

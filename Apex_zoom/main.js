@@ -2306,6 +2306,18 @@ function pitStopsEnabled() {
 // inside startGame, which runs AFTER the race tyre screen has been answered.
 // "raceMode is qualifying, therefore no stops" silently blanked every
 // pit-aware thing on the one screen whose entire subject is the stops.
+// The tag on a season that was run with the box open. Blue, because red is
+// already the nightmare calendar's and the two say completely different
+// things about a season - one is how hard it was, the other is what game it
+// was. Spelled once here so the seasons table, the season sheet and the hall
+// of fame cannot drift apart.
+function pitSeasonTag(on, bare) {
+    if (!on) return '';
+    return (bare ? '' : ' ') + '<span class="ex-pits" title="this season was run ' +
+           'with pit stops - tyre life measured in road, and a box to change them">' +
+           'pit stops</span>';
+}
+
 function pitRulesOn() {
     if (raceMode === 'practice') return false;
     if (isChampionship) return !!(championshipState && championshipState.pitStops);
@@ -3600,6 +3612,7 @@ function startQualifying(forceTrackType) {
                                    : document.getElementById('difficulty-select').value,
         weather: isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry',
         seed: isChampionship && championshipState ? championshipState.seed : null,
+        pits: pitModeOn ? 'box open' : null,
         grid: pendingField.map(p => p.driverName || p.color)
     });
 
@@ -4682,6 +4695,7 @@ function exHofHtml() {
             '<span class="ex-hof-season">' + (r.seed ? 'season <b>' + r.seed + '</b>' : 'season') +
                 ' &middot; ' + r.rounds + ' rounds' +
                 (r.nightmare ? ' <span class="ex-nightmare">nightmare</span>' : '') +
+                pitSeasonTag(r.pitStops) +
                 (r.fromLog ? ' <span class="ex-sml">from a log</span>' : '') + '</span>' +
             '<span class="ex-hof-champ' + (r.champIsPlayer ? ' ex-hof-you' : '') + '">' +
                 r.champion + '</span>' +
@@ -5232,6 +5246,11 @@ function archiveSeason(state, complete) {
         seed: state.seed || null,
         difficulty: state.difficulty || null,
         nightmare: !!state.nightmare,
+        // A season with stops and one without are two different games played
+        // on the same calendar, so the archive keeps which one it was.
+        // Seasons archived before the option existed have no field at all,
+        // and that reads as false everywhere - which is what they were.
+        pitStops: !!state.pitStops,
         // who was given the season's boost. Part of what that championship
         // was, and the archive is the only place it can still be read once
         // the season is over.
@@ -5308,6 +5327,7 @@ function rebuildSeasonState(e) {
     return {
         id: e.id, startedAt: e.startedAt, seed: e.seed || null,
         nightmare: !!e.nightmare,
+        pitStops: !!e.pitStops,
         tracks: e.tracks.slice(),
         weather: (e.weather || []).slice(),
         wetKind: [],
@@ -5570,6 +5590,7 @@ function hallOfFame() {
             roll.push({
                 id: e.id, when: e.startedAt || e.updatedAt || 0,
                 seed: e.seed || null, nightmare: !!e.nightmare,
+                pitStops: !!e.pitStops,
                 fromLog: !!e.fromLog, rounds: e.rounds,
                 champion: rows[0].isPlayer ? 'You' : rows[0].name,
                 champIsPlayer: rows[0].isPlayer, pts: rows[0].total,
@@ -5683,6 +5704,7 @@ function statsTally(list) {
             place: place, rounds: (e.results || []).length,
             points: me.total, wins: me.wins, poles: me.poles, podiums: me.podiums,
             difficulty: e.difficulty || null, nightmare: !!e.nightmare,
+            pitStops: !!e.pitStops,
             chassis: me.chassis || null
         });
 
@@ -5701,6 +5723,7 @@ function statsTally(list) {
                 at: e.endedAt || e.updatedAt || e.startedAt,
                 difficulty: e.difficulty || null,
                 nightmare: !!e.nightmare,
+                pitStops: !!e.pitStops,
                 chassis: me.chassis || null,
                 tyre: mine.tyre || null,
                 grid: grid,
@@ -6992,6 +7015,7 @@ function exRenderSeasons() {
                 '<td class="ex-seed">' + (e.seed || '—') +
                 (e.nightmare ? ' <span class="ex-nightmare" title="the calendar was your ' +
                     'worst circuits, not a random draw">nightmare</span>' : '') +
+                pitSeasonTag(e.pitStops) +
                 (e.note ? '<div class="ex-note-preview" title="' + exEsc(e.note) + '">' +
                     exEsc(e.note.length > 44 ? e.note.slice(0, 43) + '…' : e.note) +
                     '</div>' : '') + '</td>' +
@@ -7154,6 +7178,12 @@ function exShowSeason(id) {
             ? '<span class="ex-nightmare">nightmare</span>' : 'drawn at random',
             entry.nightmare ? 'the circuits where you had gone worst, at the time it was started'
                             : '') +
+        // no chip here: the cell is already labelled "Pit stops", and a chip
+        // reading PIT STOPS underneath it says the same word twice
+        exCell('Pit stops', entry.pitStops
+            ? 'yes — the box was open' : 'none — one set a race',
+            entry.pitStops ? 'a set was an amount of road, and the box was open'
+                           : 'the set you started on had to last the distance') +
         '</div>';
 
     // in its own scroller: fourteen columns do not fit a narrow window, and a
@@ -8057,6 +8087,7 @@ function startGame(forceTrackType = null) {
                ? ' (no AI handicap)' : ''),
         weather: isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry',
         seed: isChampionship && championshipState ? championshipState.seed : null,
+        pits: isPractice ? null : (pitModeOn ? 'pit stops' : 'no stops'),
         playerTyre: (() => {
             const p = cars.find(c => c.isPlayer);
             return p && p.tyre ? p.tyre.label : null;
