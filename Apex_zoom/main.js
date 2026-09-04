@@ -293,6 +293,7 @@ function drawTrackFrame(g) {
             const sp = pitSpotFor(track);
             t.save();
             t.translate(sp.x, sp.y);
+            t.rotate(sp.ang || 0);        // the slot lies along the road, not along x
             t.strokeStyle = 'rgba(255,255,255,0.85)';
             t.lineWidth = 2;
             t.setLineDash([5, 4]);
@@ -2282,7 +2283,17 @@ function noAiHandicapWanted() {
 // ---------------------------------------------------------------------------
 const PIT_TIME = 2.2;          // seconds stationary, once the tyre is chosen
 const PIT_BOX_BACK = 70;       // box centre, px before the start line
-const PIT_LANE_IN = 16;        // px inside the track edge the car parks at
+const PIT_LANE_IN = 16;
+// The window a car is collected in, in ROAD LEFT TO THE LINE. It has to be
+// wide enough that a frame at racing speed cannot step over it (300 px/s is
+// 5px a frame, so a 110px window is twenty chances) and far enough out that
+// there is room to brake to a stop at the slot.
+const PIT_PICKUP_LEAD = 180;    // road between the window and the slot
+const PIT_PICKUP_WIDE = 110;    // how wide the window is
+function pitLineLen() {
+    return (track && typeof track.getRacingLine === 'function')
+        ? track.getRacingLine('standard').length : 2500;
+}        // px inside the track edge the car parks at
 
 function pitStopsEnabled() {
     const box = document.getElementById('pit-checkbox');
@@ -2332,32 +2343,87 @@ function pitRulesOn() {
 function pitRoadWearAhead() {
     return pendingTyreIsRace && pitRulesOn();
 }
-function pitSideFor(t) {
-    // the outer side of the start straight: away from the middle of the world
-    return (t.startY - (t.worldH || WORLD_H) / 2) >= 0 ? 1 : -1;
+// THE BOX LIVES ON THE RACING LINE, NOT AT AN X COORDINATE.
+//
+// The first version put it at (startX - 70, startY +/- offset) and drove the
+// car into it along +x, on the reasoning that a start straight is straight.
+// It is - but it is not necessarily HORIZONTAL, and the pickup window was a
+// band of world x with a band of world y around it. Seven circuits never
+// satisfied both at once, so a car that called for the box simply drove past
+// it for the rest of the race. Nicola found it at Crossover, where the road
+// crosses itself and the "start straight" arrives at the line on a descent:
+// he armed the box, nobody stopped, and the log for that Grand Prix has a
+// single PIT line in it - "You calls for the box" - and no stop at all.
+//
+// So everything here is now expressed the way the track itself is: a point at
+// a DISTANCE BEFORE THE LINE along the racing line, a unit vector along the
+// road there, and a perpendicular. The slot, the pickup, the approach and the
+// exit all use that frame, and a circuit's heading at the line stops mattering.
+function pitLinePoint(t, backPx) {
+    const L = t.getRacingLine('standard');
+    const n = L.nodes, N = n.length, total = L.length, sStart = L.sStart || 0;
+    const lapS = (i) => (((n[i].s - sStart) % total) + total) % total;
+    const want = (((total - backPx) % total) + total) % total;
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < N; i++) {
+        let d = Math.abs(lapS(i) - want);
+        if (d > total / 2) d = total - d;
+        if (d < bd) { bd = d; bi = i; }
+    }
+    const a = n[bi], c = n[(bi + 3) % N];
+    let ux = c.x - a.x, uy = c.y - a.y;
+    const m = Math.hypot(ux, uy) || 1;
+    ux /= m; uy /= m;
+    return { x: a.x, y: a.y, ux: ux, uy: uy, px: -uy, py: ux };
 }
-// Where the slot actually goes. The outer edge of the road, seventy pixels
-// before the line - but CHECKED, not assumed: the start straight is straight
-// at the line by construction and not necessarily seventy pixels back, and on
-// Circle, Triangle and Crossover the naive spot put part of the painted box
-// on the grass. So the whole 34x22 rectangle is tested against the surface,
-// walked inwards until it fits, and tried on the other side if it never does.
+// Where the slot actually goes: the outer edge of the road, seventy pixels of
+// ROAD before the line - and CHECKED, not assumed. The whole 34x22 rectangle
+// is tested against the surface in the road's own orientation, walked inwards
+// until it fits, and tried on the other side if it never does.
 function pitSpotFor(t) {
     if (t._pitSpot) return t._pitSpot;
-    const x = t.startX - PIT_BOX_BACK;
-    const pref = pitSideFor(t);
-    const fits = (y) => {
-        for (const [dx, dy] of [[17, 11], [17, -11], [-17, 11], [-17, -11], [0, 0]])
-            if (t.getSurface(x + dx, y + dy) !== 'track') return false;
-        return true;
-    };
-    for (const side of [pref, -pref]) {
-        for (let inset = PIT_LANE_IN; inset <= t.trackWidth - 12; inset += 2) {
-            const y = t.startY + side * (t.trackWidth - inset);
-            if (fits(y)) return (t._pitSpot = { x: x, y: y });
+    // THE WHOLE SLOT HAS TO STAY BEHIND THE LINE IN WORLD X, and that is not a
+    // detail of the drawing - checkLapCross scores a lap by the car crossing
+    // startX in +x, so a box that straddles that x is a lap the car completes
+    // while the sequence has the wheel and car.update is not running to see it.
+    // At Arrow, whose road meets the line at 49 degrees, the slot's sideways
+    // offset carried it two pixels PAST startX: every one of the ten cars that
+    // stopped lost a lap, and none of them did anything wrong.
+    //
+    // So the box walks BACK along the road until it fits in both senses: the
+    // whole rotated rectangle on asphalt, and every corner of it comfortably
+    // short of startX.
+    const cx = (t.worldW || WORLD_W) / 2, cy = (t.worldH || WORLD_H) / 2;
+    const CLEAR = 24;                       // px of world x kept clear of the line
+    for (let back = PIT_BOX_BACK; back <= 320; back += 10) {
+        const a = pitLinePoint(t, back);
+        const ang = Math.atan2(a.uy, a.ux);
+        const co = Math.cos(ang), si = Math.sin(ang);
+        const pref = ((a.x - cx) * a.px + (a.y - cy) * a.py) >= 0 ? 1 : -1;
+        for (const side of [pref, -pref]) {
+            for (let inset = PIT_LANE_IN; inset <= t.trackWidth - 12; inset += 2) {
+                const off = side * (t.trackWidth - inset);
+                const x = a.x + a.px * off, y = a.y + a.py * off;
+                let ok = true;
+                for (const d of [[17, 11], [17, -11], [-17, 11], [-17, -11], [0, 0]]) {
+                    const qx = x + d[0] * co - d[1] * si;
+                    const qy = y + d[0] * si + d[1] * co;
+                    if (t.getSurface(qx, qy) !== 'track') { ok = false; break; }
+                    if (qx > t.startX - CLEAR) { ok = false; break; }
+                }
+                if (ok) return (t._pitSpot = { x: x, y: y, ang: ang, back: back,
+                                               ux: a.ux, uy: a.uy, px: a.px, py: a.py,
+                                               baseX: a.x, baseY: a.y });
+            }
         }
     }
-    return (t._pitSpot = { x: x, y: t.startY + pref * (t.trackWidth - PIT_LANE_IN) });
+    // nothing fitted anywhere: the old naive slot, so the box still exists
+    const a = pitLinePoint(t, PIT_BOX_BACK);
+    const off = (a.y >= cy ? 1 : -1) * (t.trackWidth - PIT_LANE_IN);
+    return (t._pitSpot = { x: a.x + a.px * off, y: a.y + a.py * off,
+                           ang: Math.atan2(a.uy, a.ux), back: PIT_BOX_BACK,
+                           ux: a.ux, uy: a.uy, px: a.px, py: a.py,
+                           baseX: a.x, baseY: a.y });
 }
 // Every tyre in the game, in the order the box offers them. Not the weather's
 // shortlist: the whole point of choosing at the stop is that you can take a
@@ -3033,30 +3099,35 @@ function pitUpdate(car, dt) {
         //     sliding across the road;
         //   * and the nose points along that diagonal, which is what makes it
         //     read as steering rather than as the car being moved.
-        const remain = Math.max(0, spot.x - car.x);
+        // ALL OF THIS IS IN THE ROAD'S FRAME: `f` is how much road is left to
+        // the slot, `l` is how far off it the car is sideways. Written in world
+        // x and y it worked on the circuits whose start straight happens to run
+        // east and quietly did not on the seven that do not.
+        const dxs = spot.x - car.x, dys = spot.y - car.y;
+        const remain = Math.max(0, dxs * spot.ux + dys * spot.uy);
+        const off = dxs * spot.px + dys * spot.py;   // + means the box is to my left
         // the SPEED, not the x component of it: the pickup window sits 250-360px
-        // before the line and on a short circuit that is still inside the last
-        // corner, where most of a 275 px/s car is travelling in y. Reading
-        // velocity.x there gave 77 and the car crawled into the box.
+        // of road before the line and on a short circuit that is still inside
+        // the last corner, where most of a 275 px/s car is travelling in y.
         const carry = Math.hypot(car.velocity.x, car.velocity.y) || 120;
         const BRAKE = 520;                          // px/s^2: firm, not a panic stop
         const v = Math.max(25, Math.min(carry, Math.sqrt(2 * BRAKE * remain)));
         const step = v * dt;
         // IT STEERS IN. Measured at the pickup: cars arrive at 59 to 153 px/s
-        // with more of that in y than in x, because 250-360px before the line
-        // on a short circuit is still inside the last corner. The sequence used
-        // to move them in +x only, which meant a car mid-corner was rotated
-        // onto a straight and dragged 140px sideways in a quarter of a second -
-        // three jumps in half a second, and that is the "scatto" Nicola saw.
+        // with more of that across the road than along it, because the window
+        // is often still inside the last corner. The sequence used to move them
+        // in +x only, which meant a car mid-corner was rotated onto a straight
+        // and dragged 140px sideways in a quarter of a second - three jumps in
+        // half a second, and that is the "scatto" Nicola saw.
         //
         // So the car keeps a HEADING, starting from the direction it was really
-        // travelling, and that heading is turned towards the box - a floor of
-        // 70px under the distance keeps the bearing from going wild as the slot
-        // comes up, so the arc straightens out along the box line instead of
-        // whipping round at the end. That is the shape of a real pit entry.
+        // travelling, turned towards the box. A floor of 70px under the
+        // distance keeps the bearing from going wild as the slot comes up, so
+        // the arc straightens out along the road instead of whipping round at
+        // the end. That is the shape of a real pit entry.
         let h = (car._pitHeading === undefined || car._pitHeading === null)
             ? Math.atan2(car.velocity.y, car.velocity.x) : car._pitHeading;
-        let turn = Math.atan2(spot.y - car.y, Math.max(70, remain)) - h;
+        let turn = (spot.ang + Math.atan2(off, Math.max(70, remain))) - h;
         while (turn > Math.PI) turn -= Math.PI * 2;
         while (turn < -Math.PI) turn += Math.PI * 2;
         h += turn * Math.min(1, dt * 5);
@@ -3071,15 +3142,19 @@ function pitUpdate(car, dt) {
         // left: it never bites while there is room to steer, and by the slot
         // there is nothing left to snap.
         const room = remain * 0.7 + 2;
-        if (Math.abs(car.y - spot.y) > room)
-            car.y = spot.y + (car.y > spot.y ? room : -room);
+        const now = (spot.x - car.x) * spot.px + (spot.y - car.y) * spot.py;
+        if (Math.abs(now) > room) {
+            const fix = (Math.abs(now) - room) * (now > 0 ? 1 : -1);
+            car.x += spot.px * fix; car.y += spot.py * fix;
+        }
         car.angle = h;
         // the yaw the tyres were still carrying when we took over
         car.powerOversteer = 0;
         car.velocity.x = Math.cos(h) * v; car.velocity.y = Math.sin(h) * v;
         if (remain < 4) {
             car.velocity.x = 0; car.velocity.y = 0;
-            car.y = spot.y; car.angle = 0; car._pitHeading = null;
+            car.x = spot.x; car.y = spot.y;
+            car.angle = spot.ang; car._pitHeading = null;
             car.pitPhase = 'stopped';
             // A HUMAN chooses at the box: the clock does not start until the
             // call is made, so the panel is not a stopwatch running while you
@@ -3116,8 +3191,13 @@ function pitUpdate(car, dt) {
         // on an angle that flattens instead of crabbing sideways to the line.
         const v = Math.min(190, Math.hypot(car.velocity.x, car.velocity.y) + 300 * dt);
         const step = v * dt;
-        let h = (car._pitHeading === undefined || car._pitHeading === null) ? 0 : car._pitHeading;
-        let turn = Math.atan2(track.startY - car.y, 210) - h;
+        // back onto the racing line, aiming 210px down the road: the same rule
+        // as the way in, in the same frame. `off` is how far the car still is
+        // from the line the slot was measured off.
+        const offNow = (car.x - spot.baseX) * spot.px + (car.y - spot.baseY) * spot.py;
+        let h = (car._pitHeading === undefined || car._pitHeading === null)
+            ? spot.ang : car._pitHeading;
+        let turn = (spot.ang + Math.atan2(-offNow, 210)) - h;
         while (turn > Math.PI) turn -= Math.PI * 2;
         while (turn < -Math.PI) turn += Math.PI * 2;
         h += turn * Math.min(1, dt * 4);
@@ -3126,7 +3206,11 @@ function pitUpdate(car, dt) {
         car.y += Math.sin(h) * step;
         car.velocity.x = Math.cos(h) * v; car.velocity.y = Math.sin(h) * v;
         car.angle = h;
-        if (car.x >= track.startX - 14) {
+        // handed back when the car has covered the road between the slot and
+        // the line, bar the last fourteen pixels - measured ALONG the road, so
+        // it is the same fourteen pixels on a circuit that finishes going north
+        const ran = (car.x - spot.x) * spot.ux + (car.y - spot.y) * spot.uy;
+        if (car.x >= track.startX - 14 || ran >= spot.back - 14) {
             // control back a few pixels SHORT of the line: the crossing that
             // scores the lap happens on the road, in car.update, as ever. The
             // ghost lingers a moment longer (pitGrace): a car rejoining at 190
@@ -8326,12 +8410,18 @@ function updatePhysics(dt) {
             // because the halfway marker is still ahead of it, and has to go
             // round again. Measured over one eight-lap race at Oval, a car
             // that stopped finished on lap seven of eight.
+            // ...measured as ROAD STILL TO RUN rather than as a band of
+            // world x. lapS is 0 at the line and grows, so the distance left
+            // is the lap minus it, and a circuit that arrives at its line
+            // going north works exactly like one that arrives going east.
+            const toLine = pitLineLen() - (c.lapS || 0);
+            const winFrom = pitSpotFor(track).back + PIT_PICKUP_LEAD;
             if (c.wantPit && !c.pitPhase && c.halfwayMarkerCrossed &&
                 (c.isPlayer || (TOTAL_LAPS - c.lap) >= 1.3) &&
-                c.velocity.x > 30 &&
-                Math.abs(c.y - track.startY) < track.trackWidth &&
-                c.x > track.startX - 360 && c.x < track.startX - 250) {
+                Math.hypot(c.velocity.x, c.velocity.y) > 30 &&
+                toLine > winFrom && toLine < winFrom + PIT_PICKUP_WIDE) {
                 c.pitPhase = 'approach';
+                c._pitHeading = null;
                 pitWrapAngle(c);      // see the note there: 16 radians of it
             }
         }

@@ -90,8 +90,8 @@ let __carUid = 0;
 //  exception survives: on the shortest circuits the hard (10500px against
 //  Circo Massimo's 10250px race) really can run through, so the no-stop
 //  gamble exists exactly where the arithmetic says it should - and only there.
-const PIT_LIVES = { soft: 6000, medium: 8300, hard: 10500,
-                    drift: 8800, inter: 8000, wet: 10500 };
+const PIT_LIVES = { soft: 6500, medium: 8950, hard: 11350,
+                    drift: 9500, inter: 8650, wet: 11350 };
 
 // ...AND HOW MUCH OF IT A LONG CIRCUIT EATS
 //
@@ -114,8 +114,28 @@ const PIT_LIVES = { soft: 6000, medium: 8300, hard: 10500,
 // twenty circuits the table was fitted on barely move at all, because 2500px
 // is about their median and the correction there is 1.0.
 const PIT_REF_LAP = 2500;
+// THE EXPONENT IS 0.7, NOT 0.5, and the lives are 8% longer than they were.
+// The square root was fitted on the twenty circuits that existed when pit
+// stops went in and it made the long ones brutal: Marathon at 7469px gave a
+// drift 2.0 laps and a hard 2.4, so a five-lap Grand Prix there was a
+// two-stopper for the whole field whatever anybody chose - which is what
+// Nicola saw, and 26 pit events in one race is the log agreeing with him.
+//
+//   p = 0     a set is a fixed distance: 5.5x across the calendar, and a soft
+//             that cannot complete a lap of Monza
+//   p = 1     a set is a fixed number of laps: the circuit stops mattering
+//   p = 0.5   2.35x, and the longest third of the calendar unraceable
+//   p = 0.7   1.67x - Marathon becomes S1.9 M2.6 H3.3 D2.7, so five laps is a
+//             one-stopper on the hard and a two-stopper if you want the pace,
+//             while Circle still gets S3.1 M4.2 H5.4 and stays a no-stop
+//
+// The circuit still decides the strategy, which was the whole point of having
+// a law at all; it no longer decides it by making half the calendar the same
+// forced two-stop.
+const PIT_LIFE_P = 0.7;
 function pitLifePx(key, lapPx) {
-    return (PIT_LIVES[key] || 9500) * Math.sqrt((lapPx || PIT_REF_LAP) / PIT_REF_LAP);
+    return (PIT_LIVES[key] || 9500) *
+           Math.pow((lapPx || PIT_REF_LAP) / PIT_REF_LAP, PIT_LIFE_P);
 }
 
 const TYRES = {
