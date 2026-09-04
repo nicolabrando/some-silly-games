@@ -323,8 +323,6 @@ const TEAMS_DEF = [
  {name:"Pontenuovo", short:"PNT", c1:"#c62828", c2:"#1565c0", tier:3, fans:12, div:"A"},
  {name:"Torrescura", short:"TRS", c1:"#263238", c2:"#4dd0e1", tier:4, fans:9, div:"A"},
  {name:"Campolungo", short:"CMP", c1:"#f9a825", c2:"#2e7d32", tier:4, fans:8, div:"A"},
- {name:"Rivalonga", short:"RVL", c1:"#4fc3f7", c2:"#ffffff", tier:4, fans:8, div:"A"},
- {name:"Stellanova", short:"STL", c1:"#ef6c00", c2:"#212121", tier:4, fans:9, div:"A"},
  // ---- Serie B ----
  {name:"Real Vallescura", short:"RVS", c1:"#00695c", c2:"#ffd23f", tier:4, fans:30, div:"B", legend:true},
  {name:"Audace Ferraria", short:"AFE", c1:"#4527a0", c2:"#ffffff", tier:4, fans:26, div:"B", legend:true},
@@ -340,8 +338,6 @@ const TEAMS_DEF = [
  {name:"Robur Pianalta", short:"RPA", c1:"#e53935", c2:"#fbc02d", tier:5, fans:6, div:"B"},
  {name:"Ardita Fondovalle", short:"AFO", c1:"#3949ab", c2:"#c5cae9", tier:5, fans:5, div:"B"},
  {name:"Juvenilia Sassofino", short:"JSA", c1:"#f06292", c2:"#212121", tier:5, fans:5, div:"B"},
- {name:"Ventomare", short:"VNT", c1:"#26c6da", c2:"#004d40", tier:5, fans:6, div:"B"},
- {name:"Accademia Torrenera", short:"ATO", c1:"#111111", c2:"#9e9e9e", tier:5, fans:5, div:"B"},
  // ---- Serie C ----
  {name:"Torrazzano", short:"TRZ", c1:"#8e24aa", c2:"#ffd54f", tier:5, fans:5, div:"C"},
  {name:"Monteguado", short:"MGU", c1:"#2e7d32", c2:"#c8e6c9", tier:5, fans:5, div:"C"},
@@ -357,8 +353,6 @@ const TEAMS_DEF = [
  {name:"Selvachiara", short:"SEL", c1:"#7cb342", c2:"#212121", tier:6, fans:3, div:"C"},
  {name:"Petraforte", short:"PFO", c1:"#4e342e", c2:"#d7ccc8", tier:6, fans:3, div:"C"},
  {name:"Nuova Alborea", short:"NAL", c1:"#00838f", c2:"#ffffff", tier:6, fans:3, div:"C"},
- {name:"Casteldoro", short:"CDO", c1:"#f9a825", c2:"#b71c1c", tier:6, fans:3, div:"C"},
- {name:"Riva dei Salici", short:"RDS", c1:"#039be5", c2:"#01579b", tier:6, fans:3, div:"C"},
  // ---- Serie D ----
  {name:"Borgovecchio", short:"BGV", c1:"#795548", c2:"#ffe0b2", tier:6, fans:3, div:"D"},
  {name:"San Frasso", short:"SFR", c1:"#d32f2f", c2:"#1a237e", tier:6, fans:2, div:"D"},
@@ -373,9 +367,7 @@ const TEAMS_DEF = [
  {name:"Molinetto", short:"MOL", c1:"#90a4ae", c2:"#37474f", tier:7, fans:2, div:"D"},
  {name:"Spiga d'Argento", short:"SPA", c1:"#c5b358", c2:"#4a148c", tier:7, fans:2, div:"D"},
  {name:"Falchi del Passo", short:"FDP", c1:"#37474f", c2:"#ff8f00", tier:7, fans:2, div:"D"},
- {name:"Ontanello", short:"ONT", c1:"#2e7d32", c2:"#f9a825", tier:7, fans:1, div:"D"},
- {name:"Rupe Bianca", short:"RUP", c1:"#eceff1", c2:"#546e7a", tier:7, fans:1, div:"D"},
- {name:"Terrarossa 1946", short:"TRR", c1:"#e64a19", c2:"#212121", tier:7, fans:2, div:"D"}
+ {name:"Ontanello", short:"ONT", c1:"#2e7d32", c2:"#f9a825", tier:7, fans:1, div:"D"}
 ];
 
 /* ---------- moduli ---------- */
@@ -501,16 +493,28 @@ function bestXI(t, formation){
 let G = null; // stato globale della partita (serializzabile)
 
 const DIVS = ['A','B','C','D'];
+const SQ_PER_SERIE = 14;          // squadre per campionato
+const N_PROMOSSE = 2, N_RETROCESSE = 2;
+const GIORNATE = (SQ_PER_SERIE-1)*2;   // 26
 function divName(d){ return d==='E' ? 'Coppa dei Campioni' : 'Serie '+d; }
 function divUpper(d){ return d==='B'?'A': d==='C'?'B': d==='D'?'C': null; }
 function idsOf(div){ return div==='A'?G.divA: div==='B'?G.divB: div==='C'?G.divC: G.divD; }
 function fxOf(div){ return div==='A'?G.fixturesA: div==='B'?G.fixturesB: div==='C'?G.fixturesC: G.fixturesD; }
 
-function T(id){ // squadra da id (italiane o europee)
-  if(id < 100) return G.teams[id];
-  return G.euroTeams.find(t=>t.id===id);
+/* Indice id → squadra. Serve un indice vero e non la posizione nell'array:
+   quando un club si scioglie l'array si accorcia e le posizioni slittano. */
+let _idxT = null, _idxG = null, _idxN = -1;
+function T(id){
+  const n = (G.teams?G.teams.length:0) + (G.euroTeams?G.euroTeams.length:0);
+  if(!_idxT || _idxG !== G || _idxN !== n){
+    _idxT = new Map(); _idxG = G; _idxN = n;
+    if(G.teams) for(const t of G.teams) _idxT.set(t.id, t);
+    if(G.euroTeams) for(const t of G.euroTeams) _idxT.set(t.id, t);
+  }
+  return _idxT.get(id);
 }
-function playerTeam(){ return G.teams[G.teamId]; }
+function invalidaIndiceSquadre(){ _idxT = null; }
+function playerTeam(){ return T(G.teamId); }
 function findPlayer(pid){
   for(const t of G.teams){ const p=t.players.find(x=>x.id===pid); if(p) return {p,t}; }
   if(G.euroTeams) for(const t of G.euroTeams){ const p=t.players.find(x=>x.id===pid); if(p) return {p,t}; }
@@ -539,13 +543,16 @@ function genFixtures(ids){
 }
 
 /* ---------- calendario stagionale ---------- */
-function buildCalendar(hasEuro, cupRounds){
-  const C=[];
-  const cupAfter = (cupRounds===5)
-    ? {4:1, 9:2, 15:3, 21:4, 26:5}
-    : {2:1, 5:2, 9:3, 15:4, 21:5, 26:6};           // coppa a 64: sei turni
-  const euroAfter = {7:1, 13:2, 19:3, 24:4};
-  for(let g=1; g<=30; g++){
+function buildCalendar(hasEuro, giornate, nTurniCoppa){
+  const G_ = giornate || GIORNATE;
+  const nC = nTurniCoppa || 6;
+  const C = [];
+  // i turni di coppa si distribuiscono lungo la stagione, l'ultimo verso la fine
+  const cupAfter = {};
+  for(let i=1;i<=nC;i++) cupAfter[Math.max(2, Math.round(G_*i/(nC+0.6)))] = i;
+  const euroAfter = {};
+  for(let i=1;i<=4;i++) euroAfter[Math.max(3, Math.round(G_*(i+0.4)/5.2))] = i;
+  for(let g=1; g<=G_; g++){
     C.push({t:'L', r:g});
     if(cupAfter[g]) C.push({t:'C', r:cupAfter[g]});
     if(hasEuro && euroAfter[g]) C.push({t:'E', r:euroAfter[g]});
@@ -553,21 +560,37 @@ function buildCalendar(hasEuro, cupRounds){
   return C;
 }
 
-/* ---------- coppa nazionale (tutte le 64 squadre) ---------- */
-function initCup(){
-  const ids = shuffle(G.teams.map(t=>t.id));
-  const ties = [];
-  for(let i=0;i<ids.length/2;i++) ties.push({h:ids[i*2], a:ids[i*2+1], gh:0, ga:0, p:0, pen:null});
-  return { round:1, rounds:[ties], winner:null, size:ids.length };
+/* ---------- coppa nazionale: tutti i club, con esenti se non è potenza di 2 ---------- */
+function potenzaDue(n){ let p=1; while(p*2<=n) p*=2; return p; }
+function nTurniCoppa(n){
+  const p = potenzaDue(n);
+  return (n>p ? 1 : 0) + Math.round(Math.log2(p));
 }
-const CUP_NAMES_ALL = ['trentaduesimi','sedicesimi','ottavi','quarti','semifinale','finale'];
+function initCup(){
+  // le squadre di categoria superiore sono teste di serie: saltano il turno preliminare
+  const ordinate = G.teams.slice().sort((a,b)=> DIVS.indexOf(a.div)-DIVS.indexOf(b.div) || teamOvr(b)-teamOvr(a));
+  const n = ordinate.length;
+  const pot = potenzaDue(n);
+  const nEsenti = pot*2>n ? (pot - (n - pot)) : 0;   // quanti passano d'ufficio
+  const esenti = ordinate.slice(0, nEsenti).map(t=>t.id);
+  const ids = shuffle(ordinate.slice(nEsenti).map(t=>t.id));
+  const ties = [];
+  for(let i=0;i<Math.floor(ids.length/2);i++)
+    ties.push({h:ids[i*2], a:ids[i*2+1], gh:0, ga:0, p:0, pen:null});
+  return { round:1, rounds:[ties], winner:null, size:n, esenti };
+}
+const CUP_NAMES_ALL = ['preliminare','trentaduesimi','sedicesimi','ottavi','quarti','semifinale','finale'];
 function cupRoundNames(cup){
-  const tot = Math.round(Math.log2(cup.size||32));
+  const tot = nTurniCoppa(cup.size||32);
   return CUP_NAMES_ALL.slice(CUP_NAMES_ALL.length - tot);
 }
 function cupNextRound(cup){
   const last = cup.rounds[cup.rounds.length-1];
-  const winners = last.map(m => m.win);
+  let winners = last.map(m => m.win);
+  if(cup.esenti && cup.esenti.length){        // le teste di serie entrano ora
+    winners = winners.concat(cup.esenti);
+    cup.esenti = [];
+  }
   if(winners.length===1){ cup.winner = winners[0]; return; }
   const sh = shuffle(winners);
   const ties=[];
@@ -636,7 +659,7 @@ function computeExpectations(){
       let target = i+1;
       const t = T(id);
       t.expectRaw = target; // dove ti colloca la forza reale della rosa
-      if(t.legend && t.div!=='A') target = Math.min(target, 3); // le grandi decadute vogliono salire
+      if(t.legend && t.div!=='A') target = Math.min(target, N_PROMOSSE); // le grandi decadute vogliono salire
       t.expect = target;
     });
   }
@@ -667,8 +690,8 @@ function newGame(teamIdx, seed){
   G.fixturesB = genFixtures(G.divB);
   G.fixturesC = genFixtures(G.divC);
   G.fixturesD = genFixtures(G.divD);
-  G.calendar = buildCalendar(false, 6);
   G.cup = initCup();
+  G.calendar = buildCalendar(false, GIORNATE, nTurniCoppa(G.cup.size));
   computeExpectations();
   initSeasonEconomy();
   genFreeAgents(14);
@@ -679,8 +702,8 @@ function newGame(teamIdx, seed){
   return G;
 }
 function objText(t){
-  if(t.div!=='A') return t.expect<=3 ? 'promozione in Serie '+divUpper(t.div) : `stare intorno al ${t.expect}° posto`;
-  return t.expect<=2 ? 'lottare per lo scudetto' : t.expect<=6 ? 'arrivare in zona coppe' : t.expect<=12 ? `stare intorno al ${t.expect}° posto` : 'salvezza tranquilla';
+  if(t.div!=='A') return t.expect<=N_PROMOSSE+1 ? 'promozione in Serie '+divUpper(t.div) : `stare intorno al ${t.expect}° posto`;
+  return t.expect<=2 ? 'lottare per lo scudetto' : t.expect<=5 ? 'arrivare in zona coppe' : t.expect<=10 ? `stare intorno al ${t.expect}° posto` : 'salvezza tranquilla';
 }
 function addNews(txt, k){
   G.news.unshift({w:G.week, s:G.season, txt, k:k||'gen'});
@@ -1303,7 +1326,9 @@ function applySimToPlayers(sim, comp){
 
 /* ---------- simula i turni della settimana ---------- */
 function simLeagueRound(div, round, skipTid){
-  const fx = fxOf(div)[round-1];
+  const cal = fxOf(div);
+  const fx = cal && cal[round-1];
+  if(!fx) return;         // campionati più corti (transizione da 16 a 14 squadre)
   for(const m of fx){
     if(m.p) continue;
     if(skipTid!==undefined && (m.h===skipTid || m.a===skipTid)) continue;
@@ -1346,8 +1371,9 @@ function weekMatch(){
   const wk = G.calendar[G.week-1];
   const me = G.teamId;
   if(wk.t==='L'){
-    const div = playerTeam().div;
-    const fx = fxOf(div)[wk.r-1];
+    const cal = fxOf(playerTeam().div);
+    const fx = cal && cal[wk.r-1];
+    if(!fx) return null;
     const m = fx.find(x=>x.h===me||x.a===me);
     return m && !m.p ? {comp:'L', m, wk} : null;
   }
@@ -1553,8 +1579,30 @@ function advanceWeek(playerSim){
   weeklyBoardCheck();
 
   G.week++;
+  controllaScadenze();
   if(G.week > G.calendar.length && !G.gameOver){ endSeason(); return {season:true}; }
   return {ok:true};
+}
+
+/* ---------- allarme contratti in scadenza ----------
+   Due richiami: uno a sei settimane dalla fine, uno all'ultima chiamata. */
+function controllaScadenze(){
+  const restano = G.calendar.length - G.week + 1;
+  const tappe = [6, 2];
+  if(!G.avvisiFatti) G.avvisiFatti = [];
+  for(const soglia of tappe){
+    if(restano === soglia && !G.avvisiFatti.includes(soglia)){
+      G.avvisiFatti.push(soglia);
+      const lista = contrattiInScadenza();
+      if(!lista.length) continue;
+      const nomi = lista.slice(0,4).map(p=>p.nm).join(', ') + (lista.length>4 ? ` e altri ${lista.length-4}` : '');
+      addNews(soglia===2
+        ? `<b>ULTIMA CHIAMATA</b>: ${lista.length} contratt${lista.length===1?'o scade':'i scadono'} a fine stagione (${nomi}). Dopo, se ne vanno a zero.`
+        : `<b>Contratti in scadenza</b>: ${lista.length} giocator${lista.length===1?'e':'i'} (${nomi}). Rinnova dalla scheda CONTRATTI in ROSA.`,
+        'squadra');
+      G.allarmeScadenze = {n:lista.length, ultima:soglia===2};
+    }
+  }
 }
 
 /* ---------- fine stagione ---------- */
@@ -1604,19 +1652,26 @@ function endSeason(){
   // verdetto della società
   let verdict;
   const beat = t.expect - myPos;
-  if(myDiv!=='A' && myPos<=3) { G.club.confidence = clamp(G.club.confidence+30,0,100); verdict='promo'; }
+  if(myDiv!=='A' && myPos<=N_PROMOSSE) { G.club.confidence = clamp(G.club.confidence+30,0,100); verdict='promo'; }
   else if(beat>=3){ G.club.confidence = clamp(G.club.confidence+22,0,100); verdict='great'; }
   else if(beat>=0){ G.club.confidence = clamp(G.club.confidence+10,0,100); verdict='ok'; }
   else if(beat>=-4){ G.club.confidence = clamp(G.club.confidence-8,0,100); verdict='meh'; }
   else { G.club.confidence = clamp(G.club.confidence-24,0,100); verdict='bad'; }
-  if(myDiv!=='A' && t.legend && myPos>3) G.club.confidence = clamp(G.club.confidence-8,0,100);
+  if(myDiv!=='A' && t.legend && myPos>N_PROMOSSE) G.club.confidence = clamp(G.club.confidence-8,0,100);
   if(G.club.confidence<=12){ G.gameOver = {type:'esonero-fine', s:G.season}; }
 
-  // storico
+  // storico della stagione appena conclusa, con tutti i numeri finali
+  const mia = ST[myDiv].find(r=>r.id===t.id) || {pt:0,v:0,n:0,s:0,gf:0,gs:0,g:0};
+  const bomber = t.players.slice().sort((a,b)=> b.sGoals-a.sGoals || (b.sAssists||0)-(a.sAssists||0))[0];
+  const trofeiStagione = t.trophies.filter(x=>x.s===G.season).map(x=>x.type);
   G.history.push({
     s:G.season, team:t.name, div:myDiv, pos:myPos,
+    pt:mia.pt, v:mia.v, n:mia.n, sc:mia.s, gf:mia.gf, gs:mia.gs,
+    bomber: bomber && bomber.sGoals>0 ? bomber.nm : '—',
+    bomberGol: bomber ? bomber.sGoals : 0,
     cup: G.cup && G.cup.winner===t.id ? 'VINTA' : cupRunText(G.cup, t.id),
     euro: G.ecup ? (G.ecup.winner===t.id?'VINTA':cupRunText(G.ecup,t.id)) : '—',
+    trofei: trofeiStagione,
     conf: Math.round(G.club.confidence), verdict
   });
 
@@ -1627,14 +1682,14 @@ function endSeason(){
     champ: champ.name,
     cupW: (G.cup && G.cup.winner!==null && G.cup.winner!==undefined) ? T(G.cup.winner).name : null,
     euroW: euroWName,
-    up: ST[upDiv].slice(0,3).map(r=>T(r.id).name),
-    down: ST[myDiv==='A'?'A':divUpper(myDiv)].slice(-3).map(r=>T(r.id).name)
+    up: ST[upDiv].slice(0,N_PROMOSSE).map(r=>T(r.id).name),
+    down: ST[myDiv==='A'?'A':divUpper(myDiv)].slice(-N_RETROCESSE).map(r=>T(r.id).name)
   };
 
   // promozioni / retrocessioni a catena: A↔B, B↔C, C↔D
   for(const [hi, lo] of [['A','B'],['B','C'],['C','D']]){
-    for(const r of ST[hi].slice(-3)){ T(r.id).div = lo; addNews(`${T(r.id).name} retrocede in Serie ${lo}.`,'lega'); }
-    for(const r of ST[lo].slice(0,3)){ T(r.id).div = hi; addNews(`${T(r.id).name} è promossa in Serie ${hi}!`,'lega'); }
+    for(const r of ST[hi].slice(-N_RETROCESSE)){ T(r.id).div = lo; addNews(`${T(r.id).name} retrocede in Serie ${lo}.`,'lega'); }
+    for(const r of ST[lo].slice(0,N_PROMOSSE)){ T(r.id).div = hi; addNews(`${T(r.id).name} è promossa in Serie ${hi}!`,'lega'); }
   }
   G.divA = G.teams.filter(x=>x.div==='A').map(x=>x.id);
   G.divB = G.teams.filter(x=>x.div==='B').map(x=>x.id);
@@ -1709,14 +1764,39 @@ function seasonGrowth(p){
   }
   p.val = playerValue(p); p.wage = Math.max(p.wage, playerWage(p));
 }
+/* le carriere nate con 16 squadre per serie si adeguano fra una stagione e l'altra:
+   due club per campionato non si iscrivono (mai il tuo) */
+function riduciSerie(){
+  let usciti = [];
+  for(const d of DIVS){
+    const ids = idsOf(d);
+    if(ids.length <= SQ_PER_SERIE) continue;
+    const candidati = ids.filter(id=>id!==G.teamId)
+      .sort((a,b)=> teamOvr(T(a)) - teamOvr(T(b)));
+    const daTogliere = candidati.slice(0, ids.length - SQ_PER_SERIE);
+    usciti = usciti.concat(daTogliere.map(id=>T(id).name));
+    G.teams = G.teams.filter(t=>!daTogliere.includes(t.id));
+  }
+  if(!usciti.length) return 0;
+  invalidaIndiceSquadre();
+  G.divA = G.teams.filter(x=>x.div==='A').map(x=>x.id);
+  G.divB = G.teams.filter(x=>x.div==='B').map(x=>x.id);
+  G.divC = G.teams.filter(x=>x.div==='C').map(x=>x.id);
+  G.divD = G.teams.filter(x=>x.div==='D').map(x=>x.id);
+  G.euroQ = (G.euroQ||[]).filter(id=>T(id));
+  addNews(`Riforma dei campionati: si scende a ${SQ_PER_SERIE} squadre per serie. Non si sono iscritti ${usciti.join(', ')}.`,'lega');
+  return usciti.length;
+}
 function _rebuildSeason(){
+  riduciSerie();
   G.fixturesA = genFixtures(G.divA);
   G.fixturesB = genFixtures(G.divB);
   G.fixturesC = genFixtures(G.divC);
   G.fixturesD = genFixtures(G.divD);
   const meInEuro = G.euroQ.includes(G.teamId);
-  G.calendar = buildCalendar(meInEuro, 6);
   G.cup = initCup();
+  G.calendar = buildCalendar(meInEuro, GIORNATE, nTurniCoppa(G.cup.size));
+  G.avvisiFatti = []; G.allarmeScadenze = null;
   if(meInEuro){
     G.ecup = initEuro(G.euroQ);
     addNews(`Sorteggiata la <b>Coppa dei Campioni</b>: ci siamo anche noi!`, 'coppa');
@@ -1789,17 +1869,64 @@ function acceptOffer(off){
   addNews(`${p.nm} ceduto a ${T(off.tid).name} per ${fmtK(off.amount)}.`,'mercato');
   return {ok:true,msg:`Ceduto per ${fmtK(off.amount)}.`};
 }
-function renewContract(pid){
+/* ---------- contratti e rinnovi ----------
+   Ogni giocatore ha una soglia di ingaggio sotto la quale non firma.
+   Dipende da quanto vale sul mercato e poi da età, morale e forma:
+   un ragazzo in ascesa e in gran forma tira sul prezzo, un veterano
+   con il morale alto si accontenta.                                   */
+function ingaggioMinimo(p){
+  let m = Math.max(p.wage, playerWage(p));
+  m *= p.age<=22 ? 1.26 : p.age<=25 ? 1.18 : p.age<=29 ? 1.06 : p.age<=32 ? 0.94 : 0.82;
+  m *= 1.20 - 0.040*clamp(p.mor,1,10);     // morale 1 → +16% · morale 10 → -20%
+  m *= 0.90 + 0.022*clamp(p.frm,1,10);     // forma  1 → -8%  · forma 10 → +12%
+  if(p.contract<=0) m *= 1.08;             // già in scadenza: sa di avere il coltello dalla parte del manico
+  return Math.max(1, Math.round(m));
+}
+function anniRinnovo(p){
+  if(p.age<=23) return ri(3,4);
+  if(p.age<=29) return ri(2,4);
+  if(p.age<=32) return ri(2,3);
+  return 1;
+}
+function offerteRinnovo(p){
+  const base = Math.max(p.wage, playerWage(p));
+  return {
+    ribasso: Math.max(1, Math.round(p.wage*0.88)),
+    pari:    Math.max(1, Math.round(p.wage)),
+    rialzo:  Math.max(1, Math.round(base*1.32))
+  };
+}
+function proponiRinnovo(pid, tipo){
   const t = playerTeam();
   const p = t.players.find(x=>x.id===pid);
-  if(!p) return {ok:false,msg:''};
-  const wage = Math.round(p.wage*1.25);
-  if(t.budget < wage*4) return {ok:false, msg:'Servono fondi per il bonus alla firma.'};
-  p.wage = wage; p.contract = Math.min(4, p.contract + ri(2,3));
-  t.budget -= wage*4;
-  addNews(`${p.nm} rinnova fino a +${p.contract} stagioni.`,'squadra');
-  return {ok:true, msg:`Rinnovo firmato: ${fmtK(wage)}/sett per ${p.contract} stagioni (bonus ${fmtK(wage*4)}).`};
+  if(!p) return {ok:false, msg:'Giocatore non trovato.'};
+  if(p.rifiutoSett === G.week)
+    return {ok:false, msg:`${p.nm} ha già detto no questa settimana: riprova la prossima.`, chiede:p.chiede};
+  const off = offerteRinnovo(p)[tipo];
+  const minimo = ingaggioMinimo(p);
+  const bonus = off*4;
+  if(t.budget < bonus)
+    return {ok:false, msg:`Servono ${fmtK(bonus)} per il bonus alla firma: il bilancio non li regge.`};
+  if(off < minimo){
+    p.rifiutoSett = G.week;
+    p.chiede = minimo;
+    p.mor = clamp(p.mor - 0.4, 1, 10);
+    return {ok:false, chiede:minimo,
+      msg:`${p.nm} rifiuta ${fmtK(off)}/sett. Il suo entourage fa sapere che non scende sotto ${fmtK(minimo)}/sett.`};
+  }
+  const anni = anniRinnovo(p);
+  p.wage = off; p.contract = anni; p.rifiutoSett = null; p.chiede = null;
+  p.mor = clamp(p.mor + (off>=minimo*1.15 ? 1.2 : 0.6), 1, 10);
+  t.budget -= bonus;
+  t.wageBill = Math.round(sum(t.players,x=>x.wage));
+  addNews(`<b>${p.nm}</b> rinnova per ${anni} stagion${anni===1?'e':'i'} a ${fmtK(off)}/sett.`,'squadra');
+  return {ok:true, msg:`Firmato: ${fmtK(off)}/sett per ${anni} stagion${anni===1?'e':'i'}. Bonus alla firma ${fmtK(bonus)}.`};
 }
+function contrattiInScadenza(){
+  return playerTeam().players.filter(p=>p.contract<=1)
+    .sort((a,b)=> ovr(b)-ovr(a));
+}
+function renewContract(pid){ return proponiRinnovo(pid, 'rialzo'); }
 function hireStaff(kind){
   const cost = [0,300,700,1400];
   const lvl = G.club.staff[kind];
@@ -2806,7 +2933,8 @@ function esportaCarriera(){
 function carrieraValida(d){
   if(!d || typeof d!=='object') return 'Il file non contiene dati leggibili.';
   if(!Array.isArray(d.teams) || d.teams.length < 32) return 'Non sembra una carriera di MISTER.';
-  if(typeof d.teamId!=='number' || !d.teams[d.teamId]) return 'La squadra allenata non risulta nel file.';
+  if(typeof d.teamId!=='number' || !d.teams.some(t=>t.id===d.teamId))
+    return 'La squadra allenata non risulta nel file.';
   if(typeof d.season!=='number' || typeof d.week!=='number') return 'Il file è incompleto o rovinato.';
   if(!Array.isArray(d.calendar) || !d.calendar.length) return 'Il calendario della stagione è assente.';
   for(const t of d.teams) if(!Array.isArray(t.players)) return 'Le rose delle squadre sono assenti.';
@@ -2832,7 +2960,7 @@ function importaCarriera(daTitolo){
           <button class="btn wide mt" onclick="closeModal()">OK</button>`);
         return;
       }
-      const t = dati.teams[dati.teamId];
+      const t = dati.teams.find(x=>x.id===dati.teamId) || dati.teams[dati.teamId];
       const conferma = `<h2>CARICARE QUESTA CARRIERA?</h2>
         <p class="sm"><b>${esc(t.name)}</b> · stagione ${dati.season}, ${fmtDate(dati.week)} · Serie ${t.div}</p>
         ${daTitolo && !localStorage.getItem(SAVE_KEY) ? ''
@@ -3148,7 +3276,18 @@ function renderHome(s){
   }
   const pos = t.div!=='E'?leaguePos(t.id):0;
   const conf = Math.round(G.club.confidence);
+  const scad = contrattiInScadenza();
+  const restano = G.calendar.length - G.week + 1;
+  const avvisoScad = (scad.length && restano<=8) ? `
+    <div class="panel" style="border-color:var(--bad)">
+      <h2 style="color:var(--bad)">⚠ Contratti in scadenza</h2>
+      <p class="sm">${scad.length===1?'Un giocatore va':'Ci sono '+scad.length+' giocatori che vanno'}
+        in scadenza: a fine stagione ${scad.length===1?'se ne va':'se ne vanno'} a parametro zero.</p>
+      <p class="tiny dim">${esc(scad.slice(0,5).map(p=>p.nm+' ('+ovr(p)+')').join(' · '))}${scad.length>5?' …':''}</p>
+      <button class="btn acc wide mt" onclick="rosaVai('contratti')">VAI AI CONTRATTI</button>
+    </div>` : '';
   s.innerHTML = `
+    ${avvisoScad}
     ${matchHtml}
     <div class="panel">
       <h2>La situazione</h2>
@@ -3179,6 +3318,29 @@ function afterWeek(r){
   if(G.gameOver){ showGameOver(); return; }
   if(r && r.season){ showSeasonEnd(); return; }
   nav('home');
+  // richiamo sui contratti in scadenza, una volta per soglia
+  if(G.allarmeScadenze){
+    const a = G.allarmeScadenze; G.allarmeScadenze = null;
+    const lista = contrattiInScadenza();
+    if(lista.length){
+      openModal(`
+        <h2 class="badT">${a.ultima?'ULTIMA CHIAMATA':'CONTRATTI IN SCADENZA'}</h2>
+        <p class="sm">${lista.length===1?'Un tuo giocatore è':'Ci sono '+lista.length+' tuoi giocatori'}
+          in scadenza di contratto. Se non rinnovi entro fine stagione ${lista.length===1?'se ne andrà':'se ne andranno'}
+          a parametro zero.</p>
+        ${sortableTable('scadenze_modal', [
+          {k:'ruolo', label:'', val:p=>ORD_RUOLO[p.role], cell:p=>pillRuolo(p.role)},
+          {k:'nome', label:'Giocatore', val:p=>p.nm.split(' ').pop(), cell:p=>esc(p.nm)},
+          {k:'eta', label:'Età', cls:'c', val:p=>p.age, cell:p=>p.age},
+          {k:'val', label:'VAL', cls:'c', val:p=>-ovr(p), cell:p=>`<span class="accT">${ovr(p)}</span>`},
+          {k:'ing', label:'Ingaggio', cls:'r', val:p=>-p.wage, cell:p=>fmtK(p.wage)}
+        ], lista, {defK:'val'})}
+        <div class="row mt">
+          <button class="btn acc grow" onclick="closeModal();rosaVai('contratti')">VAI AI CONTRATTI</button>
+          <button class="btn grow" onclick="closeModal()">PIÙ TARDI</button>
+        </div>`);
+    }
+  }
 }
 
 /* ---------- pre-partita ---------- */
@@ -3241,8 +3403,11 @@ function finishPlayerMatch(sim){
 /* ================== SCHERMATA: ROSA ================== */
 const ORD_RUOLO = {POR:0,DIF:1,CEN:2,ATT:3};
 function mediaVoto(p){ return p.sVotiN ? p.sVoti/p.sVotiN : 0; }
+let rosaTab = 'rosa';
 function renderRosa(s){
+  if(rosaTab==='contratti') return renderContratti(s);
   const t = playerTeam();
+  const inScad = contrattiInScadenza().length;
   const cols = [
     {k:'ruolo', label:'', val:p=>ORD_RUOLO[p.role]*100 - ovr(p),
       cell:p=>`${pillRuolo(p.role)}`},
@@ -3260,6 +3425,10 @@ function renderRosa(s){
   s.innerHTML = `
     <div class="panel">
       <h2>Rosa <small>· ${t.players.length} giocatori · ingaggi ${fmtK(sum(t.players,p=>p.wage))}/sett</small></h2>
+      <div class="tabs">
+        <button class="btn on">GIOCATORI</button>
+        <button class="btn" onclick="rosaVai('contratti')">CONTRATTI${inScad?` <span class="badT">(${inScad})</span>`:''}</button>
+      </div>
       <div class="row mb" style="align-items:flex-start">
         <div class="tiny faint grow"><span class="infoT">FORMA</span> = il momento che attraversa (dai voti presi, 1-10) ·
           <span class="okT">COND</span> = benzina fisica · tocca le intestazioni per ordinare</div>
@@ -3268,6 +3437,122 @@ function renderRosa(s){
       ${sortableTable('rosa', cols, t.players, {defK:'ruolo', redraw:"nav('rosa')",
         rowClick:p=>`showPlayer(${p.id})`})}
     </div>`;
+}
+function rosaVai(tab){ rosaTab = tab; sndClick(); nav('rosa', true); }
+
+/* ================== SCHERMATA: CONTRATTI ================== */
+function annoTxt(n){ return n<=0 ? 'SCADUTO' : n===1 ? 'ultimo anno' : n+' stagioni'; }
+/* la cifra esatta la sanno gli osservatori, oppure la si scopre dopo un rifiuto */
+function chiedeNoto(p){ return G.club.staff.oss>0 || !!p.chiede; }
+function fasciaIngaggio(m){
+  const lo = Math.max(1, Math.floor(m*0.85));
+  const hi = Math.max(lo+1, Math.ceil(m*1.15));
+  return fmtK(lo).replace(' k','') + '–' + fmtK(hi);
+}
+function renderContratti(s){
+  const t = playerTeam();
+  const inScad = contrattiInScadenza();
+  const monte = Math.round(sum(t.players,p=>p.wage));
+  const cols = [
+    {k:'ruolo', label:'', val:p=>ORD_RUOLO[p.role], cell:p=>pillRuolo(p.role)},
+    {k:'nome', label:'Giocatore', val:p=>p.nm.split(' ').pop(),
+      cell:p=>`${esc(p.nm)}${p.contract<=1?' <span class="pill inj" data-abbr="SCAD" data-full="Contratto in scadenza: a fine stagione se ne va a parametro zero">SCAD</span>':''}`},
+    {k:'eta', label:'Età', cls:'c', val:p=>p.age, cell:p=>p.age},
+    {k:'val', label:'VAL', full:'Valore complessivo del giocatore, da 1 a 99', cls:'c',
+      val:p=>-ovr(p), cell:p=>`<span class="accT">${ovr(p)}</span>`},
+    {k:'ing', label:'Ingaggio', cls:'c', val:p=>-p.wage, cell:p=>fmtK(p.wage)},
+    {k:'anni', label:'Durata', cls:'c', val:p=>p.contract,
+      cell:p=>`<span class="${p.contract<=1?'badT':p.contract<=2?'accT':'okT'}">${annoTxt(p.contract)}</span>`},
+    {k:'mor', label:'Morale', full:'Morale, da 1 a 10: incide su quanto chiede per rinnovare', cls:'c',
+      val:p=>-p.mor, cell:p=>p.mor.toFixed(1)},
+    {k:'frm', label:'Forma', cls:'c', val:p=>-p.frm, cell:p=>p.frm.toFixed(1)},
+    {k:'chiede', label:'Chiede', full:'Ingaggio minimo che il giocatore accetterebbe oggi. Con gli osservatori è la cifra esatta, altrimenti solo un\'indicazione', cls:'r',
+      val:p=>-ingaggioMinimo(p),
+      cell:p=>{
+        const m = ingaggioMinimo(p);
+        if(chiedeNoto(p)) return `<b class="${m>p.wage?'badT':'okT'}">${fmtK(m)}</b>`;
+        return m > p.wage*1.08 ? '<span class="badT">↑ di più</span>'
+             : m < p.wage*0.92 ? '<span class="okT">↓ di meno</span>'
+             : '<span class="dim">≈ uguale</span>';
+      }}
+  ];
+  s.innerHTML = `
+    <div class="panel">
+      <h2>Contratti <small>· monte ingaggi ${fmtK(monte)}/sett</small></h2>
+      <div class="tabs">
+        <button class="btn" onclick="rosaVai('rosa')">GIOCATORI</button>
+        <button class="btn on">CONTRATTI${inScad.length?` (${inScad.length})`:''}</button>
+      </div>
+      ${inScad.length
+        ? `<div class="panel" style="background:var(--panel2);border-color:var(--bad);margin-bottom:10px">
+             <div class="sm badT">⚠ ${inScad.length} contratt${inScad.length===1?'o in scadenza':'i in scadenza'}</div>
+             <div class="tiny dim">A fine stagione ${inScad.length===1?'lascia':'lasciano'} la squadra a parametro zero:
+               ${esc(inScad.map(p=>p.nm).join(', '))}.</div>
+           </div>`
+        : `<div class="sm okT mb">Nessun contratto in scadenza: la rosa è sotto controllo.</div>`}
+      <div class="tiny faint mb">Tocca un giocatore per aprire la trattativa di rinnovo.
+        <b>Chiede</b> è la soglia sotto cui non firma: dipende da quanto vale, dall'età, dal morale e dalla forma.
+        ${G.club.staff.oss>0?'':'Senza osservatori è solo una stima (~).'}</div>
+      ${sortableTable('contratti', cols, t.players, {defK:'anni', redraw:"nav('rosa')",
+        rowClick:p=>`trattativaRinnovo(${p.id})`,
+        rowCls:p=> p.contract<=1 ? 'me' : ''})}
+    </div>`;
+}
+function trattativaRinnovo(pid){
+  const t = playerTeam();
+  const p = t.players.find(x=>x.id===pid);
+  if(!p) return;
+  const off = offerteRinnovo(p);
+  const minimo = ingaggioMinimo(p);
+  const noto = chiedeNoto(p);
+  const bloccato = p.rifiutoSett === G.week;
+  const bottone = (tipo, etichetta, valore)=>{
+    const bonus = valore*4;
+    const povero = t.budget < bonus;
+    return `<button class="btn small ${tipo==='rialzo'?'acc':''} grow ${bloccato||povero?'dis':''}"
+      onclick="uiRinnova(${pid},'${tipo}')">${etichetta}<br>
+      <span class="tiny">${fmtK(valore)}/sett</span></button>`;
+  };
+  openModal(`
+    <h2>RINNOVO: ${esc(p.nm)}</h2>
+    <div class="swapbox">
+      <div class="row">
+        ${pillRuolo(p.role)}
+        <div class="grow"><b>${esc(p.nm)}</b><br>
+          <span class="tiny ${p.contract<=1?'badT':'dim'}">contratto: ${annoTxt(p.contract)}</span></div>
+        <div class="center"><div class="tiny faint">VAL</div><div class="big">${ovr(p)}</div></div>
+      </div>
+      ${statLine(p)}
+    </div>
+    <table>
+      <tr><td>Ingaggio attuale</td><td class="r">${fmtK(p.wage)}/sett</td></tr>
+      <tr><td>Chiede almeno</td><td class="r">${noto
+        ? `<b class="${minimo>p.wage?'badT':'okT'}">${fmtK(minimo)}/sett</b>`
+        : `<span class="faint">stima ${fasciaIngaggio(minimo)}/sett</span>`}</td></tr>
+      <tr><td>Bilancio</td><td class="r">${fmtK(t.budget)}</td></tr>
+    </table>
+    <p class="tiny faint mt">Alla firma si paga un bonus pari a quattro settimane di ingaggio.
+      La durata dipende dall'età: i giovani firmano lungo, i veterani un anno.</p>
+    ${bloccato?'<p class="sm badT mt">Ha già rifiutato questa settimana: riprova dopo la prossima partita.</p>':''}
+    <div class="row mt wrap">
+      ${bottone('ribasso','AL RIBASSO', off.ribasso)}
+      ${bottone('pari','STESSO INGAGGIO', off.pari)}
+      ${bottone('rialzo','AL RIALZO', off.rialzo)}
+    </div>
+    <button class="btn wide mt" onclick="closeModal()">CHIUDI</button>`);
+}
+function uiRinnova(pid, tipo){
+  const r = proponiRinnovo(pid, tipo);
+  const t = playerTeam();
+  const p = t.players.find(x=>x.id===pid);
+  openModal(`<h2>${r.ok?'RINNOVO FIRMATO':'RIFIUTATO'}</h2>
+    <p class="sm">${esc(r.msg)}</p>
+    ${!r.ok && r.chiede ? `<p class="tiny faint">Ora sai la cifra esatta: la trattativa riprende la settimana prossima.</p>`:''}
+    <div class="row mt">
+      ${!r.ok && p ? `<button class="btn grow" onclick="closeModal();trattativaRinnovo(${pid})">TORNA ALLA TRATTATIVA</button>`:''}
+      <button class="btn acc grow" onclick="closeModal();nav('rosa')">OK</button>
+    </div>`);
+  topbarUpdate(); saveGame();
 }
 function showPlayer(pid){
   const t = playerTeam();
@@ -3535,7 +3820,7 @@ function uiRefuse(pid){
 let clubTab = 'allen';
 function renderClub(s){
   const t = playerTeam();
-  const tabs = [['allen','ALLENAMENTO'],['staff','STAFF'],['fin','FINANZE'],['soc','SOCIETÀ'],['opz','OPZIONI']];
+  const tabs = [['allen','ALLENAMENTO'],['staff','STAFF'],['fin','FINANZE'],['soc','SOCIETÀ'],['storico','STORICO'],['opz','OPZIONI']];
   let body='';
   if(clubTab==='allen'){
     const focus = [['equilibrato','Equilibrato','un po’ di tutto'],['attacco','Attacco','cresce la fase offensiva'],
@@ -3599,7 +3884,9 @@ function renderClub(s){
     </table>
     <button class="btn wide mt" onclick="uiCustomize()">🎨 PERSONALIZZA NOME E COLORI</button>
     <div class="mt"><b class="accT sm">BACHECA</b></div>${troph}
-    ${hist? '<div class="mt"><b class="accT sm">CARRIERA</b></div>'+hist : ''}`;
+    ${hist? '<div class="mt"><b class="accT sm">ULTIME STAGIONI</b> <span class="tiny faint">· tutto in STORICO</span></div>'+hist : ''}`;
+  } else if(clubTab==='storico'){
+    body = storicoHtml();
   } else {
     body = `
       <div class="teampick" onclick="uiSound()"><div class="nm">Audio<small>stadio ed effetti</small></div>
@@ -3619,6 +3906,47 @@ function renderClub(s){
     <div class="tabs">${tabs.map(([k,l])=>`<button class="btn ${k===clubTab?'on':''}" data-k="${k}">${l}</button>`).join('')}</div>
     ${body}</div>`;
   s.querySelectorAll('.tabs button').forEach(b=> b.onclick=()=>{ sndClick(); clubTab=b.dataset.k; nav('club', true); });
+}
+/* ---------- storico completo delle stagioni ---------- */
+const VERDETTI = {promo:'Promozione', great:'Oltre le attese', ok:'Obiettivo centrato',
+                  meh:'Sotto le attese', bad:'Stagione deludente'};
+function storicoHtml(){
+  const t = playerTeam();
+  if(!G.history.length)
+    return `<p class="sm dim">Nessuna stagione conclusa: lo storico si riempie a fine campionato.</p>
+      <p class="tiny faint mt">Stagione in corso: ${G.season}, ${fmtDate(G.week)} in Serie ${t.div}.</p>`;
+  const promozioni = G.history.filter(h=>h.verdict==='promo').length;
+  const trofei = G.history.reduce((n,h)=>n+((h.trofei||[]).length),0);
+  const migliore = G.history.slice().sort((a,b)=> DIVS.indexOf(a.div)-DIVS.indexOf(b.div) || a.pos-b.pos)[0];
+  const cols = [
+    {k:'s', label:'St.', full:'Stagione', val:h=>h.s, cell:h=>`<b>${h.s}</b>`},
+    {k:'div', label:'Serie', val:h=>DIVS.indexOf(h.div), cell:h=>h.div},
+    {k:'pos', label:'Pos', full:'Posizione finale in campionato', cls:'c', val:h=>h.pos,
+      cell:h=>`<b class="${h.verdict==='promo'?'okT':h.pos>=12?'badT':'accT'}">${h.pos}°</b>`},
+    {k:'pt', label:'Pt', full:'Punti conquistati', cls:'c', val:h=>-(h.pt||0), cell:h=>h.pt!==undefined?h.pt:'—'},
+    {k:'bil', label:'V-N-P', full:'Vittorie, pareggi e sconfitte', cls:'c',
+      val:h=>-(h.v||0), cell:h=>h.v!==undefined?`${h.v}-${h.n}-${h.sc}`:'—'},
+    {k:'gol', label:'GF-GS', full:'Gol fatti e gol subiti', cls:'c',
+      val:h=>-((h.gf||0)-(h.gs||0)), cell:h=>h.gf!==undefined?`${h.gf}-${h.gs}`:'—'},
+    {k:'bomber', label:'Capocannoniere', full:'Il miglior marcatore della tua squadra in quella stagione',
+      val:h=>h.bomber||'', cell:h=>h.bomber&&h.bomber!=='—'?`${esc(h.bomber)} <span class="accT">${h.bomberGol}</span>`:'<span class="faint">—</span>'},
+    {k:'cup', label:'Coppa', val:h=>h.cup||'', cell:h=>h.cup==='VINTA'?'<b class="okT">VINTA</b>':esc(h.cup||'—')},
+    {k:'euro', label:'Europa', val:h=>h.euro||'', cell:h=>h.euro==='VINTA'?'<b class="okT">VINTA</b>':esc(h.euro||'—')},
+    {k:'esito', label:'Esito', cls:'r', val:h=>h.verdict||'',
+      cell:h=>`<span class="${h.verdict==='promo'||h.verdict==='great'?'okT':h.verdict==='bad'?'badT':'dim'}">${esc(VERDETTI[h.verdict]||'—')}</span>`}
+  ];
+  const bacheca = G.history.filter(h=>(h.trofei||[]).length)
+    .map(h=>`<div class="news">🏆 <b>${esc(h.trofei.join(', '))}</b> <span class="faint">— stagione ${h.s} con ${esc(h.team)}</span></div>`).join('');
+  return `
+    <table class="wrapcells mb">
+      <tr><td>Stagioni allenate</td><td class="r accT">${G.history.length}</td></tr>
+      <tr><td>Promozioni</td><td class="r ${promozioni?'okT':''}">${promozioni}</td></tr>
+      <tr><td>Trofei vinti</td><td class="r ${trofei?'okT':''}">${trofei}</td></tr>
+      <tr><td>Miglior risultato</td><td class="r">${migliore.pos}° in Serie ${migliore.div} <span class="faint">(stagione ${migliore.s})</span></td></tr>
+    </table>
+    ${bacheca ? `<div class="sm accT mb">TROFEI</div>${bacheca}<div class="mb"></div>` : ''}
+    <div class="sm accT mb">TUTTE LE STAGIONI</div>
+    ${sortableTable('storico', cols, G.history, {defK:'s', defDir:-1, redraw:"nav('club')"})}`;
 }
 function uiTrain(k){ G.club.training=k; sndClick(); saveGame(); nav('club'); }
 function uiFireStaff(k){
@@ -3782,12 +4110,15 @@ function renderLega(s){
     ];
     body = sortableTable('cls_'+legaTab, cols, st, {defK:'pos', redraw:"nav('lega')",
       rowCls:(r)=> (r.id===t.id?'me ':'') +
-        (TSORT['cls_'+legaTab].k==='pos' ? ((legaTab!=='D' && r.pos===13?'zoneDown ':'') + (legaTab!=='A' && r.pos===3?'zoneUp':'')) : '')})
-      + `<p class="tiny faint mt">${legaTab==='A'?'Ultime 3: retrocedono in B · prime 2: Coppa dei Campioni':
-        legaTab==='D'?'Prime 3: promosse in Serie C':
-        `Prime 3: promosse in Serie ${divUpper(legaTab)} · ultime 3: retrocedono in Serie ${legaTab==='B'?'C':'D'}`}</p>`;
+        (TSORT['cls_'+legaTab].k==='pos'
+          ? ((legaTab!=='D' && r.pos===st.length-N_RETROCESSE+1 ? 'zoneDown ':'') +
+             (legaTab!=='A' && r.pos===N_PROMOSSE ? 'zoneUp':''))
+          : '')})
+      + `<p class="tiny faint mt">${legaTab==='A'?`Ultime ${N_RETROCESSE}: retrocedono in B · prime 2: Coppa dei Campioni`:
+        legaTab==='D'?`Prime ${N_PROMOSSE}: promosse in Serie C`:
+        `Prime ${N_PROMOSSE}: promosse in Serie ${divUpper(legaTab)} · ultime ${N_RETROCESSE}: retrocedono in Serie ${legaTab==='B'?'C':'D'}`}</p>`;
   } else if(legaTab==='cal'){
-    const fx = fxOf(t.div);
+    const fx = fxOf(t.div) || [];
     const partite = [];
     for(let r0=0;r0<fx.length;r0++){
       const m = fx[r0].find(x=>x.h===t.id||x.a===t.id);
