@@ -1237,7 +1237,7 @@ class SegmentedTrack {
         const nodes = line.nodes, N = line.count;
         if (!N) return null;
         const W = Math.ceil((this.wallRadius() * 2.5) / (line.ds || 1)) + 2;
-        let bd = Infinity, bx = 0, by = 0;
+        let bd = Infinity, bx = 0, by = 0, bo = 0;
         for (let o = -W; o <= W; o++) {
             const a = nodes[(car._nodeIdx + o + N * 4) % N];
             const b = nodes[(car._nodeIdx + o + 1 + N * 4) % N];
@@ -1247,9 +1247,23 @@ class SegmentedTrack {
             t = t < 0 ? 0 : (t > 1 ? 1 : t);
             const px = a.cx + t * dx, py = a.cy + t * dy;
             const d = (car.x - px) * (car.x - px) + (car.y - py) * (car.y - py);
-            if (d < bd) { bd = d; bx = px; by = py; }
+            if (d < bd) { bd = d; bx = px; by = py; bo = o; }
         }
         if (!isFinite(bd)) return null;
+        // THE HINT HAS TO BRACKET THE CAR. _nodeIdx is maintained by
+        // updateTrackProgress, which runs INSIDE car.update - and the pit
+        // sequence moves a car for a second and a half with car.update not
+        // running at all. So a car rejoining from the box arrived here with a
+        // hint from 370px of road ago, the window did not contain it, and the
+        // nearest point in that window was a hundred pixels away: on a bridge
+        // circuit checkBarrierCollision believed that, pushed the car 52px and
+        // billed it 164hp. Every car that stopped at Suzuka, every time.
+        //
+        // If the best offset sits on the EDGE of the window then the real
+        // nearest point is outside it and this answer is about a piece of road
+        // the car is not on. Say so, and let the caller fall back to the
+        // global measure, which needs no hint.
+        if (bo <= -W || bo >= W) return null;
         return { dist: Math.sqrt(bd), projX: bx, projY: by, segType: 'line', seg: null };
     }
 

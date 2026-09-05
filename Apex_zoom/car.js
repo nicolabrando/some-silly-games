@@ -274,7 +274,22 @@ const TYRES = {
     //  casing, how fast it goes off is a property of how it is used.
     drift:  { key: 'drift',  label: 'Drift',  short: 'D', colour: '#ab47bc',
               grip: 0.780, falloff: 0.0600, life: 2.00, bite: 1.000, slide: 1.55,
-              hook: 0.30, hookBand: 320, loose: 1.0 },
+              hook: 0.30, hookBand: 320, loose: 1.0,
+              // A TREAD BUILT TO BE SCRUBBED. The wear model charges the
+              // sideways part of the motion squared (see `scrub` in update),
+              // which is right for a slick and perverse for this one: the
+              // drift compound exists to be driven sideways, its own slide
+              // figure is 1.55, and then the wear law erased a set for doing
+              // exactly that. The AI never notices - it drives a computed
+              // speed profile and sits at 16% slip on every compound, under
+              // the 20% free band - so the whole penalty landed on the only
+              // driver who actually provokes the car, which is Nicola, on the
+              // only tyre he provokes it with.
+              //
+              // 0.15 is not immunity: a genuinely wild lap still costs
+              // something. It is the difference between a tyre that rewards
+              // being used as intended and one that punishes it.
+              scrubWear: 0.15 },
     // ---- RAIN -----------------------------------------------------------
     //  Two treaded compounds. What separates them is not simply "more wet
     //  grip": the wet road and the standing water on it are two different
@@ -1319,7 +1334,8 @@ class Car {
             const sinSlip = speedForKerb > 30
                 ? Math.min(1, Math.abs(latV) / speedForKerb) : 0;
             const over = Math.max(0, sinSlip - SLIDE_FREE);
-            const scrub = 1 + SLIDE_WEAR * over * over;
+            const scrub = 1 + SLIDE_WEAR * over * over *
+                          (tyre.scrubWear === undefined ? 1 : tyre.scrubWear);
             // The chassis is part of how hard the car is on its rubber: a
             // high-downforce car loads the tyre far more than one running
             // little wing.

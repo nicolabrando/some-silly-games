@@ -3220,6 +3220,11 @@ function pitUpdate(car, dt) {
             car.pitPhase = null;
             car._pitHeading = null;
             car.pitGrace = 1.2;
+            // and the car's idea of where it is on the racing line is 370px of
+            // road out of date, because nothing updated it while the sequence
+            // had the wheel. Clearing it costs one global scan and spares
+            // everything downstream a hint that points at the wrong road.
+            car._nodeIdx = undefined;
         }
     }
 }
