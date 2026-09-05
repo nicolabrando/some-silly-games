@@ -3244,6 +3244,14 @@ function trackKeyOf(t) { return (t && t.trackKey) || null; }
 // torna quella tarata. Questa riga gira all'inizio di ogni sessione, quindi
 // una stagione ripresa da localStorage si riporta dietro il suo rivale senza
 // che nessuno debba ricordarselo.
+// How much more car the season rival gets. 1 for everybody else.
+function rivalEdgeFor(driverName) {
+    const rv = (typeof AI !== 'undefined') ? AI.seasonRival : null;
+    if (!rv || rv.driver !== driverName) return 1;
+    // a season archived before the edge existed still gets a working rival
+    return isFinite(rv.carEdge) ? rv.carEdge : RIVAL_CAR_EDGE;
+}
+
 function applySeasonRival() {
     AI.seasonRival = (isChampionship && championshipState && championshipState.rival)
                    ? championshipState.rival : null;
@@ -3389,7 +3397,7 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
     car.driverName = driverName;
     // Qualifying is run in the car the driver will race, or the grid would be
     // set by a car nobody is driving.
-    car.setChassis(chassis || CHASSIS_DEFAULT);
+    car.setChassis(chassis || CHASSIS_DEFAULT, rivalEdgeFor(driverName));
     car.angle = n0.heading;
     car.maxHealth = 1e9;          // a qualifying lap is not a damage test
     car.health = car.maxHealth;
@@ -6189,23 +6197,50 @@ function pbSave() {
 // A personal best is a TIME, but it is a time on a particular layout: a lap of
 // the old Marathon is not a record on the new one. Same stamp as the ghost, and
 // the same rule for laps set before there was one - see GEOM_REDRAWN.
+// A LAP FASTER THAN THE CAR IS NOT A LAP OF THIS CIRCUIT.
+//
+// The geometry stamp catches a record set on a layout that has since been
+// redrawn - but only for laps saved since the stamp existed, and only for the
+// circuits listed in GEOM_REDRAWN, which is a list somebody has to remember to
+// update. Nicola's Spa says what that costs: a wet record of 15.450s on a
+// 7547px lap, which is 488 px/s, against a dry best of 296 and a fastest car
+// in the game that tops out at 385. Two unstamped laps from a Spa that no
+// longer exists, sitting at the top of the book as records nobody could ever
+// beat.
+//
+// So there is a physical floor as well, and it needs no list and no history:
+// the racing line is the SHORTEST way round, so lapPixels/time is a lower
+// bound on the average speed a lap really needed. If even that is quicker than
+// the quickest car can go flat out, the lap was not driven here.
+const PB_TOP_PXPS = 400;    // measured: Bolt tops out at 385, 392 with the rival's edge
+function pbPlausible(trackKey, ms) {
+    const px = (typeof lapPixelsFor === 'function') ? lapPixelsFor(trackKey) : 0;
+    if (!px || !isFinite(px) || !ms || !isFinite(ms) || ms <= 0) return true;
+    return (px / (ms / 1000)) <= PB_TOP_PXPS;
+}
+
 function pbFor(trackKey, geom) {
     const t = pbLoad()[trackKey] || {};
     const out = {};
     for (const slot of Object.keys(t)) {
-        if (t[slot] && t[slot].ms && geomStampOk(t[slot].g, trackKey, geom)) out[slot] = t[slot];
+        if (t[slot] && t[slot].ms && geomStampOk(t[slot].g, trackKey, geom) &&
+            pbPlausible(trackKey, t[slot].ms)) out[slot] = t[slot];
     }
     return out;
 }
 
 function pbRecord(trackKey, tyreKey, ms, wet, geom) {
     if (!trackKey || !tyreKey || !ms || !isFinite(ms)) return;
+    // and a lap the car could not have driven is not a record either: whatever
+    // produced it, storing it would only put an unbeatable number in the book
+    if (!pbPlausible(trackKey, ms)) return;
     const all = pbLoad();
     const slot = wet ? tyreKey + ':wet' : tyreKey;
     const t = all[trackKey] || (all[trackKey] = {});
     // A record left over from a layout this circuit no longer has is not a
     // record to beat: it is overwritten rather than compared against.
-    const cur = (t[slot] && geomStampOk(t[slot].g, trackKey, geom)) ? t[slot] : null;
+    const cur = (t[slot] && geomStampOk(t[slot].g, trackKey, geom) &&
+                 pbPlausible(trackKey, t[slot].ms)) ? t[slot] : null;
     if (!cur || ms < cur.ms) {
         t[slot] = { ms: ms, when: Date.now(), wet: !!wet, g: geom || null };
         pbSave();
@@ -8062,7 +8097,8 @@ function startGame(forceTrackType = null) {
         // The chassis, before anything else touches the physics: it rewrites
         // enginePower, maxSteer, baseGrip, drag and tyre wear.
         car.setChassis(p.isPlayer ? seatChassis(car.playerIndex)
-                                  : (p.chassis || CHASSIS_DEFAULT));
+                                  : (p.chassis || CHASSIS_DEFAULT),
+                       rivalEdgeFor(p.driverName));
         car.gridIndex = i;              // stable tie-break before anyone moves
         car.startGridPos = i + 1;       // for the places-gained bonus
 
@@ -10806,6 +10842,11 @@ const SEASON_DEFAULT = 10;
 // vince cambia comunque ogni anno), sopra il 2% il campionato e' deciso a
 // meta' calendario. Vedi 2.4duodevicies nel piano.
 let RIVAL_BOOST = 1.015;
+// Quanta macchina in piu' ha il rivale: grip, potenza e freni, tutti insieme.
+// Vive qui e non nel profilo dell'AI perche' il profilo ha un tetto che a
+// Impossible e' gia' raggiunto - vedi la nota in Car.setChassis. Il numero
+// esce da una misura, non a occhio: vedi il commento sopra applySeasonRival.
+let RIVAL_CAR_EDGE = 1.020;
 
 function seasonRounds() {
     const el = document.getElementById('rounds-select');
@@ -11283,7 +11324,8 @@ function startChampionship() {
                                                   .map(p => p.driverName);
     if (aiNames.length) {
         const pick = aiNames[Math.floor(rng() * aiNames.length)];
-        championshipState.rival = { driver: pick, boost: RIVAL_BOOST };
+        championshipState.rival = { driver: pick, boost: RIVAL_BOOST,
+                                    carEdge: RIVAL_CAR_EDGE };
         // Due cose, non una. La prima: skillVariation, che ogni pilota pesca
         // fra 0.8 e 1.1 a inizio stagione, vale il 7% di passo - tre volte lo
         // scarto fra i caratteri. Un rivale con una pescata storta e' un

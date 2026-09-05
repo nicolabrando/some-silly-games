@@ -1236,16 +1236,39 @@ class Car {
     
     // Apply a chassis. Everything the physics reads is derived here, so a
     // car's numbers can never drift out of step with the badge on its nose.
-    setChassis(key) {
+    // `edge` is the season rival's, and it is a CAR advantage on purpose.
+    //
+    // The rival used to be given +1.5% on the AI's cornerFactor, and measured
+    // over 42 of Nicola's own seasons that produced a mean finish of 5.29 among
+    // the ten AI - which is 5.5, which is chance. The reason is two lines
+    // below the boost in ai.js: `cornerFactor = min(cornerFactor, maxCorner)`.
+    // At Impossible the ladder already runs every car at the physical limit,
+    // so the boost was being clipped away - and clipped UNEQUALLY, which is
+    // worse than uselessly. Measured with an 8% boost: Senna gained 0.33% and
+    // Verstappen 0.44%, while Lauda gained 6.88%. The rival's advantage
+    // depended entirely on which name the season happened to draw.
+    //
+    // Cornering ambition is the wrong lever at the top of the ladder anyway:
+    // the AI is already asking the car for everything it has. So the rival
+    // gets more CAR - grip, power and brakes together, uncapped, identical for
+    // whoever draws the role - and the AI's speed profile exploits it for
+    // free, because the profile is computed from the grip the car actually
+    // has.
+    setChassis(key, edge) {
         const c = CHASSIS[key] || CHASSIS[CHASSIS_DEFAULT];
         this.chassis = c;
         this.chassisKey = c.key;
-        this.enginePower = this.baseEnginePower * c.power;
-        this.brakingPower = this.baseBrakingPower * c.brake;
+        const e = (edge === undefined || !isFinite(edge)) ? 1 : edge;
+        this.chassisEdge = e;
+        this.enginePower = this.baseEnginePower * c.power * e;
+        this.brakingPower = this.baseBrakingPower * c.brake * e;
         this.maxSteer = this.baseMaxSteer * c.steer;
-        this.baseGrip = this.baseBaseGrip * c.grip;
+        this.baseGrip = this.baseBaseGrip * c.grip * e;
         // top speed = enginePower / baseFriction, so the drag that delivers
         // the quoted top speed follows from the power it was given.
+        // NOT scaled by the edge: top speed is enginePower / baseFriction, so
+        // leaving the drag alone is what lets the extra power show up on the
+        // straight as well as out of the corners.
         this.baseFriction = this.baseBaseFriction * (c.power / c.top);
         this.tyreWearScale = c.wear;
         return this;

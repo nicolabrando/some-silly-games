@@ -1620,14 +1620,25 @@ AI.buildProfile = function (driverName, difficulty, skillVariation) {
     // sempre; questo cambia pilota ogni stagione, e' annunciato, e muore con
     // la stagione. Vale solo in campionato: nelle gare singole seasonRival
     // resta null.
+    // IL PASSO DEL RIVALE NON STA PIU' QUI. Stava: cornerFactor e
+    // straightFactor per il boost. Non funzionava, e il motivo e' due righe
+    // sotto - `cornerFactor = min(cornerFactor, maxCorner)`. A Impossible la
+    // scala di difficolta' fa gia' girare tutti al limite fisico, quindi il
+    // boost veniva tagliato via, e tagliato in modo DISUGUALE: con un boost
+    // dell'8%, Senna guadagnava lo 0,33% e Verstappen lo 0,44%, mentre Lauda
+    // il 6,88%. Il vantaggio del rivale dipendeva da quale nome usciva.
+    // Misurato su 42 stagioni di Nicola: piazzamento medio 5,29 fra i dieci
+    // AI, cioe' il caso.
+    //
+    // Ora il rivale ha piu' MACCHINA (Car.setChassis, parametro `edge`): grip,
+    // potenza e freni insieme, senza tetto e identici per chiunque peschi il
+    // ruolo. Qui resta solo la parte che il tetto non tocca.
     const rv = AI.seasonRival;
     if (rv && rv.driver === driverName) {
-        const boost = rv.boost || 1;
-        p.cornerFactor *= boost;
-        p.straightFactor *= boost;
         // e sbaglia un po' meno: un rivale in forma non e' solo piu' veloce,
         // e' anche piu' solido. Senza questo il vantaggio se lo mangiavano
-        // gli errori nei giri di traffico.
+        // gli errori nei giri di traffico. (A Impossible e Alien errorChance
+        // e' gia' 0, quindi qui non fa nulla: il passo lo da' la macchina.)
         p.errorChance *= (rv.errScale === undefined ? 0.80 : rv.errScale);
     }
 
