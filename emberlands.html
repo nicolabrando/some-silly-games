@@ -158,6 +158,11 @@ const TS = 32;                       // lato di un tile in pixel
 const WORLD_W = 512, WORLD_H = 512;  // mondo esterno in tile (16384 x 16384 px)
 const SAVE_KEY = 'emberlands.save.v3';
 
+/* Il mondo è FISSO: un solo seme per sempre. Terreno, coste, boschi, paesi, temi,
+   case, arredi, sotterranei, posizioni di NPC e animali e battute di ognuno
+   discendono tutti da qui, quindi ogni partita ritrova le Emberlands identiche. */
+const WORLD_SEED = 20260905;
+
 /* ---------------- tile ---------------- */
 const T = {
   GRASS: 0, DIRT: 1, SAND: 2, WATER: 3, TREE: 4, ROCK: 5, BUSH: 6,
@@ -231,7 +236,7 @@ const game = {
   fogDirty: true,
   lastRevealTile: -1,
   player: null,
-  lineBook: null,           // distributore di battute senza ripetizioni
+  lines: null,              // battuta di ogni NPC, decisa alla nascita del mondo
   cam: { x: 0, y: 0 },
   keys: Object.create(null),
   particles: [],
@@ -895,7 +900,7 @@ function generateHouse(id, si, bi) {
 
   // un abitante in casa, ogni tanto
   if (rng() < 0.7) {
-    const npc = makeNpc((doorX + 0.5) * TS, (doorY - 1.5) * TS, st, rng, true);
+    const npc = makeNpc((doorX + 0.5) * TS, (doorY - 1.5) * TS, st, rng, true, 'h:' + si + ':' + bi);
     npc.spots = [];
     for (let k = 0; k < 3; k++) {
       let px = 1 + ((rng() * (W - 2)) | 0), py = 1 + ((rng() * (H - 2)) | 0);
@@ -1226,7 +1231,10 @@ const THEMES = {
 };
 const THEME_KEYS = Object.keys(THEMES);
 
-/* distributore di battute: ogni frase esce una volta sola in tutta la partita */
+/* Distributore di battute: ogni frase esce una volta sola.
+   Le battute vengono assegnate tutte in blocco alla nascita del mondo, in un ordine
+   fisso (paese per paese), così il fabbro dice sempre la stessa cosa anche se entri
+   nelle case in un ordine diverso da quello dell'altra volta. */
 function makeLineBook(seed) {
   const rng = makeRng(seed ^ 0x1ced);
   const shuffle = arr => {
@@ -1250,19 +1258,32 @@ function makeLineBook(seed) {
   };
 }
 
-function makeNpc(x, y, home, rng, indoors) {
+/** una battuta per ogni posto da NPC del mondo, decisa una volta e per sempre */
+function assignLines(seed) {
+  const book = makeLineBook(seed);
+  const lines = new Map();
+  // prima chi sta per strada, poi chi sta in casa: ordine fisso, niente sorprese
+  game.settlements.forEach((st, si) => {
+    const count = st.kind === 'city' ? 9 : 5;
+    for (let k = 0; k < count; k++)
+      lines.set('o:' + si + ':' + k, book.take(['t_' + st.theme, 'common', 'home']));
+  });
+  game.settlements.forEach((st, si) => {
+    st.buildings.forEach((b, bi) =>
+      lines.set('h:' + si + ':' + bi, book.take(['home', 't_' + st.theme, 'common'])));
+  });
+  game.lines = lines;
+}
+
+function makeNpc(x, y, home, rng, indoors, lineKey) {
   const spots = [];
   for (let i = 0; i < 3; i++) spots.push({ x: x + (rng() * 200 - 100), y: y + (rng() * 200 - 100) });
-  // prima la battuta a tema del paese, poi il repertorio generale: mai due uguali
-  const order = indoors
-    ? ['home', 't_' + (home && home.theme), 'common']
-    : ['t_' + (home && home.theme), 'common', 'home'];
   return {
     kind: 'npc', x, y, hw: 8, hh: 7, r: 10,
     home, spots, target: 0, pause: rng() * 2, talking: false,
     speed: indoors ? 22 : 34, dir: 'down', kx: 0, ky: 0, walk: 0, moving: false,
     name: NPC_NAMES[(rng() * NPC_NAMES.length) | 0],
-    line: game.lineBook.take(order),
+    line: (game.lines && game.lines.get(lineKey)) || 'Buon viaggio, straniero.',
     hat: ['#c8563c', '#3c74c8', '#59a35b', '#b8973c', '#8d5bb0'][(rng() * 5) | 0],
     body: ['#dcd6c8', '#c4b7a4', '#a8bcc9', '#cbb9c9'][(rng() * 4) | 0]
   };
@@ -1303,7 +1324,7 @@ function populateSettlements(area) {
       let px, py;
       if (b) { px = (b.doorX + 0.5) * TS; py = (b.doorY + 2.5) * TS; }
       else { px = (st.x + 0.5) * TS; py = (st.y + 0.5) * TS; }
-      const npc = makeNpc(px, py, st, rng, false);
+      const npc = makeNpc(px, py, st, rng, false, 'o:' + i + ':' + k);
       npc.spots = npc.spots.map(s => {
         const tx = Math.max(1, Math.min(area.w - 2, Math.round(s.x / TS)));
         const ty = Math.max(1, Math.min(area.h - 2, Math.round(s.y / TS)));
@@ -1456,9 +1477,8 @@ function startGame(seed, save) {
   game.dialog = null;
   game.state = 'play';
   game.lastRevealTile = -1;
-  game.lineBook = makeLineBook(seed);
-
   const over = generateOverworld(seed);
+  assignLines(seed);
   populateSettlements(over);
   buildDoorIndex(over);
   game.areas.overworld = over;
@@ -1577,7 +1597,7 @@ addEventListener('keydown', e => {
   if (!first) return;
 
   if (game.state === 'dead') {
-    if (e.code === 'KeyR') startGame((Math.random() * 1e9) | 0);
+    if (e.code === 'KeyR') startGame(WORLD_SEED);
     return;
   }
   if (e.code === 'KeyP') { togglePause(); return; }
@@ -1749,6 +1769,14 @@ function makeSaveObject() {
 }
 function applySave(save) {
   const p = game.player;
+  // salvataggio di un mondo diverso (versioni vecchie a mondo casuale): tengo solo
+  // vita e oro, la posizione e la mappa esplorata non avrebbero senso qui
+  if (save.seed !== undefined && save.seed !== WORLD_SEED) {
+    p.hp = save.player.hp; p.maxHp = save.player.maxHp || 100;
+    p.gold = save.player.gold || 0;
+    toast('Salvataggio di un vecchio mondo: riparti dalla capitale');
+    return;
+  }
   p.x = save.player.x; p.y = save.player.y;
   p.hp = save.player.hp; p.maxHp = save.player.maxHp || 100;
   p.gold = save.player.gold || 0; p.dir = save.player.dir || 'down';
@@ -1786,7 +1814,7 @@ function doSave() {
 function doLoad() {
   const save = readSave();
   if (!save) { toast('Nessun salvataggio trovato'); return; }
-  startGame(save.seed, save);
+  startGame(WORLD_SEED, save);
   game.state = 'play';
   pauseEl.classList.remove('on');
   toast('Partita caricata');
@@ -1801,6 +1829,7 @@ function refreshPauseMenu() {
   info.innerHTML =
     (when ? 'Ultimo salvataggio: ' + when + '<br>' : 'Nessun salvataggio.<br>') +
     'Il salvataggio conserva posizione, vita, oro e mappa esplorata.<br>' +
+    'Le Emberlands sono sempre le stesse: «Nuova partita» azzera te, non il mondo.<br>' +
     'P o Esc per tornare al gioco.';
 }
 pauseEl.addEventListener('click', e => {
@@ -1810,7 +1839,7 @@ pauseEl.addEventListener('click', e => {
   if (act === 'resume') togglePause();
   else if (act === 'save') doSave();
   else if (act === 'load') doLoad();
-  else if (act === 'new') { startGame((Math.random() * 1e9) | 0); }
+  else if (act === 'new') { startGame(WORLD_SEED); }
 });
 
 const toastEl = document.getElementById('toast');
@@ -3163,9 +3192,9 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-document.getElementById('restartBtn').addEventListener('click', () => startGame((Math.random() * 1e9) | 0));
+document.getElementById('restartBtn').addEventListener('click', () => startGame(WORLD_SEED));
 
-startGame(20260905);
+startGame(WORLD_SEED);
 requestAnimationFrame(frame);
 </script>
 </body>
