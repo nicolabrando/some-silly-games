@@ -2968,6 +2968,19 @@ function renderStrategies(laps) {
 // it - the measured chassis number), price a stop at PIT_TIME plus the slow in
 // and out, and take the cheapest plan. A pinch of noise and a soft bias for
 // the attackers keep the grid from all reading the same memo.
+// The wear budget the AI's pit plan uses at each difficulty - see the note in
+// aiPitPlan for the measurement behind it.
+// A shade above the measured worst car (1.51 at Impossible): the aggressive
+// characters - Vettel, Verstappen, Alonso - run past even that on their bad
+// laps, and the final stint has no net under it.
+const PIT_ABUSE = { easy: 1.20, medium: 1.30, hard: 1.38, impossible: 1.58, alien: 1.62 };
+// Where in a lap the box is, as a fraction of the lap: the slot sits 70-320px
+// of road before the line, which on a 2500-7500px lap is the last 3-10%.
+const STINT_AT = 0.95;
+function pitAbuseFor(difficulty) {
+    return PIT_ABUSE[difficulty] || 1.35;
+}
+
 function aiPitPlan(styleName, lineLen) {
     const raceLen = TOTAL_LAPS * lineLen;
     const lapSec = lineLen / 250;                 // close enough to rank plans
@@ -2985,17 +2998,43 @@ function aiPitPlan(styleName, lineLen) {
         pitStintSeconds(key, px / lineLen, lapSec, pitLifePx(key, lineLen) / lineLen);
     const s = AI_DRIVER_STYLES[styleName];
     const softBias = s ? ((s.overtake - 0.85) + (s.err - 0.7) * 0.5) * 0.6 : 0;
-    // The abuse term in the wear law (leaning on the tyre) runs real wear
-    // 8-15% past the odometer; the plan must budget for the car it will
-    // actually be, not the one on the brochure.
-    const ABUSE = 1.12;
+    // HOW MUCH HARDER THE CAR WILL BE ON ITS TYRES THAN THE BROCHURE SAYS -
+    // and it depends on who is driving. 1.12 was the figure for the AI as it
+    // was measured once; it is not the figure for the AI at the top of the
+    // ladder, where the car is driven at the limit of the grip every corner.
+    // Measured per difficulty (real wear per lap / nominal, median and worst
+    // car of a field of eight, no stops allowed, Kart / Pettine / Oval):
+    //
+    //    medium       hard 1.00-1.13 median, 1.29 worst   medium 1.01-1.13, 1.20
+    //    impossible   hard 1.10-1.46 median, 1.51 worst   medium 1.06-1.22, 1.22
+    //
+    // At 1.12 a plan at Impossible put every car's final stint a lap or so
+    // past the end of its tyre, and a field of cars finishing at 66-120 px/s
+    // on a road where the next man arrives at 275 is what Nicola was hitting.
+    // The budget is set at the WORST car, not the median, on purpose: a stint
+    // that stops a lap early costs five seconds, a stint that runs out costs
+    // twenty and takes somebody else with it.
+    const ABUSE = pitAbuseFor(isChampionship && championshipState
+        ? championshipState.difficulty
+        : document.getElementById('difficulty-select').value);
+    // THE LAST STINT HAS NO SAFETY NET. An early stint that runs short gets
+    // the bail-out (pitMustStopNow); the final one can only be driven to the
+    // flag on whatever is left, and a driver on a bad day is 10% over the
+    // budget above. So the last stint is not allowed to be a fit - it has to
+    // be a fit with room.
+    const FINAL_MARGIN = 1.15;
     let best = null;
     for (const first of compounds) {
         // No stop is always a CANDIDATE - the overrun penalty in stintCost
         // prices the cliff, so a marginal gamble survives the maths where a
         // suicidal one drowns in it. That is what keeps the no-stop hard alive
         // at Circo Massimo and dead everywhere else.
-        {
+        // ...but a no-stop that ends with the car on rims for a lap or more
+        // is not a gamble, it is the crawl Nicola was hitting: when every stop
+        // plan failed its margins this was the only candidate left, and it won
+        // by default. A set has to cover at least 70% of the race to be a
+        // no-stop candidate at all; anything shorter goes to the fallback.
+        if (pitLifePx(first, lineLen) / ABUSE >= raceLen * 0.70) {
             const cost = stintCost(first, raceLen * ABUSE) +
                          (Math.random() - 0.5) * 0.8;
             if (!best || cost < best.cost) best = { cost, start: first, stopLap: null, tyre: null };
@@ -3007,13 +3046,22 @@ function aiPitPlan(styleName, lineLen) {
         // a little personal spread on the stop lap, so a grid on the same
         // compound does not queue for the box on the same lap - but never past
         // the set's actual life
-        const stopLap = Math.max(1, Math.min(TOTAL_LAPS - 1,
-            Math.min(Math.floor(life1 * 0.98 / lineLen),
-            Math.round(stopFrac * TOTAL_LAPS + (Math.random() - 0.5) * 1.2))));
+        // WHAT A STOP LAP MEANS. `stopLap === car.lap` arms the call once that
+        // many laps are COMPLETED, and the car is collected at the end of the
+        // lap it is then on - so a plan of "stop@2" is a first stint of 2.95
+        // laps, not 2. The planner priced it as 2 for as long as it existed,
+        // which is a lap of tyre it never budgeted, and every first stint ran
+        // a lap longer than the sums said. STINT_AT is where in a lap the box
+        // is. And the final lap is off limits (the lapsLeft guard in
+        // updatePhysics), so the last usable stop lap is TOTAL_LAPS - 2.
+        const stopLap = Math.max(1, Math.min(TOTAL_LAPS - 2,
+            Math.min(Math.floor(life1 * 0.98 / lineLen - STINT_AT),
+            Math.round(stopFrac * TOTAL_LAPS - STINT_AT + (Math.random() - 0.5) * 1.2))));
         if (stopLap < 1) continue;
-        const px1 = stopLap * lineLen, px2 = raceLen - px1;
+        const px1 = (stopLap + STINT_AT) * lineLen, px2 = raceLen - px1;
+        if (life1 < px1 * 0.95) continue;                 // the first stint has to fit too
         for (const second of compounds) {
-            if (pitLifePx(second, lineLen) / ABUSE < px2 * 0.98) continue;
+            if (pitLifePx(second, lineLen) / ABUSE < px2 * FINAL_MARGIN) continue;
             let cost = stintCost(first, px1 * ABUSE) + stintCost(second, px2 * ABUSE) +
                        PIT_TIME + 2.6 + (Math.random() - 0.5) * 0.8;
             if (first === 'soft') cost -= softBias;
@@ -3028,20 +3076,24 @@ function aiPitPlan(styleName, lineLen) {
         // unlucky draw (stops at 1 and 4 leaves a 3-lap middle stint no
         // compound survives) must not silently hand the race to a no-stop that
         // costs twenty seconds more - it did, once, to Verstappen
-        const c1 = Math.max(1, Math.round(TOTAL_LAPS / 3));
-        const c2 = Math.min(TOTAL_LAPS - 1, Math.max(c1 + 1, Math.round(2 * TOTAL_LAPS / 3)));
-        const j1 = Math.max(1, Math.round(TOTAL_LAPS / 3 + (Math.random() - 0.5)));
-        const j2 = Math.min(TOTAL_LAPS - 1,
-                            Math.max(j1 + 1, Math.round(2 * TOTAL_LAPS / 3 + (Math.random() - 0.5))));
+        // in COMPLETED laps, so a lap earlier than the thirds would suggest -
+        // see STINT_AT above - and never on the final lap
+        const top = TOTAL_LAPS - 2;
+        const c1 = Math.max(1, Math.min(top, Math.round(TOTAL_LAPS / 3 - STINT_AT)));
+        const c2 = Math.min(top, Math.max(c1 + 1, Math.round(2 * TOTAL_LAPS / 3 - STINT_AT)));
+        const j1 = Math.max(1, Math.min(top, Math.round(TOTAL_LAPS / 3 - STINT_AT + (Math.random() - 0.5))));
+        const j2 = Math.min(top, Math.max(j1 + 1,
+                            Math.round(2 * TOTAL_LAPS / 3 - STINT_AT + (Math.random() - 0.5))));
         const pairs = (j1 === c1 && j2 === c2) ? [[j1, j2]] : [[j1, j2], [c1, c2]];
         for (const [l1, l2] of pairs) {
             if (l2 <= l1) continue;
-            const px1 = l1 * lineLen, px2 = (l2 - l1) * lineLen,
-                  px3 = raceLen - l2 * lineLen;
+            const px1 = (l1 + STINT_AT) * lineLen, px2 = (l2 - l1) * lineLen,
+                  px3 = raceLen - (l2 + STINT_AT) * lineLen;
+            if (px3 <= 0) continue;
             for (const a of compounds) for (const b of compounds) for (const c of compounds) {
                 if (pitLifePx(a, lineLen) / ABUSE < px1 * 0.95) continue;
                 if (pitLifePx(b, lineLen) / ABUSE < px2 * 0.95) continue;
-                if (pitLifePx(c, lineLen) / ABUSE < px3 * 0.95) continue;
+                if (pitLifePx(c, lineLen) / ABUSE < px3 * FINAL_MARGIN) continue;
                 let cost = stintCost(a, px1 * ABUSE) + stintCost(b, px2 * ABUSE) +
                            stintCost(c, px3 * ABUSE) + 2 * (PIT_TIME + 2.6) +
                            (Math.random() - 0.5) * 0.8;
@@ -3051,7 +3103,24 @@ function aiPitPlan(styleName, lineLen) {
             }
         }
     }
-    return best || { start: wet ? 'inter' : 'medium', stopLap: null, tyre: null };
+    if (best) return best;
+    // NOTHING FITS - a long race on a circuit that eats tyres. The old fallback
+    // was a no-stop on a medium, which is the worst possible answer to "no set
+    // lasts". Split the race evenly on the longest-lived compound into as many
+    // stints as it takes; the pickup logic promotes the second stop when the
+    // first is taken, and the bail-out covers anything beyond that.
+    // The remainder goes on the FIRST stint, never the last: an early stint
+    // that runs short has the bail-out behind it, the final one has nothing.
+    const longest = wet ? 'wet' : 'hard';
+    const life = pitLifePx(longest, lineLen) / ABUSE;
+    const stints = Math.min(3, Math.max(2, Math.ceil(raceLen / Math.max(1, life))));
+    const base = Math.floor(TOTAL_LAPS / stints);
+    const extra = TOTAL_LAPS - base * stints;
+    const l1 = Math.max(1, Math.min(TOTAL_LAPS - 2, base + extra));   // the long one, first
+    const l2 = stints === 3 ? Math.min(TOTAL_LAPS - 2, l1 + base) : null;
+    return { cost: Infinity, start: longest, stopLap: l1, tyre: longest,
+             stopLap2: l2 !== null && l2 > l1 ? l2 : null,
+             tyre2: l2 !== null && l2 > l1 ? longest : null };
 }
 
 // The pit sequence itself: kinematic, so it cannot be bumped, rushed or
@@ -3072,6 +3141,42 @@ function aiPitPlan(styleName, lineLen) {
 function vscPitBias(car) {
     if (car._vscBias === undefined) car._vscBias = Math.random() * 0.22;
     return car._vscBias;
+}
+
+// WILL THIS SET GET TO THE FLAG - and if not, is THIS the lap to stop?
+//
+// The old bail-out was "97% worn, then call the box". By the time a car is
+// 97% worn it is up to a lap of road from the pickup window, and a tyre that
+// is 97% worn a lap short of the window arrives at it around 130% - finished,
+// with the car at 66-120 px/s on the racing line. Measured at Pettine: every
+// finisher in the field spent the last 0.2-0.6 laps like that.
+//
+// So it is a projection, from the car's OWN measured wear per lap (set at
+// each line crossing above), and it answers two questions:
+//   1. will the set reach the flag at all? If it will, nurse it - a stop it
+//      does not need is five seconds thrown away.
+//   2. if it will not: can it still reach the NEXT window alive? If yes, keep
+//      going - the later stop is the better stop; if no, this window is the
+//      last one where the car arrives on rubber rather than on rims.
+// Until a full lap has been measured on this set the old 97% rule stands.
+function pitMustStopNow(c) {
+    let rate = c._wearLapRate;
+    // a fresh set: nothing measured on it yet, but the driver has been measured
+    if (!(rate > 0) && c._abuseSeen > 0 && c.tyre && c._lapPixels)
+        rate = c._abuseSeen / Math.max(0.05, pitTyreLaps(c.tyre.key, c._lapPixels));
+    if (!(rate > 0)) return c.tyreWear > 0.97;
+    const lineLen = pitLineLen();
+    const frac = Math.max(0, Math.min(1, (c.lapS || 0) / lineLen));
+    const toFlag = Math.max(0, (TOTAL_LAPS - c.lap) - frac);
+    if (c.tyreWear + rate * toFlag <= 1.0) return false;         // it gets home
+    // The next window would be on the final lap, where a stop is not allowed
+    // (see the lapsLeft guard at the call site): this one is the last usable.
+    if ((TOTAL_LAPS - c.lap) <= 2) return true;
+    // road from here to this lap's pickup window, then one more lap to the next
+    const winFrac = 1 - (pitSpotFor(track).back + PIT_PICKUP_LEAD) / lineLen;
+    const toWindow = frac <= winFrac ? (winFrac - frac) : (1 - frac + winFrac);
+    const atNextWindow = c.tyreWear + rate * (toWindow + 1.0);
+    return atNextWindow > 1.0;
 }
 
 function pitWrapAngle(car) {
@@ -3173,6 +3278,8 @@ function pitUpdate(car, dt) {
             const old = car.tyre ? car.tyre.short : '?';
             car.tyre = TYRES[k] || TYRES.medium;
             car.tyreWear = 0;
+            car._wearAtLap = null;          // the lap in progress is not a full lap of this set
+            car._wearLapRate = 0;           // (the driver's _abuseSeen carries over)
             (car.tyreHistory = car.tyreHistory || []).push(car.tyre.key);
             car.pitCount = (car.pitCount || 0) + 1;
             car.wantPit = false;
@@ -8416,10 +8523,14 @@ function updatePhysics(dt) {
                     c._pitPlanNext = c.pitPlan.stopLap2
                         ? { stopLap: c.pitPlan.stopLap2, tyre: c.pitPlan.tyre2 }
                         : null;
-                } else if (c.tyreWear > 0.97) {
+                } else if (pitMustStopNow(c)) {
                     c.wantPit = true;
                     c.pitNextTyre = pitSuggestTyre(c);
                     c._pitPlanNext = planNext();
+                    if (typeof RaceLog !== 'undefined')
+                        RaceLog.event('PIT', `${c.driverName || c.color} will not make the ` +
+                            `flag on this set (${(c.tyreWear * 100).toFixed(0)}% worn, ` +
+                            `${((c._wearLapRate || 0) * 100).toFixed(0)}%/lap) — calls the box`);
                 // THE FREE STOP. Under the VSC everybody is pegged to 90 px/s
                 // against a racing 275, so the ground a stop costs you is a
                 // third of what it costs under green - which is why a real pit
@@ -8477,6 +8588,26 @@ function updatePhysics(dt) {
     // --- log: completed laps ------------------------------------------
     cars.forEach(c => {
         if (c.lap > c._prevLap) {
+            // How much of the set THIS car uses per lap, from its own last lap:
+            // the pit logic below plans on it, because the brochure figure is
+            // 10-50% optimistic depending on who is driving (see pitAbuseFor).
+            // A lap with a tyre change in it is skipped - the odometer was
+            // reset halfway through it.
+            if (c._wearAtLap !== null && c._wearAtLap !== undefined) {
+                c._wearLapRate = Math.max(0, c.tyreWear - c._wearAtLap);
+                // ...and as a multiple of the brochure, which is a property of
+                // the DRIVER and so survives a change of tyres: the next set can
+                // be projected from its first metre instead of after a full lap
+                // of it, which on a two-lap final stint is a lap too late.
+                // Tracks the worst lap seen, decaying slowly - the budget has
+                // to cover the driver on a bad lap, not on an average one.
+                if (c.tyre && c._lapPixels) {
+                    const nominal = 1 / Math.max(0.05, pitTyreLaps(c.tyre.key, c._lapPixels));
+                    const seen = c._wearLapRate / nominal;
+                    c._abuseSeen = Math.max(seen, (c._abuseSeen || 0) * 0.85);
+                }
+            }
+            c._wearAtLap = c.tyreWear;
             if (!c.lapTimes) c.lapTimes = [];
             if (c.lastLapTime) c.lapTimes.push(c.lastLapTime);
             const isBest = c.lastLapTime && c.lastLapTime === c.bestLapTime;
@@ -8643,11 +8774,29 @@ function updatePhysics(dt) {
         let best = null;
         let bestFwd = -Infinity;
 
+        // A CRIPPLED CAR IS A BACKMARKER TO EVERYONE, whatever lap it is on.
+        // Blue flags are shown to a car being LAPPED, and a car on a dead set
+        // is usually not being lapped - it is being caught, on the same lap,
+        // at 66 px/s by a field arriving at 275. It stayed on the racing line
+        // because nothing told it otherwise, and Nicola hit two of them. So a
+        // car on a finished tyre, or one being closed on at more than 1.6x
+        // its own speed, yields to anyone quicker coming up behind, exactly
+        // as it would to a lapper. ONLY a crippled car: a plain speed ratio
+        // fires in every braking zone, where 120 against 250 is normal racing.
+        const mySpeed = Math.hypot(c.velocity.x, c.velocity.y);
+        const crippled = (c.tyreWear || 0) >= 1.0 || (c.tyrePerf !== undefined && c.tyrePerf < 0.6);
+
         for (const other of cars) {
             if (other === c || other.isBroken || other.finished) continue;
+            if (other.pitPhase) continue;
             // Genuinely more than half a lap up the road, not just one tick of
-            // the lap counter ahead.
-            if (raceProgress(other) < myProgress + wpTotal * 0.55) continue;
+            // the lap counter ahead - OR a quicker car catching a crippled one.
+            const lapping = raceProgress(other) >= myProgress + wpTotal * 0.55;
+            if (!lapping) {
+                if (!crippled) continue;
+                const oSpeed = Math.hypot(other.velocity.x, other.velocity.y);
+                if (oSpeed < mySpeed + 60) continue;      // not actually catching me
+            }
 
             const dx = other.x - c.x;
             const dy = other.y - c.y;
@@ -11174,6 +11323,13 @@ function nightmareEnabled() {
     const el = document.getElementById('nightmare-checkbox');
     return !!(el && el.checked);
 }
+// Is there a season rival at all? A checkbox because Nicola asked for one: a
+// season with nobody to beat in particular is a different game, and a valid
+// one. Missing element (an old page) reads as on, which is what it always was.
+function rivalEnabled() {
+    const el = document.getElementById('rival-checkbox');
+    return el ? !!el.checked : true;
+}
 
 // What ticking it would actually give you, named, before you commit to it.
 // An option whose effect you can only discover by living through ten rounds
@@ -11322,8 +11478,15 @@ function startChampionship() {
     // gara singola, e finisce con la stagione.
     const aiNames = championshipState.participants.filter(p => !p.isPlayer)
                                                   .map(p => p.driverName);
-    if (aiNames.length) {
-        const pick = aiNames[Math.floor(rng() * aiNames.length)];
+    // The draw is taken from the seeded stream whether or not the rival is
+    // wanted, so the same seed gives the same calendar, weather and chassis
+    // with the box ticked or not - only the rival's existence changes.
+    const rivalPick = aiNames.length ? aiNames[Math.floor(rng() * aiNames.length)] : null;
+    if (!rivalEnabled()) {
+        championshipState.rival = null;
+        RaceLog.event('SEASON', 'no season rival - a level field');
+    } else if (aiNames.length) {
+        const pick = rivalPick;
         championshipState.rival = { driver: pick, boost: RIVAL_BOOST,
                                     carEdge: RIVAL_CAR_EDGE };
         // Due cose, non una. La prima: skillVariation, che ogni pilota pesca

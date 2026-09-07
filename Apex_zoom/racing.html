@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom66">
+    <link rel="stylesheet" href="style.css?v=zoom67">
 </head>
 <body>
     <div id="game-container">
@@ -296,6 +296,14 @@
                             <input type="checkbox" id="nightmare-checkbox">
                             <span>Nightmare season</span>
                         </label>
+                        <!-- One opponent runs the whole season with a little
+                             more car - see the season rival in
+                             startChampionship(). On by default: it is what
+                             makes a season a fight rather than a fair draw. -->
+                        <label class="menu-check" data-modes="champ">
+                            <input type="checkbox" id="rival-checkbox" checked>
+                            <span>Season rival</span>
+                        </label>
                         <!-- Narrows the calendar to the XL circuits - the
                              worlds bigger than the window. The Season length
                              box adapts: its longest option becomes exactly
@@ -380,7 +388,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom66 &nbsp;·&nbsp; 5 Sep 2026</div>
+                <div id="build-stamp">build zoom67 &nbsp;·&nbsp; 6 Sep 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -1131,12 +1139,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom66"></script>
-    <script src="track.js?v=zoom66"></script>
-    <script src="lines.js?v=zoom66"></script>
-    <script src="car.js?v=zoom66"></script>
-    <script src="ai.js?v=zoom66"></script>
-    <script src="audio.js?v=zoom66"></script>
+    <script src="racelog.js?v=zoom67"></script>
+    <script src="track.js?v=zoom67"></script>
+    <script src="lines.js?v=zoom67"></script>
+    <script src="car.js?v=zoom67"></script>
+    <script src="ai.js?v=zoom67"></script>
+    <script src="audio.js?v=zoom67"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1230,6 +1238,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom66"></script>
+    <script src="main.js?v=zoom67"></script>
 </body>
 </html>
