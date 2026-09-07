@@ -3186,7 +3186,7 @@ function pitWrapAngle(car) {
 
 function pitUpdate(car, dt) {
     const spot = pitSpotFor(track);
-    if (car.isBroken) { car.pitPhase = null; car._pitHeading = null; return; }
+    if (car.isBroken) { car.pitPhase = null; car._pitHeading = null; car._pitRemain0 = null; return; }
     if (car.pitPhase === 'approach') {
         // ARRIVING, NOT BEING SWITCHED OFF. The first version ran the car in at
         // whatever speed it was carrying (the cap, remain * 2.4, only bit in
@@ -3246,8 +3246,31 @@ function pitUpdate(car, dt) {
         // exists to delete. So the allowed offset shrinks with the distance
         // left: it never bites while there is room to steer, and by the slot
         // there is nothing left to snap.
-        const room = remain * 0.7 + 2;
+        //
+        // ...and the funnel has to START at whatever offset the car arrived
+        // with, or it IS the jump. `remain` is a straight-line projection on
+        // the box's tangent, and on a tight circuit the road bends a long way
+        // over the approach - at Circle the pickup is 250px of road before the
+        // line, which is 63 degrees of a 226px-radius bend. So `remain` badly
+        // understates the road left while the offset badly overstates how far
+        // off line the car is, `remain * 0.7` came out under the offset on the
+        // very first frame, and the clamp yanked the car 32-76px sideways in
+        // one frame - which is exactly the teleport Nicola saw at Circle.
+        //
+        // So the allowance is seeded from the car's own offset at pickup and
+        // tapered to nothing in proportion to the distance left. The first
+        // frame can never clamp (the taper equals the offset), the last frame
+        // still cannot miss (the taper is zero), and nothing in between moves
+        // the car sideways by more than the taper shrank.
         const now = (spot.x - car.x) * spot.px + (spot.y - car.y) * spot.py;
+        if (car._pitRemain0 === undefined || car._pitRemain0 === null) {
+            car._pitRemain0 = Math.max(1, remain);
+            car._pitOff0 = Math.abs(now);
+        }
+        // no constant term: the allowance has to reach ZERO, or whatever is
+        // left of it is the snap when the car parks
+        const taper = car._pitOff0 * (remain / car._pitRemain0);
+        const room = Math.max(remain * 0.7, taper);
         if (Math.abs(now) > room) {
             const fix = (Math.abs(now) - room) * (now > 0 ? 1 : -1);
             car.x += spot.px * fix; car.y += spot.py * fix;
@@ -3256,10 +3279,15 @@ function pitUpdate(car, dt) {
         // the yaw the tyres were still carrying when we took over
         car.powerOversteer = 0;
         car.velocity.x = Math.cos(h) * v; car.velocity.y = Math.sin(h) * v;
-        if (remain < 4) {
+        // parked when it is genuinely THERE, not when the along-road part of
+        // the distance runs out: stopping on `remain` alone left whatever the
+        // funnel still allowed sideways to be taken up as a snap - 8px at
+        // Circle. One frame's travel at arrival speed is under a pixel.
+        if (Math.hypot(spot.x - car.x, spot.y - car.y) <= step + 1) {
             car.velocity.x = 0; car.velocity.y = 0;
             car.x = spot.x; car.y = spot.y;
             car.angle = spot.ang; car._pitHeading = null;
+            car._pitRemain0 = null;
             car.pitPhase = 'stopped';
             // A HUMAN chooses at the box: the clock does not start until the
             // call is made, so the panel is not a stopwatch running while you
@@ -8574,6 +8602,7 @@ function updatePhysics(dt) {
                 toLine > winFrom && toLine < winFrom + PIT_PICKUP_WIDE) {
                 c.pitPhase = 'approach';
                 c._pitHeading = null;
+                c._pitRemain0 = null;
                 pitWrapAngle(c);      // see the note there: 16 radians of it
             }
         }
