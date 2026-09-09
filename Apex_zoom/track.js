@@ -2459,6 +2459,21 @@ class SegmentedTrack {
             ctx.stroke();
             ctx.fillStyle = '#175d87';
             ctx.fill();
+            // THE SHALLOWS: a soft band of lighter water just inside the
+            // shore, clipped to the polygon so it only shows on the wet side.
+            // A big lake read as one flat slab of blue without it - which is
+            // fine for a marina and wrong for Cascade's infield.
+            ctx.save();
+            path(poly);
+            ctx.clip();
+            path(poly);
+            ctx.strokeStyle = 'rgba(88, 168, 205, 0.38)';
+            ctx.lineWidth = 30;
+            ctx.stroke();
+            ctx.strokeStyle = 'rgba(120, 195, 225, 0.30)';
+            ctx.lineWidth = 12;
+            ctx.stroke();
+            ctx.restore();
             // shoreline foam
             path(poly);
             ctx.strokeStyle = 'rgba(140, 205, 235, 0.5)';
@@ -2470,16 +2485,41 @@ class SegmentedTrack {
                                     y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
             let rnd = Math.round(Math.abs(x0 + y0) + poly.length);
             const rr = () => { rnd = (rnd * 1103515245 + 12345) % 2147483648; return rnd / 2147483648; };
-            const n = Math.min(60, Math.round((x1 - x0) * (y1 - y0) / 26000));
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.10)';
-            ctx.lineWidth = 1.6;
+            // The cap used to be 60, which was plenty for a marina and looks
+            // like nothing on Cascade's infield lake - 2.3 million square
+            // pixels of it. It scales with area either way; the cap is only
+            // there to stop a pathological polygon costing a second at bake
+            // time, and 200 circles is still nothing.
+            // WAVES, not scribbles. The old ripples were arcs at a random
+            // angle each, which from above reads as scratches on glass: what
+            // makes water look like water is that every crest lies the SAME
+            // way, because one wind made all of them. So the polygon's seed
+            // picks a wind, and every crest is drawn across it, with a
+            // brighter cap on the windward side.
+            const n = Math.min(320, Math.round((x1 - x0) * (y1 - y0) / 9000));
+            const wind = rr() * Math.PI * 2;
             for (let k = 0; k < n; k++) {
                 const rx = x0 + rr() * (x1 - x0), ry = y0 + rr() * (y1 - y0);
                 if (!this._inWater(rx, ry)) continue;
-                const rad = 5 + rr() * 10, a0 = rr() * Math.PI * 2;
+                // a crest is wider than it is deep and lies across the wind,
+                // give or take the slop of real water
+                const rad = 7 + rr() * 13;
+                const lean = wind + (rr() - 0.5) * 0.5;
+                const a0 = lean - 0.75, a1 = lean + 0.75;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.11)';
+                ctx.lineWidth = 1.7;
                 ctx.beginPath();
-                ctx.arc(rx, ry, rad, a0, a0 + 1.9);
+                ctx.arc(rx, ry, rad, a0, a1);
                 ctx.stroke();
+                // the cap: the bit of a small wave that actually catches the
+                // light, on one crest in three
+                if (rr() < 0.34) {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.26)';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(rx, ry, rad, lean - 0.28, lean + 0.28);
+                    ctx.stroke();
+                }
             }
         }
         // boats: a wake (only for boats under way - a moored boat trailing
@@ -4842,7 +4882,7 @@ class CascadeTrack extends SegmentedTrack {
 
         this.segments = [
             { type: 'line', x1: 0, y1: 0, x2: 620, y2: 0 },   // pit straight
-            { type: 'arc', cx: 620, cy: 200, r: 200, start: -1.5708, end: -0.34907, ccw: false, bank: 0.55 },   // T1 (banked)
+            { type: 'arc', cx: 620, cy: 200, r: 200, start: -1.5708, end: -0.34907, ccw: false, bank: 0.95 },   // T1 (banked)
             { type: 'line', x1: 807.94, y1: 131.6, x2: 862.66, y2: 281.95 },   // to T2
             { type: 'arc', cx: 1088.19, cy: 199.86, r: 240, start: 2.79253, end: 1.8326, ccw: true },   // T2
             { type: 'line', x1: 1026.07, y1: 431.68, x2: 1161.3, y2: 467.92 },   // to T3
@@ -4852,19 +4892,19 @@ class CascadeTrack extends SegmentedTrack {
             { type: 'line', x1: 986.05, y1: 1391.88, x2: 807.51, y2: 1326.89 },   // out of the Carousel
             { type: 'arc', cx: 739.1, cy: 1514.83, r: 200, start: 5.06145, end: 3.83972, ccw: true },   // T5
             { type: 'line', x1: 585.89, y1: 1386.27, x2: 489.48, y2: 1501.18 },   // to T6
-            { type: 'arc', cx: 244.34, cy: 1295.49, r: 320, start: 0.69813, end: 1.5708, ccw: false, bank: 0.45 },   // T6 (banked)
+            { type: 'arc', cx: 244.34, cy: 1295.49, r: 320, start: 0.69813, end: 1.5708, ccw: false, bank: 0.95 },   // T6 (banked)
             { type: 'line', x1: 244.34, y1: 1615.49, x2: -4.53, y2: 1615.49 },   // side C
             { type: 'arc', cx: -4.53, cy: 1395.49, r: 220, start: 1.5708, end: 2.35619, ccw: false },   // T7
             { type: 'line', x1: -160.09, y1: 1551.05, x2: -287.37, y2: 1423.77 },   // to T8
             { type: 'arc', cx: -485.36, cy: 1621.76, r: 280, start: 5.49779, end: 4.53786, ccw: true },   // T8, the kink
             { type: 'line', x1: -533.99, y1: 1346.02, x2: -760.49, y2: 1385.96 },   // to T9
-            { type: 'arc', cx: -793.48, cy: 1198.84, r: 190, start: 1.39626, end: 3.14159, ccw: false, bank: 0.7 },   // T9 (banked)
+            { type: 'arc', cx: -793.48, cy: 1198.84, r: 190, start: 1.39626, end: 3.14159, ccw: false, bank: 0.95 },   // T9 (banked)
             { type: 'line', x1: -983.48, y1: 1198.84, x2: -983.48, y2: 858.84 },   // side D
-            { type: 'arc', cx: -743.48, cy: 858.84, r: 240, start: 3.14159, end: 4.10152, ccw: false, bank: 0.6 },   // T10 (banked)
+            { type: 'arc', cx: -743.48, cy: 858.84, r: 240, start: 3.14159, end: 4.10152, ccw: false, bank: 0.95 },   // T10 (banked)
             { type: 'line', x1: -881.14, y1: 662.25, x2: -758.27, y2: 576.21 },   // to T11
             { type: 'arc', cx: -884.46, cy: 396, r: 220, start: 7.24312, end: 6.19592, ccw: true },   // T11
             { type: 'line', x1: -665.29, y1: 376.82, x2: -679.24, y2: 217.43 },   // to T12
-            { type: 'arc', cx: -480, cy: 200, r: 200, start: 3.05433, end: 4.71239, ccw: false, bank: 0.5 },   // T12 (banked)
+            { type: 'arc', cx: -480, cy: 200, r: 200, start: 3.05433, end: 4.71239, ccw: false, bank: 0.95 },   // T12 (banked)
             { type: 'line', x1: -480, y1: 0, x2: 0, y2: 0 },   // onto the pit straight
         ];
 
@@ -4874,5 +4914,86 @@ class CascadeTrack extends SegmentedTrack {
         this.startY = 0;
 
         this.waypoints = this.generateWaypoints();
+    }
+
+    // =====================================================================
+    //  THE LAKE
+    //
+    //  The infield is water, and its shore is not a hand-drawn polygon: it
+    //  IS THE INNER BARRIER. getWalls already traces the armco as closed,
+    //  ordered, non-crossing loops of the distance field "how far to the
+    //  nearest centre line", so asking it for the very curve the wall is
+    //  painted on gives a shoreline that cannot drift away from the circuit
+    //  - not now and not if the layout is ever edited - and costs nothing,
+    //  because that trace is cached per circuit and shared across instances.
+    //
+    //  Water is painted FIRST of all (see draw), so the sand rim the
+    //  shoreline carries runs up to and under the armco, and the armco is
+    //  drawn back over it. From directly above that is what "the lake comes
+    //  right up to the inside barrier" looks like.
+    //
+    //  The stands come out of the infield on their own: getStands already
+    //  refuses to stand a rectangle with any corner in the water, so there
+    //  is nothing to delete - the ones inside the circuit simply stop being
+    //  placeable, and the ones outside are untouched.
+    //
+    //  A lazy getter and not a field in the constructor: the trace is a
+    //  marching-squares pass over the whole world, and building a Cascade
+    //  just to read its length should not pay for one.
+    // =====================================================================
+    get water() {
+        if (this._lake) return this._lake;
+        const polys = this.getWalls(this.wallRadius(), this.barrierOffset())
+            .map(flat => {
+                const p = [];
+                for (let i = 0; i + 1 < flat.length; i += 2)
+                    p.push({ x: flat[i], y: flat[i + 1] });
+                return p;
+            })
+            .filter(p => p.length > 8);
+        const area = (poly) => {
+            let a = 0;
+            for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
+                a += (poly[j].x + poly[i].x) * (poly[j].y - poly[i].y);
+            return Math.abs(a / 2);
+        };
+        // the largest loop is the OUTSIDE of the circuit; the lake is the
+        // largest of what is left, which on a ring is the infield
+        polys.sort((p, q) => area(q) - area(p));
+        this._lake = polys.length > 1 ? [polys[1]] : [];
+        return this._lake;
+    }
+
+    // ...and something on it. Placed from the lake rather than typed in, for
+    // the same reason the shore is: a hand-typed coordinate is a coordinate
+    // that goes wrong the next time the circuit moves. Deterministic, so the
+    // baked track layer is identical every time it is rebuilt, and kept well
+    // off the shore - a boat drawn half on the beach is worse than no boat.
+    get boats() {
+        if (this._boats) return this._boats;
+        const poly = (this.water || [])[0];
+        if (!poly || !poly.length) return (this._boats = []);
+        let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        for (const p of poly) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+                                y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+        let rnd = 20260909;
+        const rr = () => { rnd = (rnd * 1103515245 + 12345) % 2147483648; return rnd / 2147483648; };
+        // how far the nearest bit of shore is - a boat wants open water round it
+        const clearOf = (x, y) => {
+            let d = Infinity;
+            for (const p of poly) d = Math.min(d, Math.hypot(p.x - x, p.y - y));
+            return d;
+        };
+        const out = [];
+        for (let tries = 0; tries < 4000 && out.length < 7; tries++) {
+            const x = x0 + rr() * (x1 - x0), y = y0 + rr() * (y1 - y0);
+            if (!this._inWater(x, y)) continue;
+            if (clearOf(x, y) < 90) continue;
+            if (out.some(b => Math.hypot(b.x - x, b.y - y) < 260)) continue;
+            // two of the seven are sitting still: no wake, so they read as
+            // anchored rather than as a boat that forgot to move
+            out.push({ x: x, y: y, a: rr() * Math.PI * 2, m: out.length >= 5 });
+        }
+        return (this._boats = out);
     }
 }
