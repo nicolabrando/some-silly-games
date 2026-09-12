@@ -137,19 +137,111 @@ const ENGINE_VOICES = [
     { pitch: 1.18, cutoff: 950, pan: 0.45 }     // seat 2, a shade higher strung
 ];
 
+// ---------------------------------------------------------------------------
+//  WHAT A ROMBO IS, AND WHY ONE SAWTOOTH IS NOT ONE
+//
+//  The engine was a single sawtooth through a fixed 800Hz lowpass. That is a
+//  BUZZ: one partial series, no weight under the fundamental, no grit, and a
+//  timbre that never changes however hard the car is being driven. It is thin
+//  for three separate reasons and each one has its own fix here.
+//
+//    1. NOTHING BELOW THE FUNDAMENTAL. At 50-190Hz the saw's fundamental IS
+//       the bottom of the sound, and a lowpass can only take away. A real
+//       engine's chest comes from below its firing rate - the crank order, the
+//       body of the car, the air in the pipe - so there is a triangle an
+//       octave down under everything, and a peaking filter at 110Hz to give
+//       the register some room.
+//
+//    2. NOTHING BEATING. One oscillator is one cylinder's worth of regularity.
+//       Two saws nine cents apart drift in and out of phase a few times a
+//       second, which is the lope a real engine has and the cheapest width
+//       there is.
+//
+//    3. NO GRIT. A rombo is a growl and a growl is DISTORTION - harmonics that
+//       are not in the source, made by driving something past linear. So the
+//       summed voices go through a tanh soft-clip before the filter rather
+//       than straight into it. Soft, not hard: past about 2.2 the drive stops
+//       adding body and starts adding fizz.
+//
+//  ...and the filter now MOVES. An engine on the overrun is duller than one
+//  being driven, and a fixed cutoff is the reason the old one sounded the same
+//  at 40 km/h and at 300.
+// ---------------------------------------------------------------------------
+let engineCurve = null;
+function engineDriveCurve() {
+    if (engineCurve) return engineCurve;
+    const n = 2048;
+    const k = 1.9;
+    const c = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * 2 - 1;
+        c[i] = Math.tanh(k * x) / Math.tanh(k);
+    }
+    engineCurve = c;
+    return c;
+}
+
 function makeEngineVoice(spec, level) {
-    const osc = audioContext.createOscillator();
-    osc.type = 'sawtooth';
+    // everything sums here, and this is the level that decides how hard the
+    // shaper below is driven
+    const mix = audioContext.createGain();
+    mix.gain.value = 0.78;
+
+    const oscs = [];
+    const add = (type, mult, amp, detune) => {
+        const o = audioContext.createOscillator();
+        o.type = type;
+        o.frequency.value = 50 * spec.pitch * mult;
+        if (detune) o.detune.value = detune;
+        const g = audioContext.createGain();
+        g.gain.value = amp;
+        o.connect(g); g.connect(mix);
+        o.start();
+        oscs.push({ osc: o, mult: mult });
+    };
+    add('triangle', 0.5, 0.32);        // the chest: an octave under the firing rate
+    add('sawtooth', 1, 0.55);          // the engine itself
+    add('sawtooth', 1, 0.34, 9);       // ...and its twin, nine cents off, for the lope
+    add('square', 2, 0.18);            // a little top, so it is not all bottom end
+
+    // The air between the pulses. Without it the gaps in the waveform are
+    // silence, and silence is what makes a synthesised engine sound synthetic.
+    const air = audioContext.createBufferSource();
+    air.buffer = getNoiseBuffer();
+    air.loop = true;
+    const airLp = audioContext.createBiquadFilter();
+    airLp.type = 'lowpass';
+    airLp.frequency.value = 220;
+    const airG = audioContext.createGain();
+    airG.gain.value = 0.18;
+    air.connect(airLp); airLp.connect(airG); airG.connect(mix);
+    air.start();
+
+    const shaper = audioContext.createWaveShaper();
+    shaper.curve = engineDriveCurve();
+    if ('oversample' in shaper) shaper.oversample = '2x';
+
+    // THE BODY LIFT TRACKS THE FIRING RATE, and the first draft's fixed
+    // 110Hz is why. A fixed lift boosts whatever happens to be sitting on it,
+    // and at racing speed that is not the engine note - it is the sub an
+    // octave below it. Measured: the loudest partial in the whole sound was
+    // the sub at every speed, which is a drone with an engine behind it rather
+    // than an engine with weight under it.
+    const body = audioContext.createBiquadFilter();
+    body.type = 'peaking';
+    body.frequency.value = 50 * spec.pitch;
+    body.Q.value = 0.9;
+    body.gain.value = 5;
+
+    const filter = audioContext.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = spec.cutoff * 1.1;
+    filter.Q.value = 0.9;
 
     const gain = audioContext.createGain();
     gain.gain.value = level;
 
-    // Lowpass filter to muffle the raw sawtooth
-    const filter = audioContext.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = spec.cutoff;
-
-    osc.connect(filter);
+    mix.connect(shaper); shaper.connect(body); body.connect(filter);
     filter.connect(gain);
 
     // Panning is a nicety, not a requirement: older engines have no panner.
@@ -162,9 +254,8 @@ function makeEngineVoice(spec, level) {
     }
     tail.connect(audioOut());
 
-    osc.frequency.value = 50 * spec.pitch;      // idle
-    osc.start();
-    return { osc: osc, gain: gain, pitch: spec.pitch, base: level };
+    return { oscs: oscs, osc: oscs[1].osc, air: air, gain: gain, filter: filter,
+             body: body, pitch: spec.pitch, base: level, cutoff: spec.cutoff };
 }
 
 function initAudio(isSpectator = false, seats = 1) {
@@ -179,7 +270,11 @@ function initAudio(isSpectator = false, seats = 1) {
     if (!isSpectator) {
         const n = Math.max(1, Math.min(ENGINE_VOICES.length, seats || 1));
         // Two engines at full level is just loud, so share the headroom.
-        const level = 0.05 * (n > 1 ? 0.8 : 1);
+        // 0.072 rather than 0.05, and the number is larger than it looks
+        // because the drive stage is a compressor as well as a distortion:
+        // measured, the voice at 0.055 came out 11% QUIETER in rms than the
+        // bare sawtooth it replaced, which is not what "piu pieno" means.
+        const level = 0.072 * (n > 1 ? 0.8 : 1);
         for (let i = 0; i < n; i++) engines.push(makeEngineVoice(ENGINE_VOICES[i], level));
 
         engineOscillator = engines[0].osc;
@@ -197,17 +292,25 @@ function updateEngineSound(speed, isAccelerating, seat = 0) {
     if (!isAudioInitialized) return;
     const e = engines[seat];
     if (!e) return;
+    const t = audioContext.currentTime;
 
     // Map speed to frequency (e.g. 0 -> 50Hz, max speed -> 200Hz)
-    // Assuming max speed is around 350
-    const targetFreq = (50 + (speed * 0.4)) * e.pitch;
+    // Assuming max speed is around 350. Every partial keeps its ratio, so the
+    // whole voice moves as one instrument rather than drifting apart.
+    const f = (50 + speed * 0.4) * e.pitch;
+    for (const o of e.oscs) o.osc.frequency.setTargetAtTime(f * o.mult, t, 0.1);
 
-    // Smooth transition
-    e.osc.frequency.setTargetAtTime(targetFreq, audioContext.currentTime, 0.1);
+    // THE FILTER MOVES WITH THE REVS, and opens further under power: an engine
+    // being driven is brighter than one coasting, and that difference is most
+    // of what "sounds like it is working" means.
+    const rev = Math.max(0, Math.min(1, speed / 350));
+    const open = e.cutoff * (1.1 + 2.6 * rev) * (isAccelerating ? 1.28 : 1);
+    e.filter.frequency.setTargetAtTime(open, t, 0.08);
+    if (e.body) e.body.frequency.setTargetAtTime(Math.min(320, f), t, 0.1);
 
     // Adjust volume based on throttle
     const targetVolume = isAccelerating ? e.base * 2 : e.base;
-    e.gain.gain.setTargetAtTime(targetVolume, audioContext.currentTime, 0.1);
+    e.gain.gain.setTargetAtTime(targetVolume, t, 0.1);
 }
 
 // short burst of white noise, reused for the hi-hat
@@ -395,6 +498,13 @@ function makeNoiseVoice(type, freq, q, level) {
 //  And it is still built twice and panned apart, which is what made it big
 //  last time: different jitter noise, +-1.2% detune, different vibrato rates.
 //  Two copies of one voice is one voice; two voices is a crowd.
+// x0.5 = down an octave. One number, because an octave is one decision and it
+// has to move the source, the whistle and the formants together or it is not
+// an octave, it is a different vowel.
+const SQUEAL_OCTAVE = 0.5;
+const SQUEAL_F0 = 620 * SQUEAL_OCTAVE;          // at the first slip
+const SQUEAL_F1 = 1080 * SQUEAL_OCTAVE;         // at full cry
+
 function makeSquealVoice(level) {
     const gain = audioContext.createGain();
     gain.gain.value = 0;
@@ -417,8 +527,18 @@ function makeSquealVoice(level) {
     // source whose harmonics are a kilohertz apart - a formant falling between
     // two of them and going quiet - is now carried by the whistle, which needs
     // no formant at all.
+    // ONE OCTAVE DOWN, and the formants come with it. "Abbassa di un'ottava il
+    // suono dello stridio" is about the SOUND, not only its pitch: halving the
+    // source alone would have been the same throat singing lower, and the 3-6
+    // kHz formants would have kept every bit of the shrillness that was the
+    // thing to move. Halving the whole instrument - source, whistle and tract
+    // together - is a bigger throat, and it transposes what the ear actually
+    // hears. The comment above still holds inside a slide: the formants do not
+    // TRACK f0 from frame to frame, which is what makes this a voice rather
+    // than a siren. They are simply built an octave lower once.
     const FORMANTS = [[950, 11, 0.5], [2050, 13, 1.8], [3150, 12, 2.2],
-                      [4400, 10, 1.8], [5800, 8, 1.1]];
+                      [4400, 10, 1.8], [5800, 8, 1.1]]
+                     .map(([hz, q, amp]) => [hz * SQUEAL_OCTAVE, q, amp]);
 
     // +-8 cents rather than +-21: at 21 the two sides beat about twenty times
     // a second, which is heard as roughness rather than as width.
@@ -435,7 +555,7 @@ function makeSquealVoice(level) {
         // ---- the source: a buzz, and the noise that rides with it -------
         const osc = audioContext.createOscillator();
         osc.type = 'sawtooth';
-        osc.frequency.value = 800;
+        osc.frequency.value = 800 * SQUEAL_OCTAVE;
         osc.detune.value = side.tune;          // +-1.2%, so the two sides beat
 
         const breath = audioContext.createBufferSource();
@@ -462,7 +582,7 @@ function makeSquealVoice(level) {
         // filling in.
         const whistle = audioContext.createOscillator();
         whistle.type = 'sine';
-        whistle.frequency.value = 2400;
+        whistle.frequency.value = 2400 * SQUEAL_OCTAVE;
         whistle.detune.value = side.tune;
         const whistleG = audioContext.createGain();
         // 0.22, and the first try at 0.85 is the reason the number is written
@@ -664,12 +784,11 @@ function updateSurfaceSound(surface, slide, speed) {
     sfx.kerb.lfo.frequency.setTargetAtTime(5 + 18 * fast, t, 0.06);
     if (squeal > 0) {
         // The pitch rises as the slide worsens, which is what makes it a
-        // warning rather than an ornament. 620-1080Hz is where a shriek
-        // actually lives - a long way BELOW the 1250-2150 the old stack sat
-        // at, and it sounds far higher for it, because a voice is heard
-        // through its harmonics and the ones that matter here land at 2-4kHz
-        // where the formants are waiting.
-        const f0 = 620 + 460 * squeal;
+        // warning rather than an ornament. It ran at 620-1080Hz and now runs
+        // an octave under that, at 310-540, with the formants moved with it -
+        // a voice is heard through its harmonics, so moving the tract is what
+        // makes this an octave rather than a gearshift.
+        const f0 = SQUEAL_F0 + (SQUEAL_F1 - SQUEAL_F0) * squeal;
         for (const v of sfx.slide.voices) {
             v.osc.frequency.setTargetAtTime(f0, t, 0.05);
             // the whistle rides the third harmonic, so it is the same slide
@@ -922,7 +1041,9 @@ function stopAudio() {
     if (typeof radioStop === 'function') radioStop();
     silenceSurfaceSound();
     for (const e of engines) {
-        try { e.osc.stop(); } catch (err) { /* already stopped */ }
+        for (const o of (e.oscs || [{ osc: e.osc }]))
+            try { o.osc.stop(); } catch (err) { /* already stopped */ }
+        try { if (e.air) e.air.stop(); } catch (err) { /* already stopped */ }
     }
     engines = [];
     engineOscillator = null;
@@ -977,8 +1098,11 @@ if (typeof speechSynthesis !== 'undefined' && speechSynthesis.addEventListener) 
     });
 }
 
-// The squelch: a filtered noise burst and a click. `open` is the press, which
-// carries a little more tail; the release is shorter and drier.
+// THE SQUELCH. A press and a release, and they do not sound the same: the
+// press opens onto a hiss that takes a moment to settle, the release is short,
+// dry and a little harder. Both are noise through a narrow band - the band IS
+// the radio, because a channel that only carries 400 to 2600 hertz is what
+// makes a voice sound like it came down a wire.
 function radioSquelch(open, delay) {
     if (!isAudioInitialized || !soundIsOn()) return;
     const t = audioContext.currentTime + (delay || 0);
@@ -987,21 +1111,48 @@ function radioSquelch(open, delay) {
     src.loop = true;
     const bp = audioContext.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = open ? 1500 : 1900;
-    bp.Q.value = 1.1;
+    bp.frequency.value = open ? 1450 : 1950;
+    bp.Q.value = 0.9;
+    // a second, resonant stage: one bandpass is a filter, two is a receiver
+    const peak = audioContext.createBiquadFilter();
+    peak.type = 'peaking';
+    peak.frequency.value = 2400;
+    peak.Q.value = 3;
+    peak.gain.value = 9;
     const env = audioContext.createGain();
-    const dur = open ? 0.085 : 0.055;
+    const dur = open ? 0.16 : 0.075;
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(open ? 0.075 : 0.055, t + 0.008);
+    env.gain.linearRampToValueAtTime(open ? 0.15 : 0.11, t + 0.006);
     env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(bp); bp.connect(env); env.connect(audioOut());
+    src.connect(bp); bp.connect(peak); peak.connect(env); env.connect(audioOut());
     src.start(t); src.stop(t + dur + 0.02);
-    // and the button click on top of it
-    sfxTone(open ? 1320 : 990, 0.035, 0.06, 'square', delay || 0);
+    // and the button, keyed and let go
+    sfxTone(open ? 1320 : 990, 0.035, 0.07, 'square', delay || 0);
 }
 
-// A thin band of static under the voice, so the words sit on a carrier
-// instead of in silence. Started with the call and faded at `secs`.
+// THE ROGER BEEP - the two-tone blip that tops and tails a real team radio.
+// It is the single most recognisable thing about the sound, and it is the one
+// part of it that does not depend on the voice at all.
+function radioBeep(up, delay) {
+    if (!isAudioInitialized || !soundIsOn()) return;
+    const d = delay || 0;
+    if (up) {
+        sfxTone(1180, 0.055, 0.10, 'sine', d);
+        sfxTone(1570, 0.070, 0.11, 'sine', d + 0.055);
+    } else {
+        sfxTone(1570, 0.050, 0.09, 'sine', d);
+        sfxTone(1050, 0.085, 0.10, 'sine', d + 0.050);
+    }
+}
+
+// THE CARRIER. A thin band of static for the voice to sit on - and, on top of
+// it, the two things that say "this is a radio and not a room": the static
+// BREATHING at syllable rate, as a real channel does when something is
+// modulating it, and the odd crackle and half-second drop-out. The voice
+// itself cannot be filtered - speechSynthesis writes straight to the output
+// device and is not a Web Audio node - so everything that makes this sound
+// like a transmission has to happen around it, and the more of it there is the
+// better the illusion holds.
 function radioCarrier(secs) {
     if (!isAudioInitialized || !soundIsOn()) return null;
     const t = audioContext.currentTime;
@@ -1010,14 +1161,55 @@ function radioCarrier(secs) {
     src.loop = true;
     const bp = audioContext.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = 1700;
-    bp.Q.value = 0.8;
+    bp.frequency.value = 1750;
+    bp.Q.value = 0.7;
+    const peak = audioContext.createBiquadFilter();
+    peak.type = 'peaking';
+    peak.frequency.value = 2500;
+    peak.Q.value = 2.5;
+    peak.gain.value = 7;
     const env = audioContext.createGain();
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(0.018, t + 0.05);
-    src.connect(bp); bp.connect(env); env.connect(audioOut());
+    env.gain.linearRampToValueAtTime(0.032, t + 0.05);
+    src.connect(bp); bp.connect(peak); peak.connect(env); env.connect(audioOut());
     src.start(t);
+
+    // ...breathing. A slow random walk at roughly syllable rate, scheduled a
+    // few seconds ahead and topped up while the call runs.
+    let at = t + 0.05;
+    const swell = () => {
+        const until = audioContext.currentTime + 3;
+        while (at < until) {
+            const step = 0.09 + Math.random() * 0.11;
+            at += step;
+            env.gain.linearRampToValueAtTime(0.016 + Math.random() * 0.030, at);
+        }
+    };
+    swell();
+    const swellTimer = setInterval(swell, 1800);
+
+    // ...and the crackle: short noise pops, and now and then the channel drops
+    // out for a moment the way a real one does behind a grandstand.
+    const pop = () => {
+        if (!isAudioInitialized || !soundIsOn()) return;
+        const n = audioContext.currentTime;
+        const p = audioContext.createBufferSource();
+        p.buffer = getNoiseBuffer();
+        const hp = audioContext.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = 1100;
+        const g = audioContext.createGain();
+        const dur = 0.012 + Math.random() * 0.03;
+        g.gain.setValueAtTime(0.05 + Math.random() * 0.06, n);
+        g.gain.exponentialRampToValueAtTime(0.0001, n + dur);
+        p.connect(hp); hp.connect(g); g.connect(audioOut());
+        p.start(n); p.stop(n + dur + 0.02);
+    };
+    const popTimer = setInterval(() => { if (Math.random() < 0.55) pop(); }, 420);
+
     return { stop: () => {
+        clearInterval(swellTimer);
+        clearInterval(popTimer);
         const n = audioContext.currentTime;
         env.gain.cancelScheduledValues(n);
         env.gain.setValueAtTime(env.gain.value, n);
@@ -1041,12 +1233,28 @@ function radioCarrier(secs) {
 let radioOn = true;
 let radioBusy = null;          // { pri, carrier } while a call is live
 let radioLastAt = 0;           // wall clock of the last call, for the gap
-const RADIO_GAP_MS = 2600;     // the wall does not chatter
+let radioNext = null;          // ONE call waiting, and only for a few seconds
+let radioSeq = 0;              // which call is live, for the timers that outlive it
+const RADIO_GAP_MS = 1200;     // the wall does not chatter, but it does talk
+const RADIO_WAIT_MS = 7000;    // past this a held call is no longer news
+const RADIO_BEEP_MS = 170;     // the blip, before the words that follow it
 
 function setTeamRadio(on) { radioOn = !!on; if (!radioOn) radioStop(); }
 function teamRadioOn() { return radioOn; }
 
+// Silence, and nothing waiting: the race is over, or the radio has been
+// switched off. Everything that was going to be said is now not going to be.
 function radioStop() {
+    radioCut();
+    radioNext = null;
+    if (radioPump) { clearTimeout(radioPump); radioPump = null; }
+}
+
+// ...as opposed to a call being CUT OFF by a bigger one, which must leave the
+// held slot alone: the first version used radioStop() for both, so a
+// priority-3 call interrupting a priority-1 also threw away the line waiting
+// behind it - the exact line the holding was written to save.
+function radioCut() {
     if (typeof speechSynthesis !== 'undefined') {
         try { speechSynthesis.cancel(); } catch (e) { /* nothing to cancel */ }
     }
@@ -1054,36 +1262,70 @@ function radioStop() {
     radioBusy = null;
 }
 
-// `text` is what the wall says. `pri` decides whether it may interrupt.
-function teamRadio(text, pri) {
+// THE ONE HELD CALL. A lap crossing now produces two lines, not one, and the
+// second of them is worth hearing a second and a half later - so instead of
+// dropping it, it waits. Exactly one waits: a backlog would still be reading
+// out lap four on lap six, which is what the queue was written to avoid. A
+// bigger call replaces whatever is waiting, and anything older than seven
+// seconds is thrown away rather than said, because by then it is not true.
+let radioPump = null;
+function radioHold(text, pri) {
+    if (radioNext && radioNext.pri > pri) return false;
+    radioNext = { text: text, pri: pri, at: Date.now() };
+    if (!radioPump) radioPump = setTimeout(radioDrain, 300);
+    return true;
+}
+function radioDrain() {
+    radioPump = null;
+    if (!radioNext) return;
+    if (Date.now() - radioNext.at > RADIO_WAIT_MS) { radioNext = null; return; }
+    if (radioBusy || Date.now() - radioLastAt < RADIO_GAP_MS) {
+        radioPump = setTimeout(radioDrain, 300);
+        return;
+    }
+    const n = radioNext;
+    radioNext = null;
+    teamRadio(n.text, n.pri, true);
+}
+
+// `text` is what the wall says. `pri` decides whether it may interrupt, and
+// whether it waits its turn or is forgotten.
+function teamRadio(text, pri, fromHold) {
     if (!radioOn || !text) return false;
     if (typeof speechSynthesis === 'undefined') return false;
     if (!soundIsOn()) return false;                  // the volume control owns it too
     pri = pri || 1;
     const now = Date.now();
-    // something is already being said: only a bigger call may cut in
+    // something is already being said: only a bigger call may cut in, and the
+    // one it displaces goes into the held slot rather than into the bin
     if (radioBusy) {
-        if (pri <= radioBusy.pri) return false;
-        radioStop();
+        if (pri <= radioBusy.pri) return fromHold ? false : radioHold(text, pri);
+        radioCut();
     } else if (now - radioLastAt < RADIO_GAP_MS && pri < 3) {
-        return false;                                // too soon after the last one
+        return fromHold ? false : radioHold(text, pri);
     }
     const u = new SpeechSynthesisUtterance(text);
     const v = pickRadioVoice();
     if (v) { u.voice = v; u.lang = v.lang; }
-    // clipped and a little flat, the way somebody talks into a pit-wall mic
-    u.rate = 1.12;
-    u.pitch = 0.85;
+    // Clipped, flat and a touch hurried, the way somebody talks into a
+    // pit-wall mic with a car going past. The jitter is small on purpose: it
+    // stops twenty calls in a race sounding like the same recording.
+    u.rate = 1.18 + (Math.random() - 0.5) * 0.06;
+    u.pitch = 0.78 + (Math.random() - 0.5) * 0.05;
     u.volume = 1;
     radioSquelch(true, 0);
+    radioBeep(true, 0.05);
     const carrier = radioCarrier();
-    radioBusy = { pri: pri, carrier: carrier };
+    const seq = ++radioSeq;
+    radioBusy = { pri: pri, carrier: carrier, seq: seq };
     const done = () => {
         if (!radioBusy) return;
         if (radioBusy.carrier) radioBusy.carrier.stop();
         radioBusy = null;
         radioLastAt = Date.now();
-        radioSquelch(false, 0.02);
+        radioBeep(false, 0.02);
+        radioSquelch(false, 0.14);
+        if (radioNext && !radioPump) radioPump = setTimeout(radioDrain, 300);
     };
     u.onend = done;
     u.onerror = done;
@@ -1092,7 +1334,12 @@ function teamRadio(text, pri) {
     // speaks again. Two seconds per ten characters is far longer than any of
     // these lines take.
     const cap = 1200 + text.length * 90;
-    setTimeout(() => { if (radioBusy && radioBusy.carrier === carrier) done(); }, cap);
-    try { speechSynthesis.speak(u); } catch (e) { done(); return false; }
+    setTimeout(() => { if (radioBusy && radioBusy.seq === seq) done(); }, cap);
+    // ...and the words start a beat after the beep, so the blip is not talked
+    // over by its own message.
+    setTimeout(() => {
+        if (!radioBusy || radioBusy.seq !== seq) return;            // cut off before it began
+        try { speechSynthesis.speak(u); } catch (e) { done(); }
+    }, RADIO_BEEP_MS);
     return true;
 }
