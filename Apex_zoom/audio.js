@@ -917,6 +917,9 @@ function sfxBest() {                                   // a new personal best
 }
 
 function stopAudio() {
+    // a half-finished radio call outliving its race is the one way this
+    // feature can follow you into a menu
+    if (typeof radioStop === 'function') radioStop();
     silenceSurfaceSound();
     for (const e of engines) {
         try { e.osc.stop(); } catch (err) { /* already stopped */ }
@@ -929,4 +932,167 @@ function stopAudio() {
         bgmInterval = null;
     }
     isAudioInitialized = false;
+}
+
+// ===========================================================================
+//  TEAM RADIO
+//
+//  The pit wall, out loud. The words come from the browser's own speech
+//  synthesiser - no audio files, no network, nothing to ship - and the RADIO
+//  is everything around them: a squelch open, a burst of band noise under the
+//  first syllable, and the click of the button being let go at the end.
+//
+//  WHY THE VOICE ITSELF IS NOT FILTERED. speechSynthesis writes straight to
+//  the output device; it is not a node and cannot be routed through the Web
+//  Audio graph, so there is no way to put a band-pass and a little distortion
+//  across the words the way a real radio does. What sells a radio call is
+//  mostly the framing anyway - the squelch, the noise floor, the clipped
+//  delivery - and all three of those are here. Verified on Nicola's own Mac
+//  before any of this was written: 199 voices, 44 of them English, and a test
+//  utterance ran start to end in his Chrome on a file:// page.
+// ===========================================================================
+let radioVoice = null;
+let radioVoiceTried = false;
+
+// A British male if there is one - it is the accent of the genre - then any
+// English, then whatever the machine has. Daniel is macOS's en-GB male and is
+// what the check on Nicola's machine picked.
+function pickRadioVoice() {
+    if (radioVoice || radioVoiceTried) return radioVoice;
+    if (typeof speechSynthesis === 'undefined') { radioVoiceTried = true; return null; }
+    const vs = speechSynthesis.getVoices();
+    if (!vs.length) return null;                 // not loaded yet; asked again next call
+    radioVoiceTried = true;
+    const by = (re) => vs.find(v => re.test(v.name) && /^en/i.test(v.lang));
+    radioVoice = by(/^Daniel/) || by(/^(Oliver|Arthur|George|Malcolm)/) ||
+                 vs.find(v => /^en[-_]GB/i.test(v.lang)) ||
+                 vs.find(v => /^en/i.test(v.lang)) || vs[0] || null;
+    return radioVoice;
+}
+if (typeof speechSynthesis !== 'undefined' && speechSynthesis.addEventListener) {
+    // Chrome fills the list asynchronously and sometimes only after the first
+    // getVoices() call, so both the event and the poll above are needed
+    speechSynthesis.addEventListener('voiceschanged', () => {
+        radioVoiceTried = false; radioVoice = null; pickRadioVoice();
+    });
+}
+
+// The squelch: a filtered noise burst and a click. `open` is the press, which
+// carries a little more tail; the release is shorter and drier.
+function radioSquelch(open, delay) {
+    if (!isAudioInitialized || !soundIsOn()) return;
+    const t = audioContext.currentTime + (delay || 0);
+    const src = audioContext.createBufferSource();
+    src.buffer = getNoiseBuffer();
+    src.loop = true;
+    const bp = audioContext.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = open ? 1500 : 1900;
+    bp.Q.value = 1.1;
+    const env = audioContext.createGain();
+    const dur = open ? 0.085 : 0.055;
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(open ? 0.075 : 0.055, t + 0.008);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(bp); bp.connect(env); env.connect(audioOut());
+    src.start(t); src.stop(t + dur + 0.02);
+    // and the button click on top of it
+    sfxTone(open ? 1320 : 990, 0.035, 0.06, 'square', delay || 0);
+}
+
+// A thin band of static under the voice, so the words sit on a carrier
+// instead of in silence. Started with the call and faded at `secs`.
+function radioCarrier(secs) {
+    if (!isAudioInitialized || !soundIsOn()) return null;
+    const t = audioContext.currentTime;
+    const src = audioContext.createBufferSource();
+    src.buffer = getNoiseBuffer();
+    src.loop = true;
+    const bp = audioContext.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1700;
+    bp.Q.value = 0.8;
+    const env = audioContext.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.018, t + 0.05);
+    src.connect(bp); bp.connect(env); env.connect(audioOut());
+    src.start(t);
+    return { stop: () => {
+        const n = audioContext.currentTime;
+        env.gain.cancelScheduledValues(n);
+        env.gain.setValueAtTime(env.gain.value, n);
+        env.gain.exponentialRampToValueAtTime(0.0001, n + 0.12);
+        try { src.stop(n + 0.2); } catch (e) { /* already stopped */ }
+    } };
+}
+
+// ---------------------------------------------------------------------------
+//  ...and the call itself.
+//
+//  ONE VOICE AT A TIME, and never a backlog. A race generates these in
+//  clusters - you take the lead, set the fastest lap and get blue flags in the
+//  same ten seconds - and a radio that queued all of them would still be
+//  reading out lap 4 on lap 6. So a call in progress is either left alone or
+//  cut off by something more important, and nothing waits its turn: by the
+//  time the wall could say it, it is no longer true.
+//
+//  PRIORITY is the whole queue. 3 is the flag and the box call, 2 is the race
+//  changing under you, 1 is colour.
+let radioOn = true;
+let radioBusy = null;          // { pri, carrier } while a call is live
+let radioLastAt = 0;           // wall clock of the last call, for the gap
+const RADIO_GAP_MS = 2600;     // the wall does not chatter
+
+function setTeamRadio(on) { radioOn = !!on; if (!radioOn) radioStop(); }
+function teamRadioOn() { return radioOn; }
+
+function radioStop() {
+    if (typeof speechSynthesis !== 'undefined') {
+        try { speechSynthesis.cancel(); } catch (e) { /* nothing to cancel */ }
+    }
+    if (radioBusy && radioBusy.carrier) radioBusy.carrier.stop();
+    radioBusy = null;
+}
+
+// `text` is what the wall says. `pri` decides whether it may interrupt.
+function teamRadio(text, pri) {
+    if (!radioOn || !text) return false;
+    if (typeof speechSynthesis === 'undefined') return false;
+    if (!soundIsOn()) return false;                  // the volume control owns it too
+    pri = pri || 1;
+    const now = Date.now();
+    // something is already being said: only a bigger call may cut in
+    if (radioBusy) {
+        if (pri <= radioBusy.pri) return false;
+        radioStop();
+    } else if (now - radioLastAt < RADIO_GAP_MS && pri < 3) {
+        return false;                                // too soon after the last one
+    }
+    const u = new SpeechSynthesisUtterance(text);
+    const v = pickRadioVoice();
+    if (v) { u.voice = v; u.lang = v.lang; }
+    // clipped and a little flat, the way somebody talks into a pit-wall mic
+    u.rate = 1.12;
+    u.pitch = 0.85;
+    u.volume = 1;
+    radioSquelch(true, 0);
+    const carrier = radioCarrier();
+    radioBusy = { pri: pri, carrier: carrier };
+    const done = () => {
+        if (!radioBusy) return;
+        if (radioBusy.carrier) radioBusy.carrier.stop();
+        radioBusy = null;
+        radioLastAt = Date.now();
+        radioSquelch(false, 0.02);
+    };
+    u.onend = done;
+    u.onerror = done;
+    // A safety net: Chrome occasionally drops an utterance without firing
+    // either event, and a radioBusy that never clears is a radio that never
+    // speaks again. Two seconds per ten characters is far longer than any of
+    // these lines take.
+    const cap = 1200 + text.length * 90;
+    setTimeout(() => { if (radioBusy && radioBusy.carrier === carrier) done(); }, cap);
+    try { speechSynthesis.speak(u); } catch (e) { done(); return false; }
+    return true;
 }

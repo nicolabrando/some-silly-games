@@ -194,6 +194,23 @@ function cameraVisibleRect() {
 
 // Sound: one setting for engines, music and effects together.
 {
+    // The team radio, remembered between sessions the same way the volume is.
+    const radioSelect = document.getElementById('radio-select');
+    if (radioSelect && typeof setTeamRadio === 'function') {
+        let want = 'on';
+        try { want = window.localStorage.getItem('apexzoom.radio') || 'on'; } catch (e) { }
+        radioSelect.value = want;
+        setTeamRadio(want === 'on');
+        radioSelect.addEventListener('change', () => {
+            setTeamRadio(radioSelect.value === 'on');
+            try { window.localStorage.setItem('apexzoom.radio', radioSelect.value); } catch (e) { }
+            // a line on the spot, so picking "On" proves it works
+            if (radioSelect.value === 'on' && typeof teamRadio === 'function') {
+                if (typeof initAudio === 'function') initAudio();
+                teamRadio('Radio check. Loud and clear.', 3);
+            }
+        });
+    }
     const soundSelect = document.getElementById('sound-select');
     if (soundSelect && typeof soundLevelKey === 'function') {
         soundSelect.value = soundLevelKey();
@@ -1440,6 +1457,7 @@ function dismissRaceRecap() {
 
 function showMenu() {
     menu.style.display = 'block';
+    if (typeof radioStop === 'function') radioStop();
     // The pit wall closes with the session. Left open it would hold the next
     // one: see the guard in gameLoop.
     if (typeof pitPanelSeat !== 'undefined') {
@@ -2348,6 +2366,158 @@ function pitStopsEnabled() {
 // inside startGame, which runs AFTER the race tyre screen has been answered.
 // "raceMode is qualifying, therefore no stops" silently blanked every
 // pit-aware thing on the one screen whose entire subject is the stops.
+// ===========================================================================
+//  WHAT THE PIT WALL SAYS
+//
+//  The lines, and the one function that decides which of them is worth the
+//  radio right now. Everything here is text and priority only - the speaking
+//  is audio.js, and the whole feature is one `teamRadio()` call away from
+//  being silent.
+//
+//  The rule for writing these: a pit wall tells you something you CANNOT SEE.
+//  "You are third" is on the tower; "he is two seconds a lap quicker than you
+//  and he will be with you in four laps" is not. So the lines lean on the
+//  things the game knows and the screen does not say out loud.
+// ===========================================================================
+function radioSay(text, pri) {
+    if (typeof teamRadio !== 'function') return;
+    if (gameState !== 'playing') return;
+    teamRadio(text, pri);
+}
+
+// A driver's surname, which is what a pit wall actually uses.
+function radioName(car) {
+    const n = (car && car.driverName) || '';
+    const parts = n.split(' ');
+    return parts.length ? parts[parts.length - 1] : n;
+}
+
+// Once per race per subject, so a condition that stays true - a worn set, a
+// gap that keeps closing - is said once and not every lap it is still true.
+function radioOnce(car, key) {
+    if (!car) return false;
+    const seen = car._radioSaid || (car._radioSaid = {});
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+}
+
+// Called at every line crossing for a human car: the natural moment for the
+// wall to say anything, because it is when the numbers change.
+function radioLapReport(car, isBest) {
+    if (!car || !car.isPlayer || car.finished) return;
+    const left = TOTAL_LAPS - car.lap;
+
+    // 3 - the flag and the box, the two that must never be missed
+    if (left === 1 && radioOnce(car, 'last')) {
+        radioSay('Last lap. Last lap.', 3);
+        return;
+    }
+    if (pitModeOn && left >= 1) {
+        const wear = car.tyreWear || 0;
+        const rate = car._wearLapRate || 0;
+        // the same projection the AI stops on: will this set reach the flag -
+        // and, separately, how long it has before it is finished
+        const dies = rate > 0 && wear + rate * left > 1.0;
+        const setLeft = rate > 0 ? (1 - wear) / rate : Infinity;
+        if (wear > 0.98 && radioOnce(car, 'gone')) {
+            radioSay('Box this lap, box this lap. Tyres are gone.', 3);
+            return;
+        }
+        // BOX THIS LAP means this lap. The first version said it off the
+        // projection alone, which at Oval put "box this lap" on a set at 29%
+        // four laps from the end: true that it would not last, false that the
+        // stop was now. The urgent call needs the set to be nearly out.
+        if ((wear > 0.75 || setLeft <= 1.2) && radioOnce(car, 'boxsoon')) {
+            radioSay('Box this lap. The tyres will not make the end.', 3);
+            return;
+        }
+        // ...and the projection gets its own, quieter line: a stop is coming,
+        // not a stop is now. It supersedes the half-life warning, which would
+        // otherwise arrive later saying something less useful.
+        if (dies && radioOnce(car, 'plan')) {
+            radioOnce(car, 'wearhalf');
+            radioSay('These tyres will not reach the flag. ' +
+                     'We are planning a stop, keep the pace up.', 2);
+            return;
+        }
+        // ...and the early warning, which is only worth saying while it is
+        // still the WORST thing true about the set. Past 0.78 one of the two
+        // calls above is the right one, and "half the life left" on a set at
+        // 156% - which is what the first version of this said, having spent
+        // its one turn at the line above - is the wall talking nonsense.
+        if (wear > 0.5 && wear <= 0.78 && radioOnce(car, 'wearhalf')) {
+            radioSay('Half the life left on this set. Look after them.', 1);
+            return;
+        }
+    }
+
+    // 2 - the race changing
+    const pos = racePositionOf(car);
+    const was = car._radioPos;
+    car._radioPos = pos;
+    if (pos === 1 && was && was > 1) {
+        radioSay('You are the race leader. Well done.', 2);
+        return;
+    }
+    if (isBest && car.lap > 1) {
+        // fastest of the race, or just your own best - two different things
+        const fastest = cars.filter(c => c.bestLapTime)
+                            .every(c => c === car || c.bestLapTime >= car.bestLapTime);
+        radioSay(fastest ? 'That is the fastest lap of the race. Great job.'
+                         : 'That is your best lap so far. Keep it there.', 2);
+        return;
+    }
+    if (was && pos > was) {
+        radioSay('We have lost a place. You are ' + radioOrdinal(pos) + ' now.', 2);
+        return;
+    }
+    if (was && pos < was) {
+        radioSay('Good pass. ' + radioOrdinal(pos, true) + ' place.', 2);
+        return;
+    }
+
+    // 1 - colour, when nothing else is happening
+    if (left === 0) return;
+    const ahead = radioCarAhead(car);
+    if (ahead && ahead.gap < 1.2 && radioOnce(car, 'close' + ahead.car.color)) {
+        radioSay(radioName(ahead.car) + ' is ' + ahead.gap.toFixed(1) +
+                 ' ahead. You have the pace, go and get him.', 1);
+        return;
+    }
+    if (left === 2 && radioOnce(car, 'twotogo')) {
+        radioSay('Two laps to go.', 1);
+    }
+}
+
+function radioOrdinal(n, cap) {
+    const words = ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth',
+                   'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
+    const w = words[n] || (n + 'th');
+    return cap ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+}
+
+// Where this car is classified right now.
+function racePositionOf(car) {
+    const order = cars.slice().sort(raceCmp);
+    return order.indexOf(car) + 1;
+}
+
+// The car classified immediately ahead, and how many seconds it is up the
+// road - from track progress and the leader's pace, the same way the tower
+// works it out.
+function radioCarAhead(car) {
+    const order = cars.slice().sort(raceCmp);
+    const i = order.indexOf(car);
+    if (i <= 0) return null;
+    const ahead = order[i - 1];
+    if (!ahead || ahead.isBroken || ahead.finished) return null;
+    const px = (ahead.trackProgress || 0) - (car.trackProgress || 0);
+    if (px <= 0) return null;
+    const sp = Math.max(80, Math.hypot(car.velocity.x, car.velocity.y));
+    return { car: ahead, gap: px / sp };
+}
+
 // The tag on a season that was run with the box open. Blue, because red is
 // already the nightmare calendar's and the two say completely different
 // things about a season - one is how hard it was, the other is what game it
@@ -2530,6 +2700,9 @@ function pitToggleBox(car, seat, fromPause) {
     if ((isPaused && !fromPause) || pitPanelSeat) return;
     car.wantPit = !car.wantPit;
     car.pitNextTyre = null;             // chosen at the box, not here
+    if (car.isPlayer && !skipMode)
+        radioSay(car.wantPit ? 'Understood, box this lap. The crew is ready.'
+                             : 'Copy that, staying out.', 2);
     if (typeof RaceLog !== 'undefined')
         RaceLog.event('PIT', `${car.driverName || car.color} ` +
             (car.wantPit ? 'calls for the box' : 'stays out'));
@@ -3347,6 +3520,18 @@ function pitUpdate(car, dt) {
             car.pitPlan = car._pitPlanNext || null;
             car._pitPlanNext = null;
             car.pitPhase = 'exit';
+            // A NEW SET IS A NEW SUBJECT. The wear calls are "once", which is
+            // what stops a worn set being announced every lap it is still
+            // worn - but a second stint that is dying has never been mentioned
+            // and must be allowed its own call. Only the tyre keys reset; the
+            // race-wide ones (the flag, two to go) stay spent.
+            if (car._radioSaid) {
+                delete car._radioSaid.gone;
+                delete car._radioSaid.boxsoon;
+                delete car._radioSaid.wearhalf;
+            }
+            if (car.isPlayer && !skipMode)
+                radioSay(car.tyre.label + '. ' + car.tyre.label + ' on. Go go go.', 3);
             if (typeof RaceLog !== 'undefined')
                 RaceLog.event('PIT', `${car.driverName || car.color} pits — ` +
                     `${old} to ${car.tyre.short}, ${PIT_TIME.toFixed(1)}s stationary`);
@@ -8312,6 +8497,8 @@ function startGame(forceTrackType = null) {
         // was made of is the sequence, not whatever happened to be on the car
         // when the flag fell.
         car.tyreHistory = [car.tyre.key];
+        car._radioSaid = {};            // the wall starts every race with nothing said
+        car._radioPos = 0;
         car._tyreRaceLaps = TOTAL_LAPS;
         car.startX = gridPos.x;
         car.startY = gridPos.y;
@@ -8696,6 +8883,15 @@ function updatePhysics(dt) {
             // of a session worth a noise of their own
             if (c.isPlayer && isBest && c.lap > 1 && typeof sfxBest === 'function') sfxBest();
             if (c.isPlayer && c.finished && typeof sfxChequered === 'function') sfxChequered();
+            // ...and the pit wall's version of the same moment
+            if (c.isPlayer && c.finished && !skipMode) {
+                const p = racePositionOf(c);
+                radioSay(p === 1
+                    ? 'That is the chequered flag, and you have won it. Superb drive.'
+                    : 'Chequered flag. ' + radioOrdinal(p, true) + ' place. Good job.', 3);
+            } else if (c.isPlayer && !skipMode) {
+                radioLapReport(c, isBest);
+            }
             RaceLog.event('LAP', `${c.driverName || c.color} lap ${c.lap}` +
                 (c.lastLapTime ? ` — ${RaceLog.fmt(c.lastLapTime)}${isBest ? '  (best)' : ''}` : ' (out lap)'));
             // Only the human's laps carry telemetry into the log and into the
@@ -9403,6 +9599,8 @@ function updateRecovery(dt) {
             vscPowerFactor = VSC_POWER;
             showVscBanner(true);
             if (typeof sfxVsc === 'function') sfxVsc(true);
+            if (!skipMode) radioSay('Virtual safety car. Virtual safety car. ' +
+                'Slow down and hold the gap.', 3);
             renderVscCountdown(null);
             RaceLog.event('VSC', `deployed — speed limited to ${VSC_SPEED} px/s for everyone`);
         }
@@ -9418,6 +9616,7 @@ function updateRecovery(dt) {
             vscPowerFactor = 1;
             showVscBanner(false);
             if (typeof sfxVsc === 'function') sfxVsc(false);
+            if (!skipMode) radioSay('Green flag, green flag. We are racing.', 2);
             renderVscCountdown(null);
             RaceLog.event('VSC', 'withdrawn — track clear, full power');
         } else {
