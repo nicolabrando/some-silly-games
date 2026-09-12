@@ -1481,7 +1481,7 @@ startBtn.addEventListener('click', () => {
     raceMode = 'race';
     pendingGrid = null; pendingQualiInfo = null;
     pendingWeather = null; pendingWetLevel = null;
-    const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
+    const laps = raceLaps();
     // The car is chosen on the same screen a season uses, and asked once for
     // the whole weekend - not again between qualifying and the race. There
     // used to be a dropdown in the menu as well, which meant two controls for
@@ -2001,7 +2001,7 @@ stopSessionBtn.addEventListener('click', () => {
 document.getElementById('gp-start-btn').addEventListener('click', () => {
     document.getElementById('gp-preview').style.display = 'none';
     const trackType = championshipState.tracks[championshipState.currentTrackIndex];
-    const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
+    const laps = raceLaps();
     if (qualifyingEnabled()) {
         chooseTyres('Qualifying tyres', qualiTyreSubtitle(),
             QUALI_LAPS - 1, () => startQualifying(trackType));
@@ -2015,7 +2015,7 @@ document.getElementById('gp-skip-btn').addEventListener('click', skipGrandPrix);
 
 qualiRaceBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
-    const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
+    const laps = raceLaps();
     chooseTyres('Race tyres', raceTyreSubtitle(),
         laps, () => startGame(qualiTrackType), true);
 });
@@ -2228,9 +2228,40 @@ function humanSeats() {
     ];
 }
 
-function reverseGridEnabled() {
+// A SEASON IS A SET OF RULES, NOT A SET OF MENU BOXES.
+//
+// The difficulty, the AI handicap and the pit stops were already fixed at
+// creation and read back off championshipState, for the stated reason that a
+// season resumed in a month has to be the season you started. The RACE LENGTH
+// was not: TOTAL_LAPS came straight off the dropdown at every startGame. So a
+// season begun at 8 laps, closed, and reopened on a fresh page ran its
+// remaining rounds at whatever the menu had reset to - 5 - with the standings
+// from the first half scored over a different distance. Nicola hit exactly
+// that. The reverse grid had the same hole, and it is worse than it looks:
+// qualifyingEnabled() reads it, so losing it mid-season also hands a
+// reverse-grid season qualifying sessions it was never supposed to have.
+function reverseGridBox() {
     const box = document.getElementById('reverse-grid-checkbox');
     return !!(box && box.checked);
+}
+function reverseGridEnabled() {
+    if (isChampionship && championshipState && championshipState.reverseGrid !== undefined)
+        return !!championshipState.reverseGrid;
+    return reverseGridBox();
+}
+function lapsBox() {
+    return parseInt(document.getElementById('laps-select').value, 10) || 5;
+}
+// How long the race we are about to run is. In a championship that is the
+// season's own number; a season saved before this existed has none, and falls
+// back to the menu - there is nothing better to fall back to, and stamping it
+// in on the way past at least stops it drifting again.
+function raceLaps() {
+    if (isChampionship && championshipState) {
+        if (!championshipState.laps) championshipState.laps = lapsBox();
+        return championshipState.laps;
+    }
+    return lapsBox();
 }
 
 // "No AI handicap": the player's forgiving damage curve, handed to the whole
@@ -4661,7 +4692,7 @@ function showGpPreview(trackType) {
     pTrack.draw(mctx);
 
     // 1 px = 1 m, the same fiction the speedometer already uses (0.5 factor).
-    const laps = parseInt(document.getElementById('laps-select').value, 10) || 5;
+    const laps = raceLaps();
     const cells = [
         ['Length', (line.length / 1000).toFixed(2) + ' km'],
         ['Laps', String(laps)],
@@ -5273,6 +5304,27 @@ function resumeChampionship() {
     const ch = championshipState.chassis || (championshipState.chassis = {});
     if (ch[1]) playerChassis = ch[1];
     if (ch[2]) playerChassis2 = ch[2];
+    // AND THE MENU IS PUT BACK TO WHAT THE SEASON IS. The rules come off
+    // championshipState now, so the controls no longer decide anything mid-
+    // season - which means a dropdown still reading 5 while the season runs 8
+    // is a screen telling you something untrue. Every one of these is the
+    // season's own value, so this is display, not a decision.
+    const put = (id, v) => {
+        const el = document.getElementById(id);
+        if (el && v !== undefined && v !== null) el.value = String(v);
+    };
+    const check = (id, v) => {
+        const el = document.getElementById(id);
+        if (el && v !== undefined && v !== null) el.checked = !!v;
+    };
+    if (!championshipState.laps) championshipState.laps = lapsBox();
+    put('laps-select', championshipState.laps);
+    put('difficulty-select', championshipState.difficulty);
+    put('rounds-select', (championshipState.tracks || []).length);
+    check('reverse-grid-checkbox', championshipState.reverseGrid);
+    check('pit-checkbox', championshipState.pitStops);
+    check('nightmare-checkbox', championshipState.nightmare);
+    check('rival-checkbox', !!championshipState.rival);
     menu.style.display = 'none';
     const unpicked = championshipState.participants
         .some(p => p.isPlayer && !p.chassis);
@@ -8047,7 +8099,7 @@ function startGame(forceTrackType = null) {
     timingTower.innerHTML = '';
 
     // Free practice: unlimited running, no opponents, no flag.
-    TOTAL_LAPS = isPractice ? 9999 : parseInt(document.getElementById('laps-select').value, 10);
+    TOTAL_LAPS = isPractice ? 9999 : raceLaps();
 
     vscActive = false;
 
@@ -11444,7 +11496,11 @@ function startChampionship() {
         // fixed at creation, so a season resumed in a month is still the
         // season you started - see noAiHandicapWanted()
         noAiHandicap: noAiHandicapBox() && difficulty !== 'alien',
-        pitStops: pitStopsEnabled()
+        pitStops: pitStopsEnabled(),
+        // ...and the two that used to be read off the menu at every round -
+        // see raceLaps() and reverseGridEnabled() for what that cost
+        laps: lapsBox(),
+        reverseGrid: reverseGridBox()
     };
     // ...and the box is EMPTIED, which is the opposite of what it used to do.
     //
