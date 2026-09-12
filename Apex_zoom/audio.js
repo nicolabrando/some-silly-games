@@ -138,111 +138,76 @@ const ENGINE_VOICES = [
 ];
 
 // ---------------------------------------------------------------------------
-//  WHAT A ROMBO IS, AND WHY ONE SAWTOOTH IS NOT ONE
+//  A ROMBO IS TWO THINGS, AND THE FIRST DRAFT HAD SIX
 //
-//  The engine was a single sawtooth through a fixed 800Hz lowpass. That is a
-//  BUZZ: one partial series, no weight under the fundamental, no grit, and a
-//  timbre that never changes however hard the car is being driven. It is thin
-//  for three separate reasons and each one has its own fix here.
+//  The engine was one sawtooth through a fixed 800Hz lowpass: a buzz with no
+//  weight under it and a timbre that never changed however hard the car was
+//  driven. The fix for that was a sub, a detuned twin, a square at the second
+//  harmonic, a noise bed and a tanh drive stage - and the result measured
+//  exactly as asked and sounded, in Nicola's words, "un po' troppo ricco, non
+//  sembra neanche il rombo di un motore".
 //
-//    1. NOTHING BELOW THE FUNDAMENTAL. At 50-190Hz the saw's fundamental IS
-//       the bottom of the sound, and a lowpass can only take away. A real
-//       engine's chest comes from below its firing rate - the crank order, the
-//       body of the car, the air in the pipe - so there is a triangle an
-//       octave down under everything, and a peaking filter at 110Hz to give
-//       the register some room.
+//  He is right, and the measurements were not wrong - they were incomplete. An
+//  engine note is a HARMONIC SERIES on one fundamental. Everything that is not
+//  in that series reads as something else in the room: the noise bed is wind,
+//  the detuned twin is a chorus, the square at 2x is a second instrument, and
+//  a drive stage on top of all four turns the lot into fuzz. Each one adds
+//  energy where a spectrogram wants it and takes away the one property that
+//  makes the ear call it an engine.
 //
-//    2. NOTHING BEATING. One oscillator is one cylinder's worth of regularity.
-//       Two saws nine cents apart drift in and out of phase a few times a
-//       second, which is the lope a real engine has and the cheapest width
-//       there is.
+//  So: two oscillators and two filters, and the two things that were actually
+//  missing.
 //
-//    3. NO GRIT. A rombo is a growl and a growl is DISTORTION - harmonics that
-//       are not in the source, made by driving something past linear. So the
-//       summed voices go through a tanh soft-clip before the filter rather
-//       than straight into it. Soft, not hard: past about 2.2 the drive stops
-//       adding body and starts adding fizz.
+//    WEIGHT. A sine an octave under the firing rate, quiet - the chest of the
+//      sound. A lowpass can only take away, and at 50-190Hz the saw's
+//      fundamental was the bottom of the sound with nothing beneath it.
 //
-//  ...and the filter now MOVES. An engine on the overrun is duller than one
-//  being driven, and a fixed cutoff is the reason the old one sounded the same
-//  at 40 km/h and at 300.
+//    THE FILTER MOVES. An engine being driven is brighter than one coasting,
+//      and a fixed cutoff is why the old one sounded the same at 40km/h and at
+//      300. This is most of what "it sounds like it is working" means, and it
+//      costs one line.
+//
+//  Simpler than the draft before it and simpler than it looks: the saw's own
+//  harmonic series does the rest, which is what it was always for.
 // ---------------------------------------------------------------------------
-let engineCurve = null;
-function engineDriveCurve() {
-    if (engineCurve) return engineCurve;
-    const n = 2048;
-    const k = 1.9;
-    const c = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-        const x = (i / (n - 1)) * 2 - 1;
-        c[i] = Math.tanh(k * x) / Math.tanh(k);
-    }
-    engineCurve = c;
-    return c;
-}
-
 function makeEngineVoice(spec, level) {
-    // everything sums here, and this is the level that decides how hard the
-    // shaper below is driven
     const mix = audioContext.createGain();
-    mix.gain.value = 0.78;
+    mix.gain.value = 1;
 
     const oscs = [];
-    const add = (type, mult, amp, detune) => {
+    const add = (type, mult, amp) => {
         const o = audioContext.createOscillator();
         o.type = type;
         o.frequency.value = 50 * spec.pitch * mult;
-        if (detune) o.detune.value = detune;
         const g = audioContext.createGain();
         g.gain.value = amp;
         o.connect(g); g.connect(mix);
         o.start();
         oscs.push({ osc: o, mult: mult });
     };
-    add('triangle', 0.5, 0.32);        // the chest: an octave under the firing rate
-    add('sawtooth', 1, 0.55);          // the engine itself
-    add('sawtooth', 1, 0.34, 9);       // ...and its twin, nine cents off, for the lope
-    add('square', 2, 0.18);            // a little top, so it is not all bottom end
+    add('sawtooth', 1, 1.00);          // the engine: one note, one harmonic series
+    add('sine', 0.5, 0.35);            // ...and the chest under it
 
-    // The air between the pulses. Without it the gaps in the waveform are
-    // silence, and silence is what makes a synthesised engine sound synthetic.
-    const air = audioContext.createBufferSource();
-    air.buffer = getNoiseBuffer();
-    air.loop = true;
-    const airLp = audioContext.createBiquadFilter();
-    airLp.type = 'lowpass';
-    airLp.frequency.value = 220;
-    const airG = audioContext.createGain();
-    airG.gain.value = 0.18;
-    air.connect(airLp); airLp.connect(airG); airG.connect(mix);
-    air.start();
-
-    const shaper = audioContext.createWaveShaper();
-    shaper.curve = engineDriveCurve();
-    if ('oversample' in shaper) shaper.oversample = '2x';
-
-    // THE BODY LIFT TRACKS THE FIRING RATE, and the first draft's fixed
-    // 110Hz is why. A fixed lift boosts whatever happens to be sitting on it,
-    // and at racing speed that is not the engine note - it is the sub an
-    // octave below it. Measured: the loudest partial in the whole sound was
-    // the sub at every speed, which is a drone with an engine behind it rather
-    // than an engine with weight under it.
+    // A LIFT AT THE FIRING RATE, which follows it. A fixed lift boosts
+    // whatever is sitting on it, and at racing speed that is not the note - it
+    // is the octave below. Measured on the draft with a fixed 110Hz lift: the
+    // loudest partial in the whole sound was the sub at every speed, which is
+    // a drone with an engine somewhere behind it.
     const body = audioContext.createBiquadFilter();
     body.type = 'peaking';
     body.frequency.value = 50 * spec.pitch;
     body.Q.value = 0.9;
-    body.gain.value = 5;
+    body.gain.value = 4;
 
     const filter = audioContext.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = spec.cutoff * 1.1;
-    filter.Q.value = 0.9;
+    filter.frequency.value = spec.cutoff * 0.9;
+    filter.Q.value = 0.7;
 
     const gain = audioContext.createGain();
     gain.gain.value = level;
 
-    mix.connect(shaper); shaper.connect(body); body.connect(filter);
-    filter.connect(gain);
+    mix.connect(body); body.connect(filter); filter.connect(gain);
 
     // Panning is a nicety, not a requirement: older engines have no panner.
     let tail = gain;
@@ -254,7 +219,7 @@ function makeEngineVoice(spec, level) {
     }
     tail.connect(audioOut());
 
-    return { oscs: oscs, osc: oscs[1].osc, air: air, gain: gain, filter: filter,
+    return { oscs: oscs, osc: oscs[0].osc, gain: gain, filter: filter,
              body: body, pitch: spec.pitch, base: level, cutoff: spec.cutoff };
 }
 
@@ -270,11 +235,11 @@ function initAudio(isSpectator = false, seats = 1) {
     if (!isSpectator) {
         const n = Math.max(1, Math.min(ENGINE_VOICES.length, seats || 1));
         // Two engines at full level is just loud, so share the headroom.
-        // 0.072 rather than 0.05, and the number is larger than it looks
-        // because the drive stage is a compressor as well as a distortion:
-        // measured, the voice at 0.055 came out 11% QUIETER in rms than the
-        // bare sawtooth it replaced, which is not what "piu pieno" means.
-        const level = 0.072 * (n > 1 ? 0.8 : 1);
+        // 0.05 of a bare sawtooth and 0.05 of this are not the same loudness -
+        // the sub and the body lift add energy the meter sees - so the number
+        // is set by measurement rather than by arithmetic: this is what comes
+        // out level with the voice it replaces.
+        const level = 0.050 * (n > 1 ? 0.8 : 1);
         for (let i = 0; i < n; i++) engines.push(makeEngineVoice(ENGINE_VOICES[i], level));
 
         engineOscillator = engines[0].osc;
@@ -304,7 +269,7 @@ function updateEngineSound(speed, isAccelerating, seat = 0) {
     // being driven is brighter than one coasting, and that difference is most
     // of what "sounds like it is working" means.
     const rev = Math.max(0, Math.min(1, speed / 350));
-    const open = e.cutoff * (1.1 + 2.6 * rev) * (isAccelerating ? 1.28 : 1);
+    const open = e.cutoff * (0.9 + 1.8 * rev) * (isAccelerating ? 1.2 : 1);
     e.filter.frequency.setTargetAtTime(open, t, 0.08);
     if (e.body) e.body.frequency.setTargetAtTime(Math.min(320, f), t, 0.1);
 
@@ -1043,7 +1008,6 @@ function stopAudio() {
     for (const e of engines) {
         for (const o of (e.oscs || [{ osc: e.osc }]))
             try { o.osc.stop(); } catch (err) { /* already stopped */ }
-        try { if (e.air) e.air.stop(); } catch (err) { /* already stopped */ }
     }
     engines = [];
     engineOscillator = null;
