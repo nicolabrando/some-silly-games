@@ -139,6 +139,15 @@ class SegmentedTrack {
         //  ever applies to ground that was already off the road.
         // ---------------------------------------------------------------
         this.fencedZones = [];
+        // ---------------------------------------------------------------
+        //  A CIRCUIT THAT FORKS
+        //  `forkMain` and `forkAlt` are index ranges into this.segments: the
+        //  stretch the canonical lap drives, and the stretch that is the other
+        //  way round the same piece of circuit. Null on every circuit but one.
+        //  See lineOrder() and altRacingLine().
+        // ---------------------------------------------------------------
+        this.forkMain = null;
+        this.forkAlt = null;
         // True on circuits flipped by mirrorVertically(). The ghost store
         // reads it: a lap recorded one way round cannot drive the other.
         this.mirrored = false;
@@ -212,6 +221,10 @@ class SegmentedTrack {
     //  the widest circuit needs 1108, so there is room; the day there is not,
     //  the answer is a bigger world or a smaller circuit, decided on purpose.
     centreInArena() {
+        // ONCE, and only once - which a circuit that builds its waypoints from
+        // a SUBSET of its segments relies on: it calls generateWaypoints twice
+        // with a different list each time, and centring the second list would
+        // move the whole circuit to fit a piece of itself.
         if (this._centred) return;
         this._centred = true;
 
@@ -272,6 +285,33 @@ class SegmentedTrack {
         // them exists.
     }
 
+    // =====================================================================
+    //  WHICH SEGMENTS THE RACING LINE IS MADE OF
+    //
+    //  Normally: all of them, in the order they were written. `this.segments`
+    //  is the circuit - every query that asks "what is under this car", every
+    //  wall, every kerb, every puddle reads that list and nothing else - and
+    //  for thirty-two circuits the road and the way round it are the same
+    //  thing said twice.
+    //
+    //  A circuit that FORKS is where they come apart. Both arms of a fork are
+    //  real tarmac, with real barriers and real kerbs, so both are in
+    //  `this.segments`; but a lap goes down one of them, so a racing line
+    //  built by walking that list end to end would drive out of the merge,
+    //  teleport back to the split and drive the other arm. This is the hook
+    //  that keeps the two questions apart: the list is the circuit, the ORDER
+    //  is one way round it.
+    //
+    //  Returns INDICES rather than segments, because the index is what carries
+    //  a segment's camber to the node that lands on it (see _applyRelief).
+    // =====================================================================
+    lineOrder() {
+        if (!this._orderAll || this._orderAll.length !== this.segments.length) {
+            this._orderAll = this.segments.map((_, i) => i);
+        }
+        return this._orderAll;
+    }
+
     generateWaypoints() {
         // Every subclass constructor ends with `this.waypoints =
         // this.generateWaypoints()`, which makes this the one hook that runs
@@ -321,7 +361,43 @@ class SegmentedTrack {
         let bestType = 'line';
         let bestSeg = null;
         
-        for (const seg of this.segments) {
+        // ---- A CHEAP REJECT, computed once per circuit ------------------
+        //
+        // This walks every segment of the circuit and it is the hottest
+        // function in the game: getSurface calls it for every car every frame,
+        // and the wall trace calls it a few hundred thousand times. That was
+        // affordable while a circuit was forty segments; Silverstone is
+        // seventy-one, because it is traced from the real thing rather than
+        // drawn, and its wall took fourteen seconds to trace.
+        //
+        // So each segment carries a bounding circle, and a segment whose
+        // circle cannot beat the best distance so far is skipped without
+        // computing anything. The answer is unchanged by construction - the
+        // bound is a true lower bound on the distance to that segment - and it
+        // is a lower bound that is TIGHT for an arc, where every point really
+        // is r from the centre.
+        if (!this._bounds || this._bounds.length !== this.segments.length) {
+        // THE TWO BOUNDS ARE NOT THE SAME SHAPE and using one for both is a
+        // wrong answer, not a slow one. A line segment lies INSIDE its
+        // bounding circle, so the only thing its centre and radius promise is
+        // that nothing is nearer than (distance to the centre) minus the
+        // radius, floored at zero. An arc lies ON its circle, so the promise
+        // is two-sided: a point in the middle of a corner is at least
+        // (r - distance) away from it. Flooring the arc's bound at zero would
+        // merely be timid; using the arc's two-sided bound on a line rejects
+        // segments the car is standing on.
+            this._bounds = this.segments.map(g => g.type === 'line'
+                ? { x: (g.x1 + g.x2) / 2, y: (g.y1 + g.y2) / 2,
+                    r: Math.hypot(g.x2 - g.x1, g.y2 - g.y1) / 2, arc: false }
+                : { x: g.cx, y: g.cy, r: g.r, arc: true });
+        }
+        const bnd = this._bounds;
+        for (let _s = 0; _s < this.segments.length; _s++) {
+            const seg = this.segments[_s];
+            const bb = bnd[_s];
+            const bd = Math.hypot(x - bb.x, y - bb.y);
+            const lower = bb.arc ? Math.abs(bd - bb.r) : Math.max(0, bd - bb.r);
+            if (lower >= minDist) continue;
             let dist, projX, projY;
             if (seg.type === 'line') {
                 const dx = seg.x2 - seg.x1;
@@ -662,7 +738,18 @@ class SegmentedTrack {
     // node under it is on, and that is all a far node is ever asked.
     _phiGrid() {
         if (this._phi) return this._phi;
-        const STEP = 2, COARSE = 8, SAFE = 14;
+        // THE LATTICE IS COARSER ON A BIGGER WORLD, and it has to be: this
+        // walks getClosestPoint over every segment of the circuit once per
+        // cell, so the cost is area x segments. Two pixels on the classic
+        // 1360x765 canvas was free; on Silverstone - four times the area and
+        // seventy-one segments - the same lattice took fourteen seconds of
+        // frozen tab on the first race. Three pixels on a four-thousand-pixel
+        // world is a finer grid IN PROPORTION than two was on the old one, and
+        // the threshold is set above every circuit that existed before, so not
+        // one of their walls moves by a pixel.
+        const AREA = (this.worldW || 1360) * (this.worldH || 765);
+        const STEP = AREA > 11e6 ? 4 : AREA > 8.5e6 ? 3 : 2;
+        const COARSE = 4 * STEP, SAFE = 7 * STEP;
         let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
         for (const g of this.segments) {
             if (g.type === 'line') {
@@ -1513,7 +1600,9 @@ class SegmentedTrack {
     getLength() {
         if (this._length === undefined) {
             let L = 0;
-            for (const seg of this.segments) L += this._segLength(seg);
+            // one way round, not every piece of road there is: on a forked
+            // circuit the two are a whole arm apart
+            for (const i of this.lineOrder()) L += this._segLength(this.segments[i]);
             this._length = L;
         }
         return this._length;
@@ -1613,10 +1702,83 @@ class SegmentedTrack {
         for (const s of this.segments)
             geom += s.type === 'line' ? (s.x1 + s.y1 + s.x2 + s.y2)
                                       : (s.cx + s.cy + s.r * 13);
-        const str = geom.toFixed(1) + '|' + this.segments.length;
+        // ...and WHICH WAY ROUND, on a circuit that has more than one. The tag
+        // is added only when the order is not the plain one, so every circuit
+        // that existed before forks did hashes to exactly what it always did
+        // and its shipped racing line still matches.
+        const ord = this.lineOrder();
+        const plain = ord.length === this.segments.length && ord.every((v, i) => v === i);
+        const str = geom.toFixed(1) + '|' + this.segments.length +
+                    (plain ? '' : '|o' + ord.join('.'));
         let h = 5381;
         for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
         return h.toString(36);
+    }
+
+    // =====================================================================
+    //  THE OTHER WAY ROUND
+    //
+    //  A forked circuit has two complete racing lines - not a line with a
+    //  branch on it, two closed loops that happen to share most of their
+    //  road. That is deliberate, and it is what makes the feature cheap:
+    //  everything downstream of a racing line (the AI's steering, a car's
+    //  position round the lap, gaps, blue flags, the timing tower) already
+    //  works perfectly on a closed loop and needs to know nothing about forks.
+    //
+    //  The second line is built by handing the SAME circuit to the SAME line
+    //  builder with a different order - a clone that shares the geometry and
+    //  differs in one method. There is no second code path to keep in step
+    //  with the first, which is the only way two things this entangled stay
+    //  honest.
+    //
+    //  A circuit without a fork returns null, and every call site treats that
+    //  as "there is one way round", which is what thirty-two of them do.
+    // =====================================================================
+    altRacingLine() {
+        if (!this.forkAlt) return null;
+        if (this._altLine !== undefined) return this._altLine;
+        const alt = Object.create(Object.getPrototypeOf(this));
+        Object.assign(alt, this);
+        // the clone shares the geometry and NOTHING that was derived from it
+        alt._lineBaseCache = null;
+        alt._lineStd = null;
+        alt._lineFast = null;
+        alt._altLine = null;
+        alt._wallCache = {};
+        alt._bridge = undefined;
+        alt._phi = null;
+        alt._orderAll = null;
+        alt.forkAlt = null;                  // and it does not fork again
+        const self = this;
+        alt.lineOrder = function () { return self.forkOrder(); };
+
+        // ...and it is not seeded, steered or corrected: the clone inherits
+        // _buildRacingLines below, so the second line is the first line's
+        // recipe run again on the other loop. That is the whole mechanism.
+        this._altLine = alt.getRacingLine('standard');
+        this._setLineStart(this._altLine);
+        this._altLine.isAlt = true;
+        return this._altLine;
+    }
+
+    // The order for the OTHER arm: everything up to the split, the far arm,
+    // then everything from the merge on. Stated once here so the two lines
+    // cannot disagree about where the junctions are.
+    forkOrder() {
+        const a = this.forkMain.from, b = this.forkMain.to;
+        const c = this.forkAlt.from, d = this.forkAlt.to;
+        const out = [];
+        for (let i = 0; i < a; i++) out.push(i);
+        for (let i = c; i < d; i++) out.push(i);
+        for (let i = b; i < c; i++) out.push(i);
+        return out;
+    }
+
+    // Which of the two lines this car is driving. The default - and the answer
+    // on every circuit that does not fork - is the only one there is.
+    lineFor(car) {
+        if (!this.forkAlt || !car || !car.forkPick) return this.getRacingLine('standard');
+        return this.altRacingLine() || this.getRacingLine('standard');
     }
 
     // level: 'standard' (default) or 'fast' - one line now, see above.
@@ -1717,19 +1879,46 @@ class SegmentedTrack {
         //  Cascade were in on the day they shipped. So the search is now
         //  BUDGETED rather than made cheaper: candidates are tried in order of
         //  value and the search stops when the budget is spent, always keeping
-        //  at least the first relaxation so there is always a line. The cost of
-        //  stopping early is a fraction of a per cent of lap time, on a circuit
-        //  that has no shipped line anyway; the cost of not stopping is the
-        //  browser.
+        //  at least the first relaxation so there is always a line.
+        //
+        //  The budget is also passed INTO the optimiser, because checking it
+        //  between candidates is not enough: at 1772 nodes - Silverstone - a
+        //  single optimiser call is 14 seconds, and the check either side of it
+        //  never gets to run. Measured cost of the truncation, in the
+        //  optimiser's own currency, against letting it run to the end:
+        //
+        //      circuit      nodes   unbudgeted   at this budget
+        //      Monza          984      4.5 s      +0.16%, 2.7 s
+        //      Spa            943      4.7 s      +0.25%, 2.7 s
+        //      Silverstone   1772     14.3 s      +2.35%, 2.6 s
+        //
+        //  A quarter of a per cent on an ordinary circuit, two per cent on the
+        //  biggest one in the game, and nothing ever takes longer than about
+        //  three seconds - on a circuit that has no shipped line anyway, which
+        //  in a finished build means none of them. The cost of not stopping is
+        //  the browser.
         const t0 = (typeof performance !== 'undefined' && performance.now)
             ? performance.now() : Date.now();
         const spent = () => ((typeof performance !== 'undefined' && performance.now)
             ? performance.now() : Date.now()) - t0;
-        const BUDGET = 700;                      // ms
+        const BUDGET = 2500;                     // ms
         // ...unless a tool has asked for the full search on purpose, which is
-        // what genlines.js is for: it wants the best line, not a fast answer.
+        // what the generators are for: they want the best line, not a fast one,
+        // and the line they bake is then loaded by everyone else in 5ms.
+        //
+        // There are two ways to ask. RACING_LINE_JUDGE_REPS > 0 implies it -
+        // driving a real qualifying lap per candidate and then truncating the
+        // candidates would be absurd - and RACING_LINE_UNBUDGETED says it
+        // outright, for a generator that wants the proxy's answer rather than
+        // the judge's. That flag exists because genline_one.js set JUDGE_REPS
+        // to ZERO under a comment reading "the search, unbudgeted", which left
+        // the budget on; harmless while the budget could only be checked
+        // between candidates, and a silently truncated shipped line the moment
+        // it could be checked inside one.
         const budgeted = !(typeof RACING_LINE_JUDGE_REPS !== 'undefined' &&
-                           RACING_LINE_JUDGE_REPS > 0);
+                           RACING_LINE_JUDGE_REPS > 0) &&
+                         !(typeof RACING_LINE_UNBUDGETED !== 'undefined' &&
+                           RACING_LINE_UNBUDGETED);
 
         // the three relaxation depths the old selection chose between
         for (const sweeps of [600, 1000, 1800]) {
@@ -1745,7 +1934,11 @@ class SegmentedTrack {
         for (const margin of RACING_LINE_MARGINS) {
             if (budgeted && spent() > BUDGET) break;
             const maxOff = Math.max(3, W - margin);
-            const r = this._optimizeAlpha(base, start.alpha, maxOff, {});
+            // ...and the budget goes IN, because one of these calls can outlast
+            // it many times over on a long circuit and a check afterwards is
+            // too late. Whatever is left of the budget is what it gets.
+            const r = this._optimizeAlpha(base, start.alpha, maxOff,
+                budgeted ? { deadline: t0 + BUDGET } : {});
             cands.push({ name: 'opt' + margin, alpha: r.alpha, maxOff: maxOff, proxy: r.T });
         }
         // The judge - only where it is safe to run one. It drives a whole
@@ -1791,7 +1984,9 @@ class SegmentedTrack {
         // it afterwards would mean a nearest-segment search per node, which
         // is both slower and ambiguous where two roads run close together.
         const dense = [];
-        for (let si = 0; si < this.segments.length; si++) {
+        const order = this.lineOrder();
+        for (let k = 0; k < order.length; k++) {
+            const si = order[k];
             const seg = this.segments[si];
             const len = this._segLength(seg);
             const n = Math.max(2, Math.ceil(len / 2));
@@ -2044,9 +2239,32 @@ class SegmentedTrack {
             const scales = opts.scales || [24, 16, 10, 6, 4, 2];
             const steps = opts.steps || [12, 6, 3, 1.5];
             const maxSweeps = opts.maxSweeps || 6;
+            // ---- A DEADLINE THE SEARCH CAN ACTUALLY KEEP --------------------
+            //  _searchRacingLine has a wall-clock budget, but it could only
+            //  check it BETWEEN candidates - and on Silverstone, 1772 nodes,
+            //  ONE call to this function is 13.9 of the 14.1 seconds. A budget
+            //  that can only be checked either side of the thing that costs the
+            //  time is not a budget, so the deadline comes in here.
+            //
+            //  It is honoured between passes, coarse to fine. alpha is a
+            //  complete, valid line at every one of those boundaries - a pass
+            //  is a hill climb that only ever accepts an improvement, and each
+            //  one refines the last - so stopping early returns a line
+            //  optimised more coarsely, never a half-written one. That is the
+            //  trade the budget was always meant to make.
+            //
+            //  It is checked at the STEP level and not only at the scale: one
+            //  scale on Silverstone is 1.7 seconds on its own, so a deadline
+            //  read once per scale overshoots by more than the whole budget.
+            //  Per step it lands within about 400ms of what it was asked for.
+            const now = (typeof performance !== 'undefined' && performance.now)
+                ? () => performance.now() : () => Date.now();
+            const deadline = opts.deadline || 0;
             const wid = (h) => h + k + SWM;      // how far a bump's effect reaches
             for (const h of scales) {
+                if (deadline && now() > deadline) break;
                 for (const st of steps) {
+                    if (deadline && now() > deadline) break;
                     const stride = Math.max(1, Math.floor(h / 3));
                     for (let sweep = 0; sweep < maxSweeps; sweep++) {
                         let accepted = 0;
@@ -2105,24 +2323,50 @@ class SegmentedTrack {
         return false;
     }
 
+    // A CIRCUIT IS NOT ALWAYS ONE STROKE. For thirty-two of them the segment
+    // list is a single chain and this is one path; for a circuit that forks it
+    // is two, and joining them would paint a road from the end of one arm to
+    // the start of the other straight across the infield. So the path breaks
+    // wherever the geometry does - measured, not declared, so nothing has to
+    // remember to say it - and only a path that never broke is closed, because
+    // closePath on the last piece of a broken one draws the chord home.
     drawPath(ctx) {
         ctx.beginPath();
-        let first = true;
+        let first = true, broke = false;
+        let ex = 0, ey = 0;                        // where the last piece ended
+        const segStart = (seg) => seg.type === 'line'
+            ? { x: seg.x1, y: seg.y1 }
+            : { x: seg.cx + seg.r * Math.cos(seg.start),
+                y: seg.cy + seg.r * Math.sin(seg.start) };
+        const segEnd = (seg) => seg.type === 'line'
+            ? { x: seg.x2, y: seg.y2 }
+            : { x: seg.cx + seg.r * Math.cos(seg.end),
+                y: seg.cy + seg.r * Math.sin(seg.end) };
         for (const seg of this.segments) {
+            const a0 = segStart(seg);
+            // A BREAK IS WIDER THAN THE ROAD. One pixel was the first rule and
+            // it is too strict for a circuit that was TRACED rather than
+            // drawn: Silverstone's segments are fitted to a photograph of the
+            // real thing and meet within a few metres rather than exactly, and
+            // a path that broke at every one of those would paint the lap as
+            // seventy strokes with round ends. A gap smaller than the half
+            // width is inside the same road; a gap larger than it is a
+            // different road, which is what a fork is.
+            const apart = !first && Math.hypot(a0.x - ex, a0.y - ey) > this.trackWidth;
+            if (apart) broke = true;
             if (seg.type === 'line') {
-                if (first) {
-                    ctx.moveTo(seg.x1, seg.y1);
-                    first = false;
-                } else {
-                    ctx.lineTo(seg.x1, seg.y1);
-                }
+                if (first || apart) { ctx.moveTo(seg.x1, seg.y1); first = false; }
+                else ctx.lineTo(seg.x1, seg.y1);
                 ctx.lineTo(seg.x2, seg.y2);
             } else if (seg.type === 'arc') {
+                if (apart) ctx.moveTo(a0.x, a0.y);
                 ctx.arc(seg.cx, seg.cy, seg.r, seg.start, seg.end, seg.ccw);
                 first = false;
             }
+            const e = segEnd(seg);
+            ex = e.x; ey = e.y;
         }
-        ctx.closePath();
+        if (!broke) ctx.closePath();
     }
 
     // =====================================================================
@@ -4995,5 +5239,347 @@ class CascadeTrack extends SegmentedTrack {
             out.push({ x: x, y: y, a: rr() * Math.PI * 2, m: out.length >= 5 });
         }
         return (this._boats = out);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  BIVIO, XL. THE CIRCUIT THAT FORKS.
+//
+//  "Deve avere un punto in cui si sdoppia in due tracciati, che poi si
+//  ricongiungono. Non deve esserci un particolare vantaggio nel fare uno o
+//  l'altro percorso."
+//
+//  The road splits on the back straight and does not come back together for
+//  a fifth of the lap. Both arms are tarmac, both have barriers, both have
+//  kerbs, and there is an island between them big enough to put a grandstand
+//  on - this is not a painted line down a wide road, it is two roads.
+//
+//  WHY NEITHER ONE IS QUICKER, and why that is not a claim that needs
+//  defending every time the physics changes: the south arm IS the north arm,
+//  reflected in the straight line that joins the split to the merge. Same
+//  lengths to the last decimal, same radii, same camber, same order. A
+//  reflection turns every right-hander into a left-hander and changes nothing
+//  else, so for a car whose physics is left-right symmetric - which this
+//  game's is - the two arms have the same minimum lap time by construction.
+//  There is no number here that could be got wrong, and no tuning to go stale
+//  the next time a tyre model changes.
+//
+//  What the mirror does not copy is the FEEL. The north arm is a right, a
+//  left-right kink and a right; the south arm is the same corners the other
+//  way up. Most drivers are better one way round than the other, so there is
+//  a reason to pick - and picking wrong costs nothing but pride.
+//
+//  THE APPROACH AND THE EXIT ARE STRAIGHT AND ON THE AXIS, 480px of each.
+//  That is the other half of the fairness, and it is the half that is easy to
+//  miss: a split taken on the exit of a corner would put the car on one side
+//  of the road, one arm would be free and the other would cost a crossing;
+//  and a merge that fed straight into a corner would hand the inside line to
+//  whichever arm came from that side. Both junctions sit in the middle of a
+//  straight with a long run either way, so the choice costs the same
+//  whichever it is.
+//
+//  HOW IT WORKS, in one line: the circuit declares which of its segments are
+//  the far arm, and everything that reads `this.segments` - the surface test,
+//  the wall trace, the kerbs, the puddles - sees the whole thing, while the
+//  RACING LINE is built from an order that walks one arm. See lineOrder() and
+//  altRacingLine() on the base class.
+// ---------------------------------------------------------------------------
+class BivioTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 3480;
+        this.worldH = 2200;
+        this.trackWidth = 60;
+        this.grassWidth = 80;
+
+        this.segments = [
+            { type: 'line', x1: -1561.8434, y1: -1493.676, x2: -375.477, y2: -1493.676 },   // start/finish
+            { type: 'arc', cx: -375.477, cy: -1913.676, r: 420, start: 7.854, end: 7.5747, ccw: true },   // the kink, left
+            { type: 'line', x1: -259.7093, y1: -1509.9461, x2: -9.7812, y2: -1581.6118 },   // through the kink
+            { type: 'arc', cx: 105.9864, cy: -1177.8819, r: 420, start: 4.4331, end: 4.7124, ccw: false },   // the kink, right
+            { type: 'arc', cx: 105.9864, cy: -1407.8819, r: 190, start: 4.7124, end: 5.7247, ccw: false },   // the variante, in
+            { type: 'line', x1: 267.1156, y1: -1508.5665, x2: 357.2019, y2: -1364.3984 },   // through the variante
+            { type: 'arc', cx: 543.7724, cy: -1480.9806, r: 220, start: 8.8663, end: 7.854, ccw: true },   // the variante, out
+            { type: 'line', x1: 543.7724, y1: -1260.9806, x2: 703.7724, y2: -1260.9806 },   // to T1
+            { type: 'arc', cx: 703.7724, cy: -1020.9806, r: 240, start: 4.7124, end: 5.7596, ccw: false },   // T1
+            { type: 'line', x1: 911.6185, y1: -1140.9806, x2: 986.6185, y2: -1011.0768 },   // to T2
+            { type: 'arc', cx: 813.4135, cy: -911.0768, r: 200, start: 5.7596, end: 6.2832, ccw: false },   // T2
+            { type: 'line', x1: 1013.4135, y1: -911.0768, x2: 1013.4135, y2: -674.4039 },   // the right-hand side
+            { type: 'arc', cx: 793.4135, cy: -674.4039, r: 220, start: 6.2832, end: 7.2431, ccw: false },   // T3
+            { type: 'line', x1: 919.6003, y1: -494.1905, x2: 804.919, y2: -413.8898 },   // to T4
+            { type: 'arc', cx: 948.3131, cy: -209.1018, r: 250, start: 10.3847, end: 9.6866, ccw: true },   // T4
+            { type: 'line', x1: 706.8316, y1: -273.8065, x2: 673.1852, y2: -148.2362 },   // to T5
+            { type: 'arc', cx: 480, cy: -200, r: 200, start: 6.545, end: 7.854, ccw: false },   // T5
+            { type: 'line', x1: 480, y1: 0, x2: 0, y2: 0 },   // the approach to the split
+            { type: 'arc', cx: 0, cy: -150, r: 150, start: 1.5708, end: 2.4784, ccw: false },
+            { type: 'line', x1: -118.2016, y1: -57.6508, x2: -235.1773, y2: -207.3728 },
+            { type: 'arc', cx: -369.1391, cy: -102.7104, r: 170, start: 5.62, end: 4.7124, ccw: true },
+            { type: 'line', x1: -369.1391, y1: -272.7104, x2: -469.1391, y2: -272.7104 },
+            { type: 'arc', cx: -469.1391, cy: -422.7104, r: 150, start: 1.5708, end: 1.9548, ccw: false },
+            { type: 'line', x1: -525.3301, y1: -283.6328, x2: -567.0534, y2: -300.4901 },
+            { type: 'arc', cx: -623.2444, cy: -161.4125, r: 150, start: 5.0964, end: 4.7124, ccw: true },
+            { type: 'line', x1: -623.2444, y1: -311.4125, x2: -693.2444, y2: -311.4125 },
+            { type: 'arc', cx: -693.2444, cy: -161.4125, r: 150, start: 4.7124, end: 4.3284, ccw: true },
+            { type: 'line', x1: -749.4354, y1: -300.4901, x2: -791.1586, y2: -283.6328 },
+            { type: 'arc', cx: -847.3496, cy: -422.7104, r: 150, start: 1.1868, end: 1.5708, ccw: false },
+            { type: 'line', x1: -847.3496, y1: -272.7104, x2: -947.3496, y2: -272.7104 },
+            { type: 'arc', cx: -947.3496, cy: -102.7104, r: 170, start: 4.7124, end: 3.8048, ccw: true },
+            { type: 'line', x1: -1081.3115, y1: -207.3728, x2: -1198.2871, y2: -57.6508 },
+            { type: 'arc', cx: -1316.4887, cy: -150, r: 150, start: 0.6632, end: 1.5708, ccw: false },
+            { type: 'line', x1: -1316.4887, y1: 0, x2: -1796.4887, y2: 0 },   // out of the merge
+            { type: 'arc', cx: -1796.4887, cy: -210, r: 210, start: 1.5708, end: 2.7053, ccw: false },   // T6
+            { type: 'line', x1: -1986.8134, y1: -121.2502, x2: -2050.2061, y2: -257.1963 },   // to T7
+            { type: 'arc', cx: -1841.7553, cy: -354.3985, r: 230, start: 2.7053, end: 3.1416, ccw: false },   // T7
+            { type: 'line', x1: -2071.7553, y1: -354.3985, x2: -2071.7553, y2: -814.3985 },   // the left-hand side
+            { type: 'arc', cx: -1841.7553, cy: -814.3985, r: 230, start: 3.1416, end: 4.0143, ccw: false },   // T8
+            { type: 'line', x1: -1989.5965, y1: -990.5888, x2: -1882.3503, y2: -1080.579 },   // to T9
+            { type: 'arc', cx: -2049.475, cy: -1279.7506, r: 260, start: 7.1558, end: 6.545, ccw: true },   // T9
+            { type: 'line', x1: -1798.3343, y1: -1212.4576, x2: -1764.6878, y2: -1338.028 },   // to T10
+            { type: 'arc', cx: -1561.8434, cy: -1283.676, r: 210, start: 3.4034, end: 4.7124, ccw: false },   // T10
+            // ---- THE OTHER ARM: the north arm reflected in the axis ----
+            { type: 'arc', cx: 0, cy: 150, r: 150, start: -1.5708, end: -2.4784, ccw: true },
+            { type: 'line', x1: -118.2016, y1: 57.6508, x2: -235.1773, y2: 207.3728 },
+            { type: 'arc', cx: -369.1391, cy: 102.7104, r: 170, start: -5.62, end: -4.7124, ccw: false },
+            { type: 'line', x1: -369.1391, y1: 272.7104, x2: -469.1391, y2: 272.7104 },
+            { type: 'arc', cx: -469.1391, cy: 422.7104, r: 150, start: -1.5708, end: -1.9548, ccw: true },
+            { type: 'line', x1: -525.3301, y1: 283.6328, x2: -567.0534, y2: 300.4901 },
+            { type: 'arc', cx: -623.2444, cy: 161.4125, r: 150, start: -5.0964, end: -4.7124, ccw: false },
+            { type: 'line', x1: -623.2444, y1: 311.4125, x2: -693.2444, y2: 311.4125 },
+            { type: 'arc', cx: -693.2444, cy: 161.4125, r: 150, start: -4.7124, end: -4.3284, ccw: false },
+            { type: 'line', x1: -749.4354, y1: 300.4901, x2: -791.1586, y2: 283.6328 },
+            { type: 'arc', cx: -847.3496, cy: 422.7104, r: 150, start: -1.1868, end: -1.5708, ccw: true },
+            { type: 'line', x1: -847.3496, y1: 272.7104, x2: -947.3496, y2: 272.7104 },
+            { type: 'arc', cx: -947.3496, cy: 102.7104, r: 170, start: -4.7124, end: -3.8048, ccw: false },
+            { type: 'line', x1: -1081.3115, y1: 207.3728, x2: -1198.2871, y2: 57.6508 },
+            { type: 'arc', cx: -1316.4887, cy: 150, r: 150, start: -0.6632, end: -1.5708, ccw: true },
+        ];
+
+        // The fork. `forkMain` is the arm the canonical lap drives (the north
+        // one), `forkAlt` the segments appended after the lap closes - the
+        // south arm, which is the north arm through a mirror.
+        this.forkMain = { from: 18, to: 33 };
+        this.forkAlt = { from: 43, to: 58 };
+
+        this.startX = -861.8434;
+        this.startY = -1493.676;
+
+        this.waypoints = this.generateWaypoints();
+    }
+
+    // ---- BOTH LINES, BUILT THE SAME WAY -------------------------------
+    //
+    // The base class SEARCHES for a racing line: it relaxes at three depths,
+    // judges the candidates, and stops when a 700ms wall-clock budget runs
+    // out. That is the right trade for thirty-two circuits and exactly the
+    // wrong one here, and the measurement says so - two loops differing only
+    // by a reflection of one arm came back with lines 1.4% apart through the
+    // fork, which the AI turned into 6.233s down one arm against 6.367s down
+    // the other. Nothing was wrong with the road; the two lines had simply
+    // been judged against a clock that does not run at the same speed twice.
+    //
+    // A circuit whose whole point is that the two ways round are equal cannot
+    // have its two lines chosen that way. So it does not search: both loops
+    // get the same relaxation, at the same depth, under the same clamp, and
+    // the clone that builds the other arm's line inherits this method, which
+    // is what makes "the same way" true rather than merely intended.
+    _buildRacingLines() {
+        // ONE RELAXATION, 800 SWEEPS, AND NO OPTIMISER. Measured, both halves
+        // of that:
+        //
+        //  - the relaxation is a local diffusion and therefore EQUIVARIANT
+        //    under a reflection: feed it the mirrored loop and it gives back
+        //    the mirrored answer. Through the fork the two lines come out
+        //    0.01% apart. The optimiser is a search with tolerances and is
+        //    not equivariant; it gave the same two arms answers 2.6% apart,
+        //    and seeding it with the mirror did not fix the joins.
+        //
+        //  - and 800 is not a compromise, it is the best of the seven depths
+        //    tried (300 to 2200): the lap proxy reads 23.31s there against
+        //    23.47 at 1000, 23.53 at 600 and 23.59 for the optimised line. A
+        //    relaxation run to convergence becomes the shortest path, which
+        //    hugs the kerbs and is slow; stopping at 800 is where the
+        //    length/curvature trade sits on this circuit.
+        const maxOff = Math.max(3, this.trackWidth - 20);
+        const base = this._lineBase();
+        const line = this._finishLine(base, this._relaxAlpha(base, 800, maxOff), maxOff);
+        line.source = 'paired';
+        this._lineStd = this._lineFast = line;
+        this._setLineStart(line);
+        this._bridge = undefined;
+    }
+
+    // One way round: everything up to the far arm. The far arm is still in
+    // this.segments - it is road, and every other query has to see it - it is
+    // simply not on this lap.
+    lineOrder() {
+        if (!this._orderMain) {
+            this._orderMain = [];
+            for (let i = 0; i < this.forkAlt.from; i++) this._orderMain.push(i);
+        }
+        return this._orderMain;
+    }
+
+    // The waypoint chain is a ring, so it follows the same one way round:
+    // walking every segment would step from the merge back to the split and
+    // back again once a lap.
+    generateWaypoints() {
+        // Centred with EVERY segment in view - the far arm is half the width
+        // of the bottom of this circuit and leaving it out would hang it off
+        // the edge of the world - and centred once, which is what the guard in
+        // centreInArena() is for.
+        this.centreInArena();
+        const all = this.segments;
+        this.segments = this.lineOrder().map(i => all[i]);
+        const wp = super.generateWaypoints();
+        this.segments = all;
+        return wp;
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  SILVERSTONE, XL - and the only circuit here that was not designed.
+//
+//  "Fallo il piu accurato possibile. Non mi importa quanto verra grande, potra
+//  essere enorme, ma deve essere fedele all'originale."
+//
+//  So it was traced instead of drawn. The centre line is read straight off the
+//  circuit's own map: threshold the black, close the gap the chequered flag
+//  cuts in the band, open away the pit lane and the National-circuit link,
+//  skeletonise what is left and walk it - 4402 pixels of real Silverstone.
+//  Those were then fitted piece by piece with lines and circles and scaled so
+//  the lap measures its real length. The numbers below are a measurement, not
+//  a taste: see /root/tools/design_silverstone.py, which prints
+//
+//      deviation from the traced line: mean 0.5 m, 95th 1.0 m, worst 4.7 m
+//      lap 5887 m against the official 5891
+//
+//  SEVENTY-ONE SEGMENTS, sixty-two of them corners, which is far more than any
+//  hand-drawn circuit here has - Maggots and Becketts alone is eight. That is
+//  what fidelity costs and it is the right price: the complex reads as the
+//  complex rather than as two bends.
+//
+//  THE START LINE IS WHERE IT REALLY IS, on the straight between Club and
+//  Abbey, and that is the one thing the geometry was arranged around. The lap
+//  counter scores a crossing of startX travelling in +x, so the whole circuit
+//  is ROTATED until the start/finish straight points that way. North is
+//  therefore not up - Nicola said it needn't be - and nothing else about the
+//  layout is touched: a rotation moves every corner and changes none of them.
+//  Checked, and it is the reason the rotation was chosen rather than a mirror:
+//  the lap crosses the vertical line through the start exactly ONCE.
+//
+//  The road is 124px wide, which at this scale is not Silverstone's 13 metres
+//  and is not meant to be. Every circuit in this game is drawn for cars three
+//  times their scale size; a faithful road width here would be narrower than
+//  one car.
+//
+//  THE SHIPPED LINE IS THE JUDGED ONE. Its first version was not: genline_one.js
+//  carried a comment reading "the search, unbudgeted" while setting a flag that
+//  left the budget on, so of the three margins the optimiser tries only the
+//  first ever ran, and it won by walkover. Judged properly - a real flying lap
+//  per candidate, best of five - the field came out
+//
+//      relax600 53.58   relax1000 52.87   relax1800 53.82
+//      opt20 50.83      opt17 51.08       opt14 50.42
+//
+//  and opt14 is what lines.js now carries. Re-measured four times a side, it is
+//  1.32% quicker than the line that shipped first, against a within-line spread
+//  of 0.12 s - five times the instrument's own noise, so it is a real second
+//  and not a lucky lap.
+// ---------------------------------------------------------------------------
+class SilverstoneTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 4320;
+        this.worldH = 2960;
+        // 116px of road, narrower than the calendar's usual 120-130 and
+        // deliberately so: exactly one corner here - the hairpin at the end of
+        // the Village complex, r51 - is tighter than the half width, and a
+        // corner tighter than its own road is a bulb rather than an apex.
+        // Monza sits in the same place for the same reason.
+        this.trackWidth = 58;
+        this.grassWidth = 78;
+
+        this.segments = [
+            { type: 'arc', cx: 41.65, cy: -55.888, r: 67.3447, start: 2.2163, end: 1.2222, ccw: true },
+            { type: 'arc', cx: 93.3502, cy: 106.8164, r: 104.017, start: -1.852, end: -1.253, ccw: false },
+            { type: 'arc', cx: 159.1827, cy: -403.7994, r: 412.4801, start: 1.6511, end: 1.4881, ccw: true },
+            { type: 'line', x1: 193.2893, y1: 8.4622, x2: 850.5312, y2: -15.1663 },
+            { type: 'arc', cx: 841.9349, cy: -138.8098, r: 121.513, start: 1.5007, end: 0.9872, ccw: true },
+            { type: 'arc', cx: 955.637, cy: 32.6312, r: 83.7085, start: -2.1593, end: -1.4138, ccw: false },
+            { type: 'arc', cx: 942.0825, cy: 77.2719, r: 130.2965, start: -1.3645, end: -0.7015, ccw: false },
+            { type: 'arc', cx: 907.4645, cy: 119.003, r: 184.2484, start: -0.7533, end: -0.3625, ccw: false },
+            { type: 'arc', cx: 967.9973, cy: 81.0639, r: 115.055, start: -0.2403, end: 0.339, ccw: false },
+            { type: 'arc', cx: 1232.3609, cy: 80.6635, r: 159.0398, start: 2.8899, end: 2.4682, ccw: true },
+            { type: 'line', x1: 1107.0565, y1: 180.5657, x2: 1233.0181, y2: 396.0681 },
+            { type: 'arc', cx: 1445.195, cy: 259.7655, r: 251.2243, start: 2.5704, end: 1.9017, ccw: true },
+            { type: 'arc', cx: 1675.2716, cy: -367.4086, r: 921.1084, start: 1.9167, end: 1.5207, ccw: true },
+            { type: 'arc', cx: 1750.2311, cy: 2637.2784, r: 2083.5741, start: -1.5846, end: -1.5408, ccw: false },
+            { type: 'arc', cx: 1813.5341, cy: 640.9928, r: 85.9576, start: -1.5806, end: -0.799, ccw: false },
+            { type: 'arc', cx: 1836.0008, cy: 613.4737, r: 50.7451, start: -0.7377, end: 0.5854, ccw: false },
+            { type: 'arc', cx: 1558.654, cy: 476.9704, r: 360.3054, start: 0.4756, end: 0.6621, ccw: false },
+            { type: 'arc', cx: 974.3739, cy: 83.3389, r: 1064.48, start: 0.6163, end: 0.6839, ccw: false },
+            { type: 'arc', cx: 2210.1633, cy: 1055.5342, r: 507.9362, start: -2.5114, end: -2.7004, ccw: true },
+            { type: 'arc', cx: 1805.3655, cy: 871.8347, r: 62.7787, start: -2.5941, end: -3.6628, ccw: true },
+            { type: 'arc', cx: 1814.2213, cy: 850.7536, r: 81.9861, start: 2.4497, end: 1.6303, ccw: true },
+            { type: 'arc', cx: 1833.1576, cy: 670.8846, r: 263.2316, start: 1.6615, end: 1.2603, ccw: true },
+            { type: 'arc', cx: 1717.8424, cy: 74.4428, r: 869.1109, start: 1.3437, end: 1.1228, ccw: true },
+            { type: 'arc', cx: 1993.0104, cy: 652.9343, r: 227.5189, start: 1.1114, end: 0.0986, ccw: true },
+            { type: 'arc', cx: 196.6714, cy: 448.0369, r: 2036.376, start: 0.1119, end: 0.0412, ccw: true },
+            { type: 'line', x1: 2234.7013, y1: 532.082, x2: 2301.011, y2: -478.3976 },
+            { type: 'line', x1: 2293.6352, y1: -479.018, x2: 2279.1023, y2: -853.168 },
+            { type: 'arc', cx: 2196.8216, cy: -850.2213, r: 81.6286, start: -0.0358, end: -1.3295, ccw: true },
+            { type: 'arc', cx: 2196.8157, cy: -825.1162, r: 106.2337, start: -1.386, end: -2.0637, ccw: true },
+            { type: 'arc', cx: 2667.4476, cy: 46.3997, r: 1097.0403, start: -2.0657, end: -2.1357, ccw: true },
+            { type: 'arc', cx: 1290.3185, cy: -2157.8661, r: 1501.7452, start: 1.0171, end: 1.0747, ccw: false },
+            { type: 'arc', cx: 1955.0951, cy: -938.093, r: 112.6907, start: 1.1101, end: 2.1324, ccw: false },
+            { type: 'arc', cx: 1971.6445, cy: -983.8886, r: 160.8532, start: 2.0679, end: 2.6349, ccw: false },
+            { type: 'arc', cx: 1932.6728, cy: -951.8793, r: 111.6928, start: 2.7164, end: 4.0917, ccw: false },
+            { type: 'arc', cx: 1998.5551, cy: -858.51, r: 226.5257, start: -2.1884, end: -1.7646, ccw: false },
+            { type: 'arc', cx: 2483.537, cy: 957.2442, r: 2104.7142, start: -1.8246, end: -1.6604, ccw: false },
+            { type: 'arc', cx: 2348.5974, cy: -312.5518, r: 826.6095, start: -1.6352, end: -1.339, ccw: false },
+            { type: 'arc', cx: 2470.7485, cy: -879.6696, r: 246.2189, start: -1.2927, end: -0.7663, ccw: false },
+            { type: 'line', x1: 2656.8005, y1: -1058.3351, x2: 3358.4443, y2: -289.2607 },
+            { type: 'arc', cx: 3180.8779, cy: -153.1157, r: 213.5997, start: -0.6499, end: 0.2715, ccw: false },
+            { type: 'arc', cx: 2931.5773, cy: -201.8684, r: 467.7812, start: 0.2289, end: 0.6702, ccw: false },
+            { type: 'arc', cx: 1550.9005, cy: -1137.4948, r: 2136.1945, start: 0.6119, end: 0.9849, ccw: false },
+            { type: 'arc', cx: 3301.6909, cy: 1430.2202, r: 970.4469, start: -2.197, end: -2.3899, ccw: true },
+            { type: 'arc', cx: 3018.6355, cy: 1098.5743, r: 539.5777, start: -2.4809, end: -2.8011, ccw: true },
+            { type: 'arc', cx: 2297.4771, cy: 845.8465, r: 223.8685, start: 0.3289, end: 0.6291, ccw: false },
+            { type: 'arc', cx: 2369.4536, cy: 899.5584, r: 133.8228, start: 0.6211, end: 1.3385, ccw: false },
+            { type: 'arc', cx: 2869.2674, cy: 2962.8932, r: 1988.543, start: -1.8088, end: -1.8837, ccw: true },
+            { type: 'arc', cx: 2380.8495, cy: 1494.5895, r: 440.4658, start: -1.8546, end: -2.1597, ccw: true },
+            { type: 'arc', cx: 2269.7886, cy: 1305.0528, r: 221.4122, start: -2.2183, end: -2.7603, ccw: true },
+            { type: 'arc', cx: 2453.175, cy: 1412.7969, r: 433.1712, start: -2.6869, end: -2.9196, ccw: true },
+            { type: 'arc', cx: 1852.4718, cy: 1263.8874, r: 185.9053, start: 0.2921, end: 1.9703, ccw: false },
+            { type: 'line', x1: 1780.2332, y1: 1434.9994, x2: 1652.2909, y2: 1380.1573 },
+            { type: 'arc', cx: 1511.1953, cy: 1791.1007, r: 434.6226, start: -1.2402, end: -1.7482, ccw: true },
+            { type: 'line', x1: 1434.7184, y1: 1364.8934, x2: 20.0959, y2: 1577.0776 },
+            { type: 'line', x1: 19.0237, y1: 1570.5284, x2: -282.7836, y2: 1589.0969 },
+            { type: 'arc', cx: -286.9996, cy: 1355.1054, r: 231.6184, start: 1.5532, end: 2.2371, ccw: false },
+            { type: 'arc', cx: -284.7562, cy: 1371.9957, r: 218.9751, start: 2.2927, end: 3.5421, ccw: false },
+            { type: 'arc', cx: -131.1247, cy: 1418.9988, r: 379.8241, start: -2.7848, end: -2.5447, ccw: false },
+            { type: 'arc', cx: -1775.9932, cy: 385.1345, r: 1562.754, start: 0.5525, end: 0.4572, ccw: true },
+            { type: 'arc', cx: -1629.6611, cy: 308.2874, r: 1471.6448, start: 0.5481, end: 0.4959, ccw: true },
+            { type: 'arc', cx: -660.3751, cy: 865.8501, r: 355.1637, start: 0.4136, end: 0.2109, ccw: true },
+            { type: 'line', x1: -312.116, y1: 940.4046, x2: -217.5328, y2: 533.6478 },
+            { type: 'arc', cx: -300.4848, cy: 513.3325, r: 82.9945, start: 0.2405, end: -0.5114, ccw: true },
+            { type: 'arc', cx: -348.3433, cy: 527.3911, r: 131.9531, start: -0.4269, end: -0.8997, ccw: true },
+            { type: 'arc', cx: -330.3659, cy: 524.6874, r: 119.3955, start: -1.004, end: -1.5263, ccw: true },
+            { type: 'arc', cx: -311.2007, cy: 282.4285, r: 123.0569, start: 1.6833, end: 2.1904, ccw: false },
+            { type: 'arc', cx: -279.0668, cy: 248.4452, r: 169.3472, start: 2.2284, end: 3.2488, ccw: false },
+            { type: 'arc', cx: -203.7185, cy: 245.8461, r: 244.4575, start: -3.078, end: -2.1551, ccw: false },
+            { type: 'arc', cx: -196.0422, cy: 239.8682, r: 244.7225, start: -2.1947, end: -1.6259, ccw: false },
+            { type: 'arc', cx: -91.9714, cy: 1281.7235, r: 1292.3605, start: -1.6619, end: -1.5282, ccw: false },
+            { type: 'arc', cx: -46.0714, cy: 109.7427, r: 119.9055, start: -1.4945, end: -1.2142, ccw: false },
+        ];
+
+        // The line itself: the first traced point, which is the chequered flag
+        // on the map. Nothing is offset along the straight to make room for the
+        // grid - the grid walks backwards along the racing line and can take
+        // the corner behind it.
+        this.startX = 1.1369;
+        this.startY = -2.0921;
+
+        this.waypoints = this.generateWaypoints();
     }
 }

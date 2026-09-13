@@ -384,20 +384,10 @@ function drawMinimap(g) {
         cv.height = Math.ceil(mh * SS);
         const t = cv.getContext('2d');
         t.setTransform(sc * SS, 0, 0, sc * SS, 0, 0);
-        t.beginPath();
-        const segs = track.segments;
-        for (let i = 0; i < segs.length; i++) {
-            const s = segs[i];
-            if (s.type === 'line') {
-                if (i === 0) t.moveTo(s.x1, s.y1);
-                t.lineTo(s.x2, s.y2);
-            } else {
-                if (i === 0) t.moveTo(s.cx + s.r * Math.cos(s.start),
-                                      s.cy + s.r * Math.sin(s.start));
-                t.arc(s.cx, s.cy, s.r, s.start, s.end, s.ccw);
-            }
-        }
-        t.closePath();
+        // the same path the circuit paints itself with, breaks and all - a
+        // minimap that joined the two arms of a fork would show a road across
+        // the infield that is not there
+        track.drawPath(t);
         t.lineCap = 'round';
         t.lineJoin = 'round';
         t.strokeStyle = 'rgba(0, 0, 0, 0.8)';
@@ -3908,6 +3898,8 @@ function makeTrackRaw(trackType) {
         case 'puzzle':       return new PuzzleTrack();
         case 'monza':        return new MonzaTrack();
         case 'cascade':      return new CascadeTrack();
+        case 'bivio':        return new BivioTrack();
+        case 'silverstone':  return new SilverstoneTrack();
         default:             return new OvalTrack();
     }
 }
@@ -3929,9 +3921,16 @@ function makeTrackRaw(trackType) {
 //  capped by the largest field the opponents menu can ask for - twelve today,
 //  and whatever it should be the day either of those changes.
 // ---------------------------------------------------------------------------
+// Twenty drivers now: the ten the game shipped with and the ten currently on
+// the grid. Every one of them has a profile in AI_DRIVER_STYLES - a new name
+// without one would silently race as the default driver, which is the one way
+// to add a driver and add nobody.
 const LEGEND_NAMES = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton',
     'Juan Manuel Fangio', 'Alain Prost', 'Jim Clark', 'Max Verstappen',
-    'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel'];
+    'Niki Lauda', 'Fernando Alonso', 'Sebastian Vettel',
+    'Lando Norris', 'Kimi Antonelli', 'Charles Leclerc', 'Carlos Sainz',
+    'Sergio Perez', 'Valtteri Bottas', 'George Russell', 'Nico Hulkenberg',
+    'Pierre Gasly', 'Oscar Piastri'];
 const MAX_SEATS = 2;
 function gridSlotCount() {
     const sel = document.getElementById('opponents-select');
@@ -3946,7 +3945,12 @@ function buildField() {
 
     const color = document.getElementById('color-select').value;
     const numOpponents = parseInt(document.getElementById('opponents-select').value, 10);
-    const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white', 'green', 'cyan', 'pink', 'gray', 'lime', 'black'];
+    const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white',
+        'green', 'cyan', 'pink', 'gray', 'lime', 'black',
+        // ten more, because there are twenty drivers now and a car whose
+        // colour came back undefined is a car with no bodywork
+        'teal', 'gold', 'salmon', 'navy', 'olive', 'violet', 'brown',
+        'turquoise', 'khaki', 'plum'];
     let aiColors = [...possibleColors];
     const field = [];
 
@@ -5032,7 +5036,15 @@ const CHASSIS_PACE = {
     // long time to carry wing you cannot use - and is 4.1% now that the hills
     // are gone: still the low-drag car, but by a normal margin.
     monza: { best: 'bolt', g: '1odx0wd', pct: { aero: 3.2, bolt: 0, ridge: 1.1, torque: 1.2 } },
-    cascade: { best: 'bolt', g: 'pup2yo', pct: { aero: 4.1, bolt: 0, ridge: 1.3, torque: 0.8 } }
+    cascade: { best: 'bolt', g: 'pup2yo', pct: { aero: 4.1, bolt: 0, ridge: 1.3, torque: 0.8 } },
+    // Measured with gen_pace_one.js rather than by regenerating the whole
+    // table: each cell is a best-of-twenty-one and the top two of a column are
+    // often 0.2% apart, so re-measuring thirty-two settled rows to add two is
+    // churn, not information. Both are long circuits with real straights and
+    // both say what the other long ones say - lungolago 4.0, cascade 4.1,
+    // riviera 5.3 - that wing you cannot use down a straight costs 5% of a lap.
+    bivio: { best: 'bolt', g: '1nd1i0g', pct: { aero: 5.2, bolt: 0, ridge: 1.8, torque: 1.4 } },
+    silverstone: { best: 'bolt', g: 'h01du0', pct: { aero: 5.2, bolt: 0, ridge: 2.1, torque: 1.4 } }
 };
 
 function chassisPaceFor(key) {
@@ -5058,7 +5070,7 @@ const TRACK_LABELS = {
     maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka',
     lungolago: 'Lungolago', riviera: 'Riviera',
     onda: 'Onda', dedalo: 'Dedalo', vallone: 'Vallone', puzzle: 'Puzzle',
-    monza: 'Monza', cascade: 'Cascade'
+    monza: 'Monza', cascade: 'Cascade', bivio: 'Bivio', silverstone: 'Silverstone'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -5077,7 +5089,7 @@ const TRACK_CODES = {
     maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ',
     lungolago: 'LUN', riviera: 'RIV',
     onda: 'OND', dedalo: 'DED', vallone: 'VAL', puzzle: 'PZL',
-    monza: 'MNZ', cascade: 'CSC'
+    monza: 'MNZ', cascade: 'CSC', bivio: 'BIV', silverstone: 'SIL'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -8169,7 +8181,11 @@ function extractPayload(text) {
 //      the log actually contains.
 // ---------------------------------------------------------------------------
 const LOG_COLOURS = ['red', 'blue', 'yellow', 'purple', 'orange', 'white',
-                     'green', 'cyan', 'pink', 'lime', 'gray'];
+                     'green', 'cyan', 'pink', 'lime', 'gray', 'black',
+                     // ...and the ten that arrived with the current grid, so a
+                     // twenty-driver log does not give two drivers one colour
+                     'teal', 'gold', 'salmon', 'navy', 'olive', 'violet',
+                     'brown', 'turquoise', 'khaki', 'plum'];
 const LOG_F1_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
 // dd/mm/yyyy or mm/dd/yyyy? The log wrote whatever the browser's locale does,
@@ -8766,6 +8782,10 @@ function startGame(forceTrackType = null) {
         // when the flag fell.
         car.tyreHistory = [car.tyre.key];
         car._perf0 = car.tyre.grip;     // the car at lights-out, for the radio
+        // ...and on a circuit that forks, the grid splits down the middle from
+        // lights-out rather than all ten cars queueing for the same arm.
+        car.forkPick = track.forkAlt ? (i % 2) : 0;
+        car.forkSide = car.forkPick;
         car._radioSaid = {};            // the wall starts every race with nothing said
         car._radioPos = 0;
         car._radioFL = false;           // did he hold the fastest lap last time we looked
@@ -9174,6 +9194,21 @@ function updatePhysics(dt) {
             } else if (c.isPlayer && !skipMode) {
                 radioLapReport(c, isBest);
             }
+            // ---- WHICH WAY ROUND, on a circuit that has two ------------
+            // Chosen once a lap, at the line, and the rule is a racing one
+            // rather than a coin: a car running close behind somebody takes
+            // the arm that car did not. The field splits, runs two abreast
+            // through a fifth of the lap and arrives at the merge together,
+            // which is the whole point of the place.
+            if (track.forkAlt && !c.isPlayer && !c.finished) {
+                const ord = cars.slice().sort(raceCmp);
+                const oi = ord.indexOf(c);
+                const ahead = oi > 0 ? ord[oi - 1] : null;
+                const gap = ahead ? (ahead.trackProgress || 0) - (c.trackProgress || 0) : 1e9;
+                c.forkPick = (ahead && gap > 0 && gap < 700)
+                    ? (ahead.forkPick ? 0 : 1)
+                    : (Math.random() < 0.5 ? 1 : 0);
+            }
             RaceLog.event('LAP', `${c.driverName || c.color} lap ${c.lap}` +
                 (c.lastLapTime ? ` — ${RaceLog.fmt(c.lastLapTime)}${isBest ? '  (best)' : ''}` : ' (out lap)'));
             // Only the human's laps carry telemetry into the log and into the
@@ -9541,7 +9576,11 @@ const DRIVER_CODES = {
     'Ayrton Senna': 'SEN', 'Michael Schumacher': 'MSC', 'Lewis Hamilton': 'HAM',
     'Juan Manuel Fangio': 'FAN', 'Alain Prost': 'PRO', 'Jim Clark': 'CLA',
     'Max Verstappen': 'VER', 'Niki Lauda': 'LAU', 'Fernando Alonso': 'ALO',
-    'Sebastian Vettel': 'VET'
+    'Sebastian Vettel': 'VET',
+    'Lando Norris': 'NOR', 'Kimi Antonelli': 'ANT', 'Charles Leclerc': 'LEC',
+    'Carlos Sainz': 'SAI', 'Sergio Perez': 'PER', 'Valtteri Bottas': 'BOT',
+    'George Russell': 'RUS', 'Nico Hulkenberg': 'HUL', 'Pierre Gasly': 'GAS',
+    'Oscar Piastri': 'PIA'
 };
 // The same label from a participant record rather than a live car, for the
 // screens that exist before or after the cars do.
@@ -11554,7 +11593,11 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      // and the first replica of a real circuit: see MonzaTrack
                      'monza',
                      // and the one with hills in it
-                     'cascade'];
+                     'cascade',
+                     // ...and the one that splits in two
+                     'bivio',
+                     // ...and the real one
+                     'silverstone'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:
@@ -11940,7 +11983,12 @@ function startChampionship() {
     const difficulty = document.getElementById('difficulty-select').value;
     const numOpponents = parseInt(document.getElementById('opponents-select').value, 10);
     
-    const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white', 'green', 'cyan', 'pink', 'gray', 'lime', 'black'];
+    const possibleColors = ['red', 'blue', 'yellow', 'purple', 'orange', 'white',
+        'green', 'cyan', 'pink', 'gray', 'lime', 'black',
+        // ten more, because there are twenty drivers now and a car whose
+        // colour came back undefined is a car with no bodywork
+        'teal', 'gold', 'salmon', 'navy', 'olive', 'violet', 'brown',
+        'turquoise', 'khaki', 'plum'];
     let aiColors = possibleColors.filter(c => c !== color);
 
     // Fixed for the whole season: the field is built once and every round

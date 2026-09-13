@@ -311,28 +311,77 @@ const AI_PROFILES = {
 const AI_DRIVER_STYLES = {
     // Blinding through the quick stuff and peerless in the rain; gives it back
     // on the straights and lives closest to the edge - by far the most mistakes.
-    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.026, cleanAir: 1, look: -6, trim: 1.0102 },
+    'Ayrton Senna':       { corner: 1.030, straight: 0.978, brake: 1.05, steerTau: 0.75, err: 1.90, overtake: 1.00, gap: 0.85, defend: 0.95, wet: 1.026, cleanAir: 1, look: -6, trim: 1.0155 },
     // The Professor: never errs, superb alone - and genuinely poor in the wet
     // and reluctant wheel to wheel.
-    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.988, cleanAir: 1.01, look: 10, trim: 1.0019 },
+    'Alain Prost':        { corner: 0.985, straight: 1.028, brake: 0.88, steerTau: 1.45, err: 0.22, overtake: 0.70, gap: 1.25, defend: 0.55, wet: 0.988, cleanAir: 1.01, look: 10, trim: 0.9973 },
     // Relentless metronome, brutal on defence, superb in the rain; nothing
     // special in clean air.
-    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.050, cleanAir: 0.999, look: 4, trim: 1.0005 },
+    'Michael Schumacher': { corner: 1.018, straight: 0.992, brake: 1.08, steerTau: 0.95, err: 0.60, overtake: 0.95, gap: 0.88, defend: 1.00, wet: 1.050, cleanAir: 0.999, look: 4, trim: 0.9994 },
     // Latest braker on the grid, never yields - and error-prone with it.
-    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.949, cleanAir: 0.998, look: -8, trim: 1.0271 },
+    'Max Verstappen':     { corner: 1.012, straight: 0.996, brake: 1.18, steerTau: 0.70, err: 1.10, overtake: 1.00, gap: 0.75, defend: 1.00, wet: 0.949, cleanAir: 0.998, look: -8, trim: 1.0341 },
     // Thrives in the wet and in a fight; the weakest of the lot on his own.
-    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.038, cleanAir: 0.997, look: 8, trim: 0.9978 },
+    'Lewis Hamilton':     { corner: 1.010, straight: 1.000, brake: 1.02, steerTau: 0.90, err: 0.75, overtake: 0.95, gap: 0.92, defend: 0.85, wet: 1.038, cleanAir: 0.997, look: 8, trim: 0.9985 },
     // Unbeatable wheel to wheel, ordinary once the road is clear.
-    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.044, cleanAir: 0.997, look: 0, trim: 0.9972 },
+    'Fernando Alonso':    { corner: 1.005, straight: 1.000, brake: 1.10, steerTau: 0.85, err: 0.70, overtake: 1.00, gap: 0.72, defend: 1.00, wet: 1.044, cleanAir: 0.997, look: 0, trim: 1.0049 },
     // Devastating in clean air and on a straight; hates traffic and the rain.
-    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.986, cleanAir: 1.014, look: -2, trim: 0.9938 },
+    'Sebastian Vettel':   { corner: 1.000, straight: 1.018, brake: 1.00, steerTau: 0.88, err: 0.85, overtake: 0.75, gap: 1.15, defend: 0.70, wet: 0.986, cleanAir: 1.014, look: -2, trim: 0.9909 },
     // Famously smooth and almost mistake-free; passive in a fight.
-    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.011, cleanAir: 1.005, look: 8, trim: 0.9907 },
+    'Jim Clark':          { corner: 1.022, straight: 0.986, brake: 0.96, steerTau: 1.40, err: 0.30, overtake: 0.80, gap: 1.05, defend: 0.60, wet: 1.011, cleanAir: 1.005, look: 8, trim: 0.9926 },
     // The computer: calculated risk, no heroics, no mistakes - and no pace in
     // the wet.
-    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.014, cleanAir: 1.008, look: 10, trim: 0.9846 },
+    'Niki Lauda':         { corner: 0.992, straight: 1.022, brake: 0.92, steerTau: 1.20, err: 0.28, overtake: 0.75, gap: 1.20, defend: 0.70, wet: 1.014, cleanAir: 1.008, look: 10, trim: 0.9860 },
     // Wins at the slowest speed necessary: no weakness, no standout either.
-    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.015, cleanAir: 1.003, look: 4, trim: 0.9961 }
+    'Juan Manuel Fangio': { corner: 1.005, straight: 1.006, brake: 0.94, steerTau: 1.30, err: 0.32, overtake: 0.90, gap: 1.10, defend: 0.80, wet: 1.015, cleanAir: 1.003, look: 4, trim: 0.9923 },
+
+    // ---- AND THE ONES WHO ARE STILL RACING -----------------------------
+    //
+    // Ten more, written the same way as the ten above: a reputation turned
+    // into numbers, with the two FITTED columns - trim and wet - left to the
+    // simulator rather than guessed. The personality columns are the claim;
+    // trim is what makes the claim cost nothing over one lap, so that a driver
+    // is quick in the places his description says and nowhere else.
+    //
+    // The rule followed for every one of them: no driver is good at
+    // everything. Each has at least one column below the field and the
+    // strongest are paid for somewhere - in mistakes, in a fight, or alone.
+
+    // Blindingly quick through the fast stuff and a natural qualifier; the
+    // errors come under pressure, and he is the least decisive of the quick
+    // ones wheel to wheel.
+    'Lando Norris':       { corner: 1.020, straight: 0.992, brake: 1.00, steerTau: 0.85, err: 0.95, overtake: 0.85, gap: 1.00, defend: 0.80, wet: 1.005, cleanAir: 1.006, look: 2, trim: 0.9960 },
+    // The rookie: speed that does not need explaining and a brake pedal used
+    // like somebody with nothing to lose. Also the most mistakes on the grid
+    // bar Senna, which is what a first season costs.
+    'Kimi Antonelli':     { corner: 1.008, straight: 0.998, brake: 1.12, steerTau: 0.78, err: 1.45, overtake: 1.00, gap: 0.80, defend: 0.90, wet: 0.995, cleanAir: 0.996, look: -6, trim: 1.0048 },
+    // A qualifying lap out of nowhere - the highest clean-air number of the
+    // twenty after Vettel - and a race that sometimes runs past the edge of it.
+    'Charles Leclerc':    { corner: 1.024, straight: 0.988, brake: 1.06, steerTau: 0.80, err: 1.15, overtake: 0.95, gap: 0.88, defend: 0.92, wet: 0.992, cleanAir: 1.010, look: -2, trim: 1.0031 },
+    // Never throws it away, looks after the tyres, and is about as easy to
+    // pass as a locked door. Not a one-lap man.
+    'Carlos Sainz':       { corner: 0.998, straight: 1.010, brake: 0.96, steerTau: 1.25, err: 0.38, overtake: 0.85, gap: 1.12, defend: 0.98, wet: 1.008, cleanAir: 1.000, look: 8, trim: 1.0005 },
+    // The tyre whisperer: the most patient car on the grid, untouchable on
+    // defence, and ordinary the moment the road in front is empty.
+    'Sergio Perez':       { corner: 0.990, straight: 1.014, brake: 0.90, steerTau: 1.35, err: 0.45, overtake: 0.90, gap: 1.22, defend: 1.00, wet: 1.002, cleanAir: 0.995, look: 10, trim: 0.9984 },
+    // Pole-lap pace and a beautiful car in clean air; goes quiet in a fight,
+    // which is the whole of his reputation in two columns.
+    'Valtteri Bottas':    { corner: 1.012, straight: 1.004, brake: 0.94, steerTau: 1.15, err: 0.35, overtake: 0.72, gap: 1.18, defend: 0.62, wet: 0.984, cleanAir: 1.012, look: 6, trim: 0.9922 },
+    // The metronome. Superb over one lap, superb in the rain, and he does not
+    // make mistakes - the price is that his speed is in the corners rather
+    // than on the straights, and that he is not the one who forces a pass.
+    // (The first draft said that in the comment and not in the numbers: he
+    // came out above the field on every single column, which the rule at the
+    // top of this table forbids, and the test caught it.)
+    'George Russell':     { corner: 1.016, straight: 0.988, brake: 1.02, steerTau: 1.05, err: 0.40, overtake: 0.82, gap: 1.02, defend: 0.88, wet: 1.034, cleanAir: 1.009, look: 4, trim: 1.0007 },
+    // The best wet-weather number in the game after Schumacher, and the rest
+    // of him is a very good midfielder who has never had the car.
+    'Nico Hulkenberg':    { corner: 1.002, straight: 1.006, brake: 0.98, steerTau: 1.20, err: 0.42, overtake: 0.88, gap: 1.08, defend: 0.95, wet: 1.046, cleanAir: 1.004, look: 8, trim: 0.9974 },
+    // Comes alive when the weather does. A racer rather than a qualifier, and
+    // streaky enough over a lap to sit below the field in clean air.
+    'Pierre Gasly':       { corner: 1.000, straight: 1.002, brake: 1.04, steerTau: 0.95, err: 0.80, overtake: 0.95, gap: 0.95, defend: 0.90, wet: 1.028, cleanAir: 0.998, look: 0, trim: 1.0042 },
+    // Unflappable: late on the brakes, decisive alongside, and almost no
+    // mistakes - the coolest head here and no standout weather or one-lap edge.
+    'Oscar Piastri':      { corner: 1.010, straight: 1.000, brake: 1.10, steerTau: 1.00, err: 0.34, overtake: 1.00, gap: 0.92, defend: 0.98, wet: 1.000, cleanAir: 1.002, look: 0, trim: 0.9960 }
 };
 
 // Physics constants mirrored from car.js - keep in sync if the car changes.
@@ -593,7 +642,13 @@ class AI {
 
         if (this.startCaution > 0) this.startCaution -= dt;
 
-        const line = track.getRacingLine ? track.getRacingLine(this.p.lineLevel) : null;
+        // The one place a driver's line is chosen, which is why a forked
+        // circuit needs nothing else in here: lineFor returns the arm this car
+        // picked, and everything below - the corner lookahead, the braking
+        // point, the overtaking window - is written against "a line" and does
+        // not care which one it got.
+        const line = track.lineFor ? track.lineFor(this.car)
+                   : (track.getRacingLine ? track.getRacingLine(this.p.lineLevel) : null);
         if (!line) { this.idle(); return; }
 
         this.idle();

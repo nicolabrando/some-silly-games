@@ -1183,6 +1183,10 @@ class Car {
         // comparable between any two cars anywhere on the lap.
         this.trackProgress = 0;
         this.lapStartProgress = 0;
+        // Which arm of a fork this car means to take, and which it is on.
+        // Meaningless on the thirty-two circuits that do not fork.
+        this.forkPick = 0;
+        this.forkSide = 0;
         this.lapS = 0;              // position round the current lap, 0 at the line
         this._lastS = undefined;
         this._lastDist = undefined;
@@ -1996,7 +2000,46 @@ class Car {
     // a car a lap down reads exactly one lap length behind.
     updateTrackProgress(track) {
         if (typeof track.getRacingLine !== 'function') return;
-        const line = track.getRacingLine('standard');
+        let line = track.getRacingLine('standard');
+        // ---- A CIRCUIT THAT FORKS -------------------------------------
+        // Two complete lines, identical everywhere except between the split
+        // and the merge, so the nearer one IS the arm this car is on - no
+        // window to be inside, no state to keep, nothing to reset when a car
+        // is punted from one arm to the other.
+        //
+        // The SEPARATION is what makes that safe. Outside the fork the two
+        // lines are the same road and the two readings differ by rounding, so
+        // "whichever is nearer" would flip back and forth on noise and an AI
+        // that had chosen the far arm would change its mind every frame on the
+        // approach. So the answer is only believed where the two roads are
+        // genuinely apart, and remembered in between.
+        if (track.forkAlt && typeof track.altRacingLine === 'function') {
+            const alt = track.altRacingLine();
+            if (alt && alt.count === line.count) {
+                const near = (L) => {
+                    const n = L.nodes, M = L.count;
+                    let d = Infinity;
+                    if (this._nodeIdx === undefined) {
+                        for (let i = 0; i < M; i += 3)
+                            d = Math.min(d, (this.x - n[i].cx) ** 2 + (this.y - n[i].cy) ** 2);
+                    } else {
+                        for (let o = -14; o <= 34; o++) {
+                            const i = (this._nodeIdx + o + M * 2) % M;
+                            d = Math.min(d, (this.x - n[i].cx) ** 2 + (this.y - n[i].cy) ** 2);
+                        }
+                    }
+                    return Math.sqrt(d);
+                };
+                const dS = near(line), dA = near(alt);
+                if (Math.abs(dS - dA) > 40) {
+                    this.forkSide = dA < dS ? 1 : 0;
+                    // and the driver drives the arm he is ON, whether he chose
+                    // it or was put there by somebody else's front wing
+                    this.forkPick = this.forkSide;
+                }
+                if (this.forkSide) line = alt;
+            }
+        }
         const nodes = line.nodes;
         const N = line.count;
         const total = line.length;

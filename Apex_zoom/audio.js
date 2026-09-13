@@ -226,9 +226,16 @@ function makeEngineVoice(spec, level) {
 function initAudio(isSpectator = false, seats = 1) {
     if (isAudioInitialized) return;
 
-    // Resume context if suspended (browser policy)
+    // Resume context if suspended (browser policy).
+    // An OfflineAudioContext - what the audio harness swaps in to render the
+    // game's sounds to a buffer and measure them - also reads "suspended"
+    // before it starts, and rejects resume(). Unhandled, that reaches the page
+    // as an error, so the promise is caught rather than the state guessed at.
     if (audioContext.state === 'suspended') {
-        audioContext.resume();
+        try {
+            const r = audioContext.resume();
+            if (r && r.catch) r.catch(() => {});
+        } catch (e) { /* not a context that can be resumed */ }
     }
 
     engines = [];
