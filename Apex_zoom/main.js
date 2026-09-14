@@ -3231,6 +3231,72 @@ function pitStintSeconds(key, laps, lapSec, lifeLaps) {
     return sec;
 }
 
+// ---------------------------------------------------------------------------
+//  THE SEARCH ITSELF, with nothing in it that knows whose race it is.
+//
+//  Two callers, and until now only one of them could count past two stops.
+//  raceStrategies - the board the PLAYER is shown - walks the race forwards and
+//  will happily come back with a four-stopper. aiPitPlan enumerated no-stop,
+//  one-stop and two-stop by hand, and when none of those fitted its margins it
+//  fell through to a hard-coded fallback: the longest-lived compound, split
+//  evenly, all stints the same rubber.
+//
+//  Which is why Nicola saw what he saw - "vedo che tutti partono sempre con la
+//  stessa mescola". Measured: with pit stops OFF the grid starts hard 53%,
+//  medium 27%, soft 14%, drift 6%; with them ON, hard 100%. At eight laps of
+//  the F1 circuit a hard set lasts 2.5 laps and a soft 1.4, so the race needs
+//  three or four stints and NOTHING the AI could enumerate reached the flag.
+//  Every car in every race took the fallback, and the fallback has one answer.
+//
+//  So the solver moves out here and both callers use it. The board keeps its
+//  own numbers (the player's real lap times) and the AI keeps its own (a
+//  notional lap and a much harsher wear budget); what they now share is the
+//  question, which is the part that was wrong.
+//
+//  `cost[k][i]` is what i laps on compound k costs in seconds, `maxStint[k]`
+//  the most laps that set can take, `STOP` the price of a stop. Returns every
+//  surviving plan as { t, stints: [[compound, laps], ...] }.
+// ---------------------------------------------------------------------------
+function stintPlans(laps, pool, maxStint, cost, STOP, K, minStint, maxOnes) {
+    const key = st => st.map(x => x[0] + x[1]).sort().join('|');
+    const state = [{ 0: [{ t: 0, ones: 0, stints: [] }] }];
+    for (let l = 1; l <= laps; l++) {
+        const buckets = {}, seen = {};
+        for (const k of pool) {
+            const top = Math.min(l, maxStint[k]);
+            for (let i = minStint; i <= top; i++) {
+                const prev = state[l - i];
+                if (!prev) continue;
+                for (const s of Object.keys(prev)) {
+                    const ns = (+s) + 1;
+                    const arr = buckets[ns] || (buckets[ns] = []);
+                    for (const e of prev[s]) {
+                        const ones = e.ones + (i === 1 ? 1 : 0);
+                        if (ones > maxOnes) continue;
+                        const t = e.t + cost[k][i] + (l - i > 0 ? STOP : 0);
+                        const st = e.stints.concat([[k, i]]);
+                        const kk = key(st);
+                        if (seen[kk] !== undefined) {
+                            if (t < arr[seen[kk]].t) arr[seen[kk]] = { t: t, ones: ones, stints: st };
+                            continue;
+                        }
+                        seen[kk] = arr.length;
+                        arr.push({ t: t, ones: ones, stints: st });
+                    }
+                }
+            }
+        }
+        for (const s of Object.keys(buckets)) {
+            buckets[s].sort((x, y) => x.t - y.t);
+            buckets[s] = buckets[s].slice(0, K);
+        }
+        state[l] = buckets;
+    }
+    let flat = [];
+    for (const s of Object.keys(state[laps])) flat = flat.concat(state[laps][s]);
+    return flat;
+}
+
 // The n quickest ways to the flag: any number of stops, every split, every
 // compound the weather allows.
 //
@@ -3281,7 +3347,6 @@ function raceStrategies(trackKey, laps, wet, n) {
     // 2.6s, the figure aiPitPlan has always used.
     const STOP = PIT_TIME + 2.6;
     const K = 8;
-    const key = st => st.map(x => x[0] + x[1]).sort().join('|');
     // A one-lap stint is a stop bought for one lap of fresh rubber. The model
     // will sometimes price it as worth it by a tenth; a pit wall would never
     // say it out loud, and a board that suggests it reads as broken.
@@ -3307,43 +3372,8 @@ function raceStrategies(trackKey, laps, wet, n) {
     // wall puts up the one-stopper, the two-stopper and the three-stopper, so
     // the search keeps the best of each and the one-stopper survives even when
     // it is ten seconds off - it is the alternative, that is the whole point.
-    const solve = (minStint, maxOnes) => {
-        const state = [{ 0: [{ t: 0, ones: 0, stints: [] }] }];
-        for (let l = 1; l <= laps; l++) {
-            const buckets = {}, seen = {};
-            for (const k of pool) {
-                const top = Math.min(l, maxStint[k]);
-                for (let i = minStint; i <= top; i++) {
-                    const prev = state[l - i];
-                    for (const s of Object.keys(prev)) {
-                        const ns = (+s) + 1;
-                        const arr = buckets[ns] || (buckets[ns] = []);
-                        for (const e of prev[s]) {
-                            const ones = e.ones + (i === 1 ? 1 : 0);
-                            if (ones > maxOnes) continue;
-                            const t = e.t + cost[k][i] + (l - i > 0 ? STOP : 0);
-                            const st = e.stints.concat([[k, i]]);
-                            const kk = key(st);
-                            if (seen[kk] !== undefined) {
-                                if (t < arr[seen[kk]].t) arr[seen[kk]] = { t: t, ones: ones, stints: st };
-                                continue;
-                            }
-                            seen[kk] = arr.length;
-                            arr.push({ t: t, ones: ones, stints: st });
-                        }
-                    }
-                }
-            }
-            for (const s of Object.keys(buckets)) {
-                buckets[s].sort((x, y) => x.t - y.t);
-                buckets[s] = buckets[s].slice(0, K);
-            }
-            state[l] = buckets;
-        }
-        let flat = [];
-        for (const s of Object.keys(state[laps])) flat = flat.concat(state[laps][s]);
-        return flat;
-    };
+    const solve = (minStint, maxOnes) =>
+        stintPlans(laps, pool, maxStint, cost, STOP, K, minStint, maxOnes);
     // Three passes, each giving up exactly one thing and no more: no short
     // stints at all; then a single short stint, so a length that will not
     // divide - five laps of a circuit where nothing lives past two - can still
@@ -3469,6 +3499,23 @@ function renderStrategies(laps) {
 // characters - Vettel, Verstappen, Alonso - run past even that on their bad
 // laps, and the final stint has no net under it.
 const PIT_ABUSE = { easy: 1.20, medium: 1.30, hard: 1.38, impossible: 1.58, alien: 1.62 };
+// ...and the MEDIAN car, which is what a stint should be planned around. The
+// numbers above are the worst car on its worst day, and planning every stint
+// for that was costing a stop and a half a race: measured on the F1 circuit,
+// sixteen cars, Impossible, the grid took 3.66 stops in twelve laps where the
+// old planner took 2.19, and lost two more cars doing it - a pit entry and exit
+// is where cars get hit.
+//
+// The right shape is optimistic where there is a safety net and pessimistic
+// where there is not. An early stint that runs short gets the bail-out
+// (pitMustStopNow) and loses a few seconds; the LAST stint has nothing behind
+// it and a car that runs out there crawls to the flag at a third of the speed
+// of the road. So the interior stints are planned at the median and the final
+// one still has to fit the worst case.
+//
+// Median column, from the same fit as the worst above (real wear per lap /
+// nominal, median car of a field of eight, Kart / Pettine / Oval).
+const PIT_ABUSE_PLAN = { easy: 1.06, medium: 1.13, hard: 1.20, impossible: 1.32, alien: 1.36 };
 // Where in a lap the box is, as a fraction of the lap: the slot sits 70-320px
 // of road before the line, which on a 2500-7500px lap is the last 3-10%.
 const STINT_AT = 0.95;
@@ -3476,146 +3523,198 @@ function pitAbuseFor(difficulty) {
     return PIT_ABUSE[difficulty] || 1.35;
 }
 
-function aiPitPlan(styleName, lineLen) {
-    const raceLen = TOTAL_LAPS * lineLen;
+// What a stint should be PLANNED at - see PIT_ABUSE_PLAN.
+function pitAbusePlanFor(difficulty) {
+    return PIT_ABUSE_PLAN[difficulty] || 1.15;
+}
+
+function aiPitPlan(styleName, lineLen, chassisKey) {
+    const laps = Math.max(1, TOTAL_LAPS);
     const lapSec = lineLen / 250;                 // close enough to rank plans
     const wet = typeof isRaining !== 'undefined' && isRaining;
-    const compounds = wet ? ['inter', 'wet'] : ['soft', 'medium', 'hard'];
-    // The stint priced the way the car will live it: the wear curve walked in
-    // slices, the same falloff, the same wall past 100% (car.js), and a pace
-    // model that goes steep once the set is genuinely finished - the
-    // 0.35%-per-point linearisation is the measured chassis number near perf
-    // 1.0, not a law of nature at perf 0.4.
-    // Same integration the strategy board prices its stints with - see
-    // pitStintSeconds. One model, so what the board recommends and what the
-    // grid does cannot drift apart.
-    const stintCost = (key, px) =>
-        pitStintSeconds(key, px / lineLen, lapSec, pitLifePx(key, lineLen) / lineLen);
+    const pool = wet ? ['inter', 'wet'] : ['soft', 'medium', 'hard'];
     const s = AI_DRIVER_STYLES[styleName];
-    const softBias = s ? ((s.overtake - 0.85) + (s.err - 0.7) * 0.5) * 0.6 : 0;
     // HOW MUCH HARDER THE CAR WILL BE ON ITS TYRES THAN THE BROCHURE SAYS -
-    // and it depends on who is driving. 1.12 was the figure for the AI as it
-    // was measured once; it is not the figure for the AI at the top of the
-    // ladder, where the car is driven at the limit of the grip every corner.
-    // Measured per difficulty (real wear per lap / nominal, median and worst
-    // car of a field of eight, no stops allowed, Kart / Pettine / Oval):
+    // and it depends on who is driving. Measured per difficulty (real wear per
+    // lap / nominal, median and worst car of a field of eight, no stops
+    // allowed, Kart / Pettine / Oval):
     //
     //    medium       hard 1.00-1.13 median, 1.29 worst   medium 1.01-1.13, 1.20
     //    impossible   hard 1.10-1.46 median, 1.51 worst   medium 1.06-1.22, 1.22
     //
-    // At 1.12 a plan at Impossible put every car's final stint a lap or so
-    // past the end of its tyre, and a field of cars finishing at 66-120 px/s
-    // on a road where the next man arrives at 275 is what Nicola was hitting.
     // The budget is set at the WORST car, not the median, on purpose: a stint
     // that stops a lap early costs five seconds, a stint that runs out costs
     // twenty and takes somebody else with it.
-    const ABUSE = pitAbuseFor(isChampionship && championshipState
+    const diff = isChampionship && championshipState
         ? championshipState.difficulty
-        : document.getElementById('difficulty-select').value);
-    // THE LAST STINT HAS NO SAFETY NET. An early stint that runs short gets
-    // the bail-out (pitMustStopNow); the final one can only be driven to the
-    // flag on whatever is left, and a driver on a bad day is 10% over the
-    // budget above. So the last stint is not allowed to be a fit - it has to
-    // be a fit with room.
-    const FINAL_MARGIN = 1.15;
-    let best = null;
-    for (const first of compounds) {
-        // No stop is always a CANDIDATE - the overrun penalty in stintCost
-        // prices the cliff, so a marginal gamble survives the maths where a
-        // suicidal one drowns in it. That is what keeps the no-stop hard alive
-        // at Circo Massimo and dead everywhere else.
-        // ...but a no-stop that ends with the car on rims for a lap or more
-        // is not a gamble, it is the crawl Nicola was hitting: when every stop
-        // plan failed its margins this was the only candidate left, and it won
-        // by default. A set has to cover at least 70% of the race to be a
-        // no-stop candidate at all; anything shorter goes to the fallback.
-        if (pitLifePx(first, lineLen) / ABUSE >= raceLen * 0.70) {
-            const cost = stintCost(first, raceLen * ABUSE) +
-                         (Math.random() - 0.5) * 0.8;
-            if (!best || cost < best.cost) best = { cost, start: first, stopLap: null, tyre: null };
-        }
-        // one stop, pitting where the first set is ~85% spent for real
-        const life1 = pitLifePx(first, lineLen) / ABUSE;
-        const stopFrac = (life1 * 0.85) / raceLen;
-        if (stopFrac < 0.2 || stopFrac > 0.92) continue;
-        // a little personal spread on the stop lap, so a grid on the same
-        // compound does not queue for the box on the same lap - but never past
-        // the set's actual life
-        // WHAT A STOP LAP MEANS. `stopLap === car.lap` arms the call once that
-        // many laps are COMPLETED, and the car is collected at the end of the
-        // lap it is then on - so a plan of "stop@2" is a first stint of 2.95
-        // laps, not 2. The planner priced it as 2 for as long as it existed,
-        // which is a lap of tyre it never budgeted, and every first stint ran
-        // a lap longer than the sums said. STINT_AT is where in a lap the box
-        // is. And the final lap is off limits (the lapsLeft guard in
-        // updatePhysics), so the last usable stop lap is TOTAL_LAPS - 2.
-        const stopLap = Math.max(1, Math.min(TOTAL_LAPS - 2,
-            Math.min(Math.floor(life1 * 0.98 / lineLen - STINT_AT),
-            Math.round(stopFrac * TOTAL_LAPS - STINT_AT + (Math.random() - 0.5) * 1.2))));
-        if (stopLap < 1) continue;
-        const px1 = (stopLap + STINT_AT) * lineLen, px2 = raceLen - px1;
-        if (life1 < px1 * 0.95) continue;                 // the first stint has to fit too
-        for (const second of compounds) {
-            if (pitLifePx(second, lineLen) / ABUSE < px2 * FINAL_MARGIN) continue;
-            let cost = stintCost(first, px1 * ABUSE) + stintCost(second, px2 * ABUSE) +
-                       PIT_TIME + 2.6 + (Math.random() - 0.5) * 0.8;
-            if (first === 'soft') cost -= softBias;
-            if (!best || cost < best.cost) best = { cost, start: first, stopLap, tyre: second };
-        }
+        : document.getElementById('difficulty-select').value;
+    let ABUSE = pitAbusePlanFor(diff);      // the median car: what to plan on
+    let ABUSE_BAD = pitAbuseFor(diff);      // the worst day: what the last stint must survive
+    // ...AND THE CAR, which the planner used to ignore completely. The chassis
+    // wear multiplier is not an opinion about a driver, it is a term in the
+    // wear equation itself (car.js: tyreWear += ... * chassisWear * ...) and it
+    // runs from 0.88 on the Ridge to 1.05 on the Aero - a fifth of a set
+    // between the ends of the grid. A car that really does make its tyres last
+    // twelve per cent longer should plan longer stints, and one that chews them
+    // should plan shorter ones. Four cars, four honest beliefs about how long a
+    // set will go, which is a source of strategy variety that costs nothing in
+    // realism: each of them is right about itself.
+    const chas = chassisKey && CHASSIS[chassisKey];
+    if (chas && chas.wear) { ABUSE *= chas.wear; ABUSE_BAD *= chas.wear; }
+
+    // The stint priced the way the car will live it: the wear curve walked in
+    // slices, the same falloff, the same wall past 100% (car.js). This is
+    // pitStintSeconds, which is also what the player's strategy board prices
+    // with - one model, so what the board recommends and what the grid does
+    // cannot drift apart.
+    const life = {}, lifeBad = {}, maxStint = {}, cost = {};
+    for (const k of pool) {
+        const px = pitLifePx(k, lineLen) / lineLen;
+        life[k] = px / ABUSE;                                    // in laps
+        lifeBad[k] = px / ABUSE_BAD;                             // on a bad day
+        maxStint[k] = Math.max(0, Math.floor(life[k] * 1.02));
+        cost[k] = new Float64Array(laps + 1);
+        for (let i = 1; i <= laps; i++) cost[k][i] = pitStintSeconds(k, i, lapSec, life[k]);
     }
-    // Two stops, for the circuits where one cannot arithmetically be enough -
-    // Kart's 18845px race against a longest set of 10500px. Stops at even
-    // thirds, jittered; every stint checked against its compound.
-    if (TOTAL_LAPS >= 3) {
-        // the jittered split first, the canonical thirds as the fallback: an
-        // unlucky draw (stops at 1 and 4 leaves a 3-lap middle stint no
-        // compound survives) must not silently hand the race to a no-stop that
-        // costs twenty seconds more - it did, once, to Verstappen
-        // in COMPLETED laps, so a lap earlier than the thirds would suggest -
-        // see STINT_AT above - and never on the final lap
-        const top = TOTAL_LAPS - 2;
-        const c1 = Math.max(1, Math.min(top, Math.round(TOTAL_LAPS / 3 - STINT_AT)));
-        const c2 = Math.min(top, Math.max(c1 + 1, Math.round(2 * TOTAL_LAPS / 3 - STINT_AT)));
-        const j1 = Math.max(1, Math.min(top, Math.round(TOTAL_LAPS / 3 - STINT_AT + (Math.random() - 0.5))));
-        const j2 = Math.min(top, Math.max(j1 + 1,
-                            Math.round(2 * TOTAL_LAPS / 3 - STINT_AT + (Math.random() - 0.5))));
-        const pairs = (j1 === c1 && j2 === c2) ? [[j1, j2]] : [[j1, j2], [c1, c2]];
-        for (const [l1, l2] of pairs) {
-            if (l2 <= l1) continue;
-            const px1 = (l1 + STINT_AT) * lineLen, px2 = (l2 - l1) * lineLen,
-                  px3 = raceLen - (l2 + STINT_AT) * lineLen;
-            if (px3 <= 0) continue;
-            for (const a of compounds) for (const b of compounds) for (const c of compounds) {
-                if (pitLifePx(a, lineLen) / ABUSE < px1 * 0.95) continue;
-                if (pitLifePx(b, lineLen) / ABUSE < px2 * 0.95) continue;
-                if (pitLifePx(c, lineLen) / ABUSE < px3 * FINAL_MARGIN) continue;
-                let cost = stintCost(a, px1 * ABUSE) + stintCost(b, px2 * ABUSE) +
-                           stintCost(c, px3 * ABUSE) + 2 * (PIT_TIME + 2.6) +
-                           (Math.random() - 0.5) * 0.8;
-                if (a === 'soft') cost -= softBias * 0.7;
-                if (!best || cost < best.cost)
-                    best = { cost, start: a, stopLap: l1, tyre: b, stopLap2: l2, tyre2: c };
-            }
-        }
+    const STOP = PIT_TIME + 2.6;
+
+    // ---- THE DRIFT COMPOUND, which is not on the planner's axis ---------
+    // Soft, medium and hard are one axis - performance now against performance
+    // later - and the cost model above prices that axis honestly. The drift
+    // tyre is off it: it trades lateral grip for a tail that steps out on the
+    // throttle, and what that is WORTH depends on how much of the lap is slow
+    // corners, not on how worn the set is. The grip x bite model libels it,
+    // which is why the player's strategy board refuses to price it at all.
+    //
+    // So it is not put into the search. It is asked for the way it has always
+    // been asked for - AI.chooseTyre, which weighs the driver's temperament
+    // against the circuit's share of slow corners, both fitted - and if that
+    // says drift, the driver opens on it and the model plans the rest of the
+    // race from where that set runs out. With pit stops ON the compound had
+    // simply disappeared from the game: the planner's pool never contained it.
+    let driftOpen = 0;
+    if (!wet && typeof AI !== 'undefined' && AI.chooseTyre &&
+        AI.chooseTyre(styleName, laps, false, track) === 'drift') {
+        const dLife = pitLifePx('drift', lineLen) / lineLen / ABUSE;
+        driftOpen = Math.max(1, Math.min(laps, Math.floor(dLife * 1.02)));
+        if (driftOpen >= laps) return { cost: 0, start: 'drift', stops: [] };
     }
-    if (best) return best;
-    // NOTHING FITS - a long race on a circuit that eats tyres. The old fallback
-    // was a no-stop on a medium, which is the worst possible answer to "no set
-    // lasts". Split the race evenly on the longest-lived compound into as many
-    // stints as it takes; the pickup logic promotes the second stop when the
-    // first is taken, and the bail-out covers anything beyond that.
-    // The remainder goes on the FIRST stint, never the last: an early stint
-    // that runs short has the bail-out behind it, the final one has nothing.
-    const longest = wet ? 'wet' : 'hard';
-    const life = pitLifePx(longest, lineLen) / ABUSE;
-    const stints = Math.min(3, Math.max(2, Math.ceil(raceLen / Math.max(1, life))));
-    const base = Math.floor(TOTAL_LAPS / stints);
-    const extra = TOTAL_LAPS - base * stints;
-    const l1 = Math.max(1, Math.min(TOTAL_LAPS - 2, base + extra));   // the long one, first
-    const l2 = stints === 3 ? Math.min(TOTAL_LAPS - 2, l1 + base) : null;
-    return { cost: Infinity, start: longest, stopLap: l1, tyre: longest,
-             stopLap2: l2 !== null && l2 > l1 ? l2 : null,
-             tyre2: l2 !== null && l2 > l1 ? longest : null };
+    const planLaps = laps - driftOpen;
+
+    // ONE SHORT STINT IS ALLOWED HERE, and it is not allowed on the player's
+    // board. The board is advice, and a pit wall that says "one lap on the
+    // soft" out loud reads as broken; the AI is not advising, it is racing, and
+    // at Impossible a soft lasts 1.7 laps of the F1 circuit - so refusing
+    // one-lap stints refuses the soft compound ENTIRELY at the top difficulty.
+    // The cost model prices the stop it needs, so it is taken when it is worth
+    // taking and not otherwise: measured, it is a minority call, which is what
+    // a one-lap gamble should be.
+    let flat = stintPlans(planLaps, pool, maxStint, cost, STOP, 8, 1, 1);
+    if (!flat.length) flat = stintPlans(planLaps, pool, maxStint, cost, STOP, 8, 1, Infinity);
+
+    // ---- ORDER WITHIN A PLAN ------------------------------------------
+    // Nothing in this game makes a stint cost more early than late - no fuel
+    // load, no track evolution - so the solver treats a plan as a multiset and
+    // the order is ours to choose. Softest first, which is both how a pit wall
+    // says it and the order that leaves the most margin where it is needed:
+    //
+    // THE LAST STINT HAS NO SAFETY NET. An early stint that runs short gets the
+    // bail-out (pitMustStopNow); the final one can only be driven to the flag
+    // on whatever is left, and a driver on a bad day is over the budget above.
+    // So the last stint has to be a fit WITH ROOM, and the longest-lived
+    // compound is the one that can give it.
+    // The last stint is measured against the BAD day, not the median one, which
+    // is the whole point of keeping two numbers: 1.0 here already means "still
+    // gets home if this is the worst tyre day of your season".
+    const FINAL_MARGIN = 1.0;
+    const roomOf = (st) => lifeBad[st[0]] / Math.max(0.01, st[1]);
+    // ORDER IS A FREE CHOICE, and it is where a lot of the variety lives. The
+    // only stint whose position matters is the LAST one, so that is chosen -
+    // from those with room, at random among them - and the rest are shuffled.
+    // Two cars on the same three-stop plan can perfectly well run their
+    // compounds in different orders, and now they do: sorting softest-first
+    // instead put every car at Monza on the same opening set, which is the
+    // complaint this whole change exists to answer.
+    const order = (stints) => {
+        const idx = stints.map((x, i) => i);
+        const fit = idx.filter(i => roomOf(stints[i]) >= FINAL_MARGIN);
+        const lastI = fit.length
+            ? fit[Math.floor(Math.random() * fit.length)]
+            : idx.slice().sort((a, b) => roomOf(stints[b]) - roomOf(stints[a]))[0];
+        const rest = idx.filter(i => i !== lastI);
+        for (let i = rest.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const t = rest[i]; rest[i] = rest[j]; rest[j] = t;
+        }
+        return rest.concat([lastI]).map(i => stints[i]);
+    };
+    const ordered = flat.map(p => ({
+        t: p.t, stints: order(p.stints),
+        // can this plan put SOMETHING with room at the end of the race
+        room: Math.max.apply(null, p.stints.map(roomOf))
+    }));
+    let usable = ordered.filter(p => p.room >= FINAL_MARGIN);
+    // ...and if the race admits nothing with that much room, the plan with the
+    // most of it rather than no plan at all.
+    if (!usable.length && ordered.length)
+        usable = [ordered.slice().sort((a, b) => b.room - a.room)[0]];
+    if (!usable.length) {
+        // the arithmetic said no race is possible: one long stint on the
+        // longest-lived thing, and the bail-out picks up the pieces
+        const longest = wet ? 'wet' : 'hard';
+        return { cost: Infinity, start: longest, stops: [] };
+    }
+
+    // ---- WHICH OF THEM THIS DRIVER TAKES -------------------------------
+    // Not "the cheapest", which is how sixteen cars end up on one strategy.
+    // Every plan within a few seconds of the best is a real choice a real pit
+    // wall would argue about, so the pick is a weighted draw over them - and
+    // the weights are where the driver's character goes in.
+    //
+    //   * the attackers back the soft: track position now, and they believe
+    //     they can make the tyre last (softBias, as before);
+    //   * the clean-air specialists want fewer stops - their race is run in
+    //     front of people, not in the pit lane;
+    //   * a driver who lives on the edge is happier with an aggressive plan
+    //     that needs the stops to come off.
+    //
+    // TEMP is in seconds and sets how much worse a plan may be and still get
+    // taken: at 2.5s a plan three seconds off the best is taken about a third
+    // as often, one twenty seconds off effectively never.
+    const softBias = s ? ((s.overtake - 0.85) + (s.err - 0.7) * 0.5) * 0.6 : 0;
+    const stopTaste = s ? ((s.cleanAir - 1.0) * 40 - (s.overtake - 0.85) * 1.2) : 0;
+    const TEMP = 2.5;
+    let bestAdj = Infinity;
+    for (const p of usable) {
+        const softs = p.stints.filter(x => x[0] === 'soft' || x[0] === 'inter').length;
+        p.adj = p.t - softBias * softs + stopTaste * (p.stints.length - 1);
+        if (p.adj < bestAdj) bestAdj = p.adj;
+    }
+    let total = 0;
+    for (const p of usable) { p.w = Math.exp(-(p.adj - bestAdj) / TEMP); total += p.w; }
+    let r = Math.random() * total, pick = usable[0];
+    for (const p of usable) { r -= p.w; if (r <= 0) { pick = p; break; } }
+
+    // ---- THE PLAN THE CAR WILL ACTUALLY DRIVE --------------------------
+    // WHAT A STOP LAP MEANS: `stopLap === car.lap` arms the call once that many
+    // laps are COMPLETED, and the car is collected at the end of the lap it is
+    // then on - so a stint of L laps is a stop lap of L-1 (STINT_AT is where in
+    // the lap the box sits). And the final lap is off limits, so the last
+    // usable stop lap is TOTAL_LAPS - 2.
+    const stops = [];
+    let done = driftOpen;
+    if (driftOpen) stops.push({ lap: Math.max(1, Math.min(laps - 2,
+                                    Math.round(driftOpen - STINT_AT))),
+                                tyre: pick.stints[0][0] });
+    for (let i = 0; i < pick.stints.length - 1; i++) {
+        done += pick.stints[i][1];
+        const lap = Math.max(1, Math.min(laps - 2, Math.round(done - STINT_AT)));
+        // a stop lap that has been squeezed onto one already taken is not a
+        // stop, it is the same stop twice
+        if (stops.length && lap <= stops[stops.length - 1].lap) continue;
+        stops.push({ lap: lap, tyre: pick.stints[i + 1][0] });
+    }
+    return { cost: pick.t, start: driftOpen ? 'drift' : pick.stints[0][0], stops: stops };
 }
 
 // The pit sequence itself: kinematic, so it cannot be bumped, rushed or
@@ -8935,11 +9034,17 @@ function startGame(forceTrackType = null) {
         // With pit stops on, the AI's compound is the first stint of a PLAN
         // (see aiPitPlan) rather than a reading of the whole race.
         if (pitModeOn && !p.isPlayer) {
-            const plan = aiPitPlan(p.driverName, car._lapPixels);
-            car.pitPlan = plan.stopLap
-                ? { stopLap: plan.stopLap, tyre: plan.tyre,
-                    stopLap2: plan.stopLap2, tyre2: plan.tyre2 }
+            const plan = aiPitPlan(p.driverName, car._lapPixels, car.chassisKey);
+            // A CHAIN, not two slots. The plan used to be stopLap/tyre plus
+            // stopLap2/tyre2 and nothing after it, which was enough while the
+            // planner could only count to two stops. It counts properly now - a
+            // twelve-lap race where a hard lasts two and a half laps is a
+            // four-stopper, arithmetically - so the plan is a list and the car
+            // walks down it.
+            const chain = (i) => (plan.stops && i < plan.stops.length)
+                ? { stopLap: plan.stops[i].lap, tyre: plan.stops[i].tyre, next: chain(i + 1) }
                 : null;
+            car.pitPlan = chain(0);
             car._pitStartTyre = plan.start;
         }
         const tKey = p.isPlayer ? seatTyre(car.playerIndex)
@@ -9251,18 +9356,21 @@ function updatePhysics(dt) {
             // the AI follows its plan, or bails out at 97% worn
             if (!c.isPlayer && !c.wantPit && !c.pitPhase && lapsLeft >= 1.3 &&
                 raceMode !== 'qualifying') {
-                const planNext = () => (c.pitPlan && c.pitPlan.stopLap2 &&
-                                        c.pitPlan.stopLap2 > c.lap)
-                    ? { stopLap: c.pitPlan.stopLap2, tyre: c.pitPlan.tyre2 }
-                    : null;
+                // The rest of the plan, from wherever the car has got to: the
+                // next stop still in front of it. Walking the chain rather than
+                // reading a second slot is what lets a three- or four-stopper
+                // be a plan instead of two stops and then guesswork.
+                const planNext = () => {
+                    let n = c.pitPlan && c.pitPlan.next;
+                    while (n && n.stopLap <= c.lap) n = n.next;
+                    return n || null;
+                };
                 if (c.pitPlan && c.pitPlan.stopLap === c.lap) {
                     c.wantPit = true;
                     c.pitNextTyre = c.pitPlan.tyre || pitSuggestTyre(c);
-                    // a two-stopper's second call becomes the plan when the
-                    // first is taken (pitUpdate clears pitPlan at the box)
-                    c._pitPlanNext = c.pitPlan.stopLap2
-                        ? { stopLap: c.pitPlan.stopLap2, tyre: c.pitPlan.tyre2 }
-                        : null;
+                    // the next call in the chain becomes the plan when this one
+                    // is taken (pitUpdate promotes it at the box)
+                    c._pitPlanNext = c.pitPlan.next || null;
                 } else if (pitMustStopNow(c, lapsLeft)) {
                     c.wantPit = true;
                     c.pitNextTyre = pitSuggestTyre(c);
