@@ -243,22 +243,40 @@ function cameraVisibleRect() {
 //  the cars, the cranes, the bridge deck (painted OVER the cars that drive
 //  under it) - and the STANDS, which look static but are not: the crowd's
 //  shirts shimmer on a 260ms clock, and baking them into the circuit would
-//  freeze the crowd for the whole race. They get a LAYER OF THEIR OWN,
-//  transparent, redrawn only when the shimmer clock actually ticks - four
-//  times a second instead of sixty - and blitted between the background and
-//  the circuit, which is exactly where the old code painted them. Measured
-//  before this split: the crowd alone was 0.7-2.3ms per frame, most of what
-//  the bake had just saved.
+//  freeze the crowd for the whole race.
 //
-//  The frame is therefore three cheap operations: background fill, stands
-//  blit, circuit blit. The circuit layer rebuilds when its inputs change -
-//  a new track instance (every session makes one), a new resolution, or a
-//  reassigned puddle list (weather is rolled after the track is made, so
-//  the reference is the honest signal); the stands layer additionally on
-//  the shimmer tick.
+//  THE CROWD USED TO HAVE A LAYER OF ITS OWN and it was the worst thing in the
+//  frame. Nicola reported an occasional freeze mid-race in Firefox - "non perdo
+//  nulla, si riparte da dove si era prima". Measured on Silverstone, nineteen
+//  rivals, half a minute of real racing: 118 frames out of 1604 took longer
+//  than 18ms and 115 of those were over 33ms, one every quarter of a second.
+//  Every single one was inside drawTrackFrame, and inside that, in ONE call:
+//
+//      drawImage:stands   in 118 long frames, mean 31.5ms
+//      drawImage:circuit  in 118 long frames, mean  3.7ms
+//      clearRect:stands   in 115 long frames, mean  0.0ms
+//
+//  The clear and the redraw were free - 3.8ms of actual drawing, and the clear
+//  is deferred. What cost the time was the first READ of the layer afterwards:
+//  a 8014x5491 canvas is 44 megapixels, and a canvas the page has just written
+//  to has to go back up to the GPU before it can be drawn from. Four times a
+//  second, every second of every race, on every circuit big enough to matter.
+//  The layer was saving 2ms of drawing and paying 31ms for the privilege.
+//
+//  So the crowd is drawn LIVE again, in world space, but culled to what the
+//  camera can see - which is three or four stands out of eighty. The cost that
+//  sent it into a layer in the first place was for drawing ALL of them, every
+//  frame, uncut. Nothing is uploaded, nothing spikes, and the shimmer is on the
+//  same clock it always was.
+//
+//  The frame is therefore: background fill, the handful of visible stands, one
+//  circuit blit. The circuit layer rebuilds when its inputs change - a new
+//  track instance (every session makes one), a new resolution, or a reassigned
+//  puddle list (weather is rolled after the track is made, so the reference is
+//  the honest signal). It is never written to mid-race, which is why it never
+//  cost what the crowd cost.
 // ---------------------------------------------------------------------------
 let trackLayer = null;
-let standsLayer = null;
 
 // Device pixels per WORLD pixel in the baked layers. Ideally RES * zoom, so
 // the bake is pixel-sharp under the camera's magnification; capped by a
@@ -325,34 +343,19 @@ function drawTrackFrame(g) {
         trackLayer = { canvas: cv, track: track, scale: S,
                        puddles: track.puddles, pit: pitModeOn };
     }
-    const tick = Math.floor(Date.now() / 260);   // drawStands' own clock
-    if (!standsLayer || standsLayer.track !== track || standsLayer.scale !== S) {
-        const cv = document.createElement('canvas');
-        cv.width = Math.round(W * S);
-        cv.height = Math.round(H * S);
-        standsLayer = { canvas: cv, track: track, scale: S, tick: null };
-    }
-    if (standsLayer.tick !== tick) {
-        const t = standsLayer.canvas.getContext('2d');
-        t.setTransform(1, 0, 0, 1, 0, 0);
-        t.clearRect(0, 0, standsLayer.canvas.width, standsLayer.canvas.height);
-        t.setTransform(S, 0, 0, S, 0, 0);
-        track.drawStands(t);
-        standsLayer.tick = tick;
-    }
     // Grass to the horizon: fill the whole WINDOW in screen space, so the
     // world's edge never shows as a hard line against the void.
     applyScreenTransform(g);
     g.fillStyle = '#388E3C';
     g.fillRect(0, 0, WORLD_W, WORLD_H);
-    // Then only the part of the bake the camera can actually see: on a big
-    // world blitting the whole layer per frame would move forty megapixels a
-    // frame for two megapixels shown.
     applyWorldTransform(g);
     const v = cameraVisibleRect();
     if (v.w > 0 && v.h > 0) {
-        g.drawImage(standsLayer.canvas, v.x * S, v.y * S, v.w * S, v.h * S,
-                    v.x, v.y, v.w, v.h);
+        // the crowd, live and culled to the window (see the note above), then
+        // only the part of the bake the camera can actually see: on a big world
+        // blitting the whole layer per frame would move forty megapixels for
+        // two megapixels shown.
+        track.drawStands(g, v);
         g.drawImage(trackLayer.canvas, v.x * S, v.y * S, v.w * S, v.h * S,
                     v.x, v.y, v.w, v.h);
     }
@@ -2493,12 +2496,26 @@ function radioLapReport(car, isBest) {
     car._radioPos = pos;
 
     // ---- 3: the flag, the box, the car falling apart --------------------
-    if (left === 1) add(3, 'last', 'Last lap. Last lap.');
+    //
+    // THE LAST LAP IS NOT A LAP YOU BOX ON. Nicola, on the final lap with the
+    // set finished, was told to box this lap - which is a pit wall asking a man
+    // to throw the race away to fit tyres for a corner and a half. The box
+    // calls below are gated on there being a lap AFTER this one; here, the flag
+    // call absorbs the tyre news instead, because two priority-3 lines on the
+    // same lap is one of them talking over the other.
+    if (left === 1) {
+        const w = car.tyreWear || 0;
+        add(3, 'last', (pitRoadWear && w > 0.75)
+            ? 'Last lap. There is nothing left on these tyres - bring it home.'
+            : 'Last lap. Last lap.');
+    }
 
     // The tyre calls read the RACE wear law, not merely the presence of a box:
     // a qualifying session with the box open wears a set on the old law and
     // has no "end of the race" to fall short of.
-    if (pitRoadWear && left >= 1) {
+    // ...and only while a stop can still buy something: see the last-lap note
+    // above. `left >= 2` means there is a lap to run on the new set.
+    if (pitRoadWear && left >= 2) {
         const wear = car.tyreWear || 0;
         const rate = car._wearLapRate || 0;
         // the same projection the AI stops on: will this set reach the flag -
@@ -2601,9 +2618,25 @@ function radioLapReport(car, isBest) {
         add(2, null, 'We have lost a place. You are ' + radioOrdinal(pos) + ' now.');
     else if (was && pos < was)
         add(2, null, 'Good pass. ' + radioOrdinal(pos, true) + ' place.');
+    // THE RAIN CALL HAS TO BE ABOUT THIS GAME. It used to say "watch the white
+    // lines", which is what a real engineer says and is about a hazard this
+    // circuit does not have - there is no paint on these roads. What there IS,
+    // and what actually ends races here, is standing water: makePuddles puts
+    // one to three down in the damp and eight to twelve when it is soaked, and
+    // driving into one at speed takes the steering away from you until you are
+    // through it. So the call names that, and the compound, which is the other
+    // thing a wall would say the moment the rain arrives.
     if (typeof isRaining !== 'undefined' && isRaining && !car._radioRain) {
         car._radioRain = true;
-        add(2, 'rain', 'It is raining. Watch the white lines.');
+        const soaked = (typeof wetLevel !== 'undefined' && wetLevel === 'soaked');
+        const water = soaked ? 'There is standing water right across the circuit'
+                             : 'There is standing water in places';
+        if (pitModeOn && car.tyre && !car.tyre.rain)
+            add(3, 'rain', 'It is raining and you are on a dry tyre. ' + water +
+                           '. Box when you are ready and we will put the right rubber on it.');
+        else
+            add(2, 'rain', 'It is raining. ' + water +
+                           '. Go around it, not through it.');
     }
 
     // ---- 1: colour, when the wall has the room for it --------------------
@@ -3621,7 +3654,10 @@ function vscPitBias(car) {
 //      going - the later stop is the better stop; if no, this window is the
 //      last one where the car arrives on rubber rather than on rims.
 // Until a full lap has been measured on this set the old 97% rule stands.
-function pitMustStopNow(c) {
+//
+// `raceLeft`, when given, is how much racing this car has in front of it - which
+// for a car a lap down is NOT how far it is from its own flag. See pitRaceLeft.
+function pitMustStopNow(c, raceLeft) {
     let rate = c._wearLapRate;
     // a fresh set: nothing measured on it yet, but the driver has been measured
     if (!(rate > 0) && c._abuseSeen > 0 && c.tyre && c._lapPixels)
@@ -3629,16 +3665,70 @@ function pitMustStopNow(c) {
     if (!(rate > 0)) return c.tyreWear > 0.97;
     const lineLen = pitLineLen();
     const frac = Math.max(0, Math.min(1, (c.lapS || 0) / lineLen));
-    const toFlag = Math.max(0, (TOTAL_LAPS - c.lap) - frac);
+    let toFlag = Math.max(0, (TOTAL_LAPS - c.lap) - frac);
+    if (raceLeft !== undefined && raceLeft < toFlag) toFlag = Math.max(0, raceLeft);
     if (c.tyreWear + rate * toFlag <= 1.0) return false;         // it gets home
     // The next window would be on the final lap, where a stop is not allowed
     // (see the lapsLeft guard at the call site): this one is the last usable.
-    if ((TOTAL_LAPS - c.lap) <= 2) return true;
+    if (toFlag <= 2) return true;
     // road from here to this lap's pickup window, then one more lap to the next
     const winFrac = 1 - (pitSpotFor(track).back + PIT_PICKUP_LEAD) / lineLen;
     const toWindow = frac <= winFrac ? (winFrac - frac) : (1 - frac + winFrac);
     const atNextWindow = c.tyreWear + rate * (toWindow + 1.0);
     return atNextWindow > 1.0;
+}
+
+// ---------------------------------------------------------------------------
+//  HOW MUCH RACE THIS CAR HAS LEFT - which is not how far it is from its own
+//  flag, and the difference is a bug Nicola spotted from the cockpit.
+//
+//  He said cars seemed to be pitting on the last lap and added "non so se sono
+//  i doppiati". They were. The log of twenty sessions has NO stop taken on lap
+//  8 of 8 - the existing guard sees to that - but 96 stops out of 346 were
+//  taken by a car one, two or three laps down while the LEADER was already on
+//  the final lap. Those cars dive into the box, take on a fresh set, rejoin,
+//  and are classified at their next crossing of the line, which is exactly what
+//  car.js does once leaderFinished is up. The tyres never turn a wheel in
+//  anger. From the cockpit it looks like the whole field pitting on the last
+//  lap, because that is what it is.
+//
+//  The guard was right and was measuring the wrong race: TOTAL_LAPS - c.lap is
+//  the distance to a chequered flag a lapped car will never reach. The flag
+//  comes for everyone when the LEADER takes it, and a lapped car then runs to
+//  the end of whatever lap it happens to be on. So what is left in front of it
+//  is the leader's remaining road, plus the tail of its own current lap AT THAT
+//  MOMENT - not now. Both cars are covering ground at roughly the same rate, so
+//  by the time the leader finishes this car's lap fraction has moved on by the
+//  leader's remaining laps, and what is left of that lap is the tail:
+//
+//      race left = min( my own laps to my own flag ,
+//                       leaderLeft + (1 - frac(myFrac + leaderLeft)) )
+//
+//  The cruder bound - leaderLeft + 1 - says a car always gets a whole extra lap
+//  and lets through stops that buy a corner.
+// ---------------------------------------------------------------------------
+function pitLeaderLapsLeft() {
+    if (typeof leaderFinished !== 'undefined' && leaderFinished) return 0;
+    const lineLen = pitLineLen();
+    let best = Infinity;
+    for (const c of cars) {
+        if (c.isBroken) continue;          // parked: it is not going to take a flag
+        const frac = Math.max(0, Math.min(1, (c.lapS || 0) / lineLen));
+        const l = (TOTAL_LAPS - c.lap) - frac;
+        if (l < best) best = l;
+    }
+    return best;
+}
+
+function pitRaceLeft(c, leaderLeft) {
+    const lineLen = pitLineLen();
+    const frac = Math.max(0, Math.min(1, (c.lapS || 0) / lineLen));
+    const own = (TOTAL_LAPS - c.lap) - frac;
+    const lead = (leaderLeft === undefined) ? pitLeaderLapsLeft() : leaderLeft;
+    if (!isFinite(lead)) return Math.max(0, own);
+    const atFlag = (frac + Math.max(0, lead)) % 1;      // where I will be when he finishes
+    const toMyLine = Math.max(0, lead) + (1 - atFlag);
+    return Math.max(0, Math.min(own, toMyLine));
 }
 
 function pitWrapAngle(car) {
@@ -4456,6 +4546,87 @@ function fmtLapMs(ms) {
     return (ms / 1000).toFixed(3);
 }
 
+// ---------------------------------------------------------------------------
+//  A CAR COLOUR YOU CAN ACTUALLY READ
+//
+//  Every panel in this game is near-black - rgba(0,0,0,.85) over the race, and
+//  the cards themselves are a #101216 gradient - and the tables write a driver's
+//  name in his CAR's colour. That is the right idea and it fails at the dark end
+//  of the palette: Nicola sent a screenshot of the championship standings where
+//  "Max Verstappen (black)" and "Fernando Alonso (navy)" are a smudge. Black on
+//  black is not a contrast problem to be argued about, it is invisible.
+//
+//  Three fixes were rendered side by side on the real panel background before
+//  choosing (/tmp/ink). A white halo behind the text works for black and makes
+//  every BRIGHT colour look smeared and dirty, so it was rejected. Lifting the
+//  colour until it clears a luminance floor keeps the hue - navy stays blue,
+//  brown stays brown - and reads cleanly across the whole palette.
+//
+//  Lifting is a mix toward white rather than an HSL lightness change, because
+//  HSL lightening a saturated colour turns it into a different colour (navy at
+//  L=55% IS blue, and there is a blue car). The mix is found by bisection on
+//  the sRGB relative luminance, which is the quantity contrast is actually
+//  defined in - the target of 0.22 gives about 4.8:1 against the panel.
+//
+//  The true colour is not thrown away: carChip() puts the unlifted colour in a
+//  swatch beside the name, the way the qualifying table has always done it. So
+//  the black car still shows black - as a square you can see, next to a name
+//  you can read.
+// ---------------------------------------------------------------------------
+const CAR_INK_MIN_LUM = 0.22;
+const _carInkCache = {};
+let _carInkCtx = null;
+
+function _carInkRGB(css) {
+    // the canvas knows every CSS colour there is, so no table has to be kept
+    // in step with possibleColors. Priming with #000 matters: assigning an
+    // invalid colour leaves fillStyle untouched rather than throwing.
+    if (!_carInkCtx) {
+        if (typeof document === 'undefined') return [136, 136, 136];
+        _carInkCtx = document.createElement('canvas').getContext('2d');
+    }
+    _carInkCtx.fillStyle = '#000';
+    _carInkCtx.fillStyle = css;
+    const s = _carInkCtx.fillStyle;
+    if (typeof s === 'string' && s[0] === '#')
+        return [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16),
+                parseInt(s.slice(5, 7), 16)];
+    const m = typeof s === 'string' ? s.match(/[\d.]+/g) : null;
+    return m ? [+m[0], +m[1], +m[2]] : [136, 136, 136];
+}
+
+function _carInkLum(rgb) {
+    const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92
+                                                     : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+
+// The readable version of a car colour, for text on a dark panel.
+function carInk(col) {
+    if (!col) return '#cfd8dc';
+    if (_carInkCache[col]) return _carInkCache[col];
+    const rgb = _carInkRGB(col);
+    let out = col;
+    if (_carInkLum(rgb) < CAR_INK_MIN_LUM) {
+        let lo = 0, hi = 1;
+        for (let i = 0; i < 24; i++) {
+            const m = (lo + hi) / 2;
+            const mixed = rgb.map(v => v + (255 - v) * m);
+            if (_carInkLum(mixed) < CAR_INK_MIN_LUM) lo = m; else hi = m;
+        }
+        const mix = rgb.map(v => Math.round(v + (255 - v) * hi));
+        out = 'rgb(' + mix.join(',') + ')';
+    }
+    _carInkCache[col] = out;
+    return out;
+}
+
+// The TRUE colour, as a swatch. Outlined, because a black chip on a black
+// panel needs an edge for there to be anything to see.
+function carChip(col) {
+    return `<span class="car-chip" style="background:${col || '#888'};"></span>`;
+}
+
 function playerCardHtml(car, pos, field) {
     const s = schemeOf(car.playerIndex || 1);
     const speed = Math.sqrt(car.velocity.x ** 2 + car.velocity.y ** 2);
@@ -4494,7 +4665,7 @@ function playerCardHtml(car, pos, field) {
     const dead = car.isBroken ? '<span class="p-dead">OUT</span>' : '';
 
     // One row: the card is a strip along the bottom, not a box in the corner.
-    return `<span class="p-who" style="color:${car.color};">${humanLabel(car)}</span>` +
+    return `<span class="p-who" style="color:${carInk(car.color)};">${humanLabel(car)}</span>` +
            `<span class="p-keys">${s.short}</span>${dead}` +
            `<span>${line1}</span>` +
            `<span class="p-speed">${Math.floor(speed * 0.5)} km/h</span>` +
@@ -8491,7 +8662,7 @@ function endQualifying() {
                `<td class="q-driver">` +
                `<span class="tt-chip" style="background:${r.p ? r.p.color : '#888'};` +
                `display:inline-block;vertical-align:middle;margin-right:8px;"></span>` +
-               `<span style="color:${r.p ? r.p.color : '#888'};">${name}</span></td>` +
+               `<span style="color:${carInk(r.p ? r.p.color : '#888')};">${name}</span></td>` +
                `<td class="q-time">${tyreTag}${time}</td>` +
                `<td class="q-gap">${gap}</td></tr>`;
     }).join('');
@@ -9051,6 +9222,9 @@ function updatePhysics(dt) {
                 renderPitPanel();
             }
         }
+        // Once per frame, not once per car: the leader is the same leader for
+        // all twenty of them.
+        const leaderLeft = pitLeaderLapsLeft();
         for (const c of cars) {
             if (c.pitGrace > 0) c.pitGrace -= dt;
             if (c.finished || c.isBroken) continue;
@@ -9063,7 +9237,11 @@ function updatePhysics(dt) {
             // box on the last lap because its plan said lap 7 and it was on
             // lap 7. One rule now, and it also disarms a car that was called in
             // and has since run out of race.
-            const lapsLeft = TOTAL_LAPS - c.lap;
+            //
+            // "Race left" is measured against the LEADER'S flag, not this car's
+            // own - see pitRaceLeft. A car two laps down has two laps on its own
+            // board and perhaps a corner of actual racing in front of it.
+            const lapsLeft = pitRaceLeft(c, leaderLeft);
             if (!c.isPlayer && c.wantPit && !c.pitPhase && lapsLeft < 1.3) c.wantPit = false;
             // THE AI DOES NOT PIT IN QUALIFYING. The box is open there for
             // one reason - a human who put the wrong compound on - and a
@@ -9085,7 +9263,7 @@ function updatePhysics(dt) {
                     c._pitPlanNext = c.pitPlan.stopLap2
                         ? { stopLap: c.pitPlan.stopLap2, tyre: c.pitPlan.tyre2 }
                         : null;
-                } else if (pitMustStopNow(c)) {
+                } else if (pitMustStopNow(c, lapsLeft)) {
                     c.wantPit = true;
                     c.pitNextTyre = pitSuggestTyre(c);
                     c._pitPlanNext = planNext();
@@ -10103,10 +10281,22 @@ function endPracticeSession() {
     restartBtn.style.display = 'inline-block';
     nextRoundBtn.style.display = 'none';
     gameOverScreen.style.display = 'block';
-    // The results screen is shared with the end of a race, and the Chelem
-    // strip belongs to a race: a practice session has no pole and no winner.
-    const csEl = document.getElementById('chelem-strip');
-    if (csEl) csEl.style.display = 'none';
+    // THE RESULTS SCREEN IS SHARED WITH THE END OF A RACE, and everything on it
+    // that belongs to a race has to be put away before practice borrows it.
+    // Each of these is hidden by the branch that SHOWS it, which means each one
+    // stays on screen from the last time it was shown until something hides it.
+    //
+    //   * the Chelem strip: a practice session has no pole and no winner;
+    //   * the championship standings, which Nicola found under his lap times
+    //     at the end of a practice run - "mi ha anche mostrato la classifica
+    //     della stagione appena conclusa". The table was the real standings of
+    //     a real season; it was simply left up from the last round he drove,
+    //     because only the isChampionship branch of the race screen ever hides
+    //     it, and practice does not go through that branch.
+    for (const id of ['chelem-strip', 'champ-recap-section']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    }
 
     statsBody.innerHTML = '';
     if (!laps.length) {
@@ -10802,7 +10992,7 @@ function updateHUD() {
 
             tr.innerHTML = `
                 <td>${index + 1}</td>
-                <td style="color: ${c.color}; font-weight: bold; text-transform: capitalize;">${nameDisplay}</td>
+                <td style="color: ${carInk(c.color)}; font-weight: bold; text-transform: capitalize;">${carChip(c.color)}${nameDisplay}</td>
                 <td>${chasCell}</td>
                 <td>${tyreSeqHtml(c)}</td>
                 <td class="col-stops">${c.pitCount || 0}</td>
@@ -10836,7 +11026,7 @@ function updateHUD() {
                 // DNS sat under "Laps".
                 tr.innerHTML = `
                     <td>&ndash;</td>
-                    <td style="color: ${sp.color}; font-weight: bold;">${who} (${sp.color})</td>
+                    <td style="color: ${carInk(sp.color)}; font-weight: bold;">${carChip(sp.color)}${who} (${sp.color})</td>
                     <td>-</td>
                     <td>-</td>
                     <td class="col-stops">-</td>
@@ -10889,7 +11079,7 @@ function updateHUD() {
                 const b = (championshipState.bonusPoints || {})[col] || 0;
                 tr.innerHTML = `
                     <td>${idx + 1}</td>
-                    <td style="color: ${col}; font-weight: bold;">${nameDisplay}</td>
+                    <td style="color: ${carInk(col)}; font-weight: bold;">${carChip(col)}${nameDisplay}</td>
                     <td>${championshipState.points[col] - b}</td>
                     <td class="pts-bonus">${b > 0 ? '+' + b : '&mdash;'}</td>
                     <td><b>${championshipState.points[col]}</b></td>

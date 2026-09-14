@@ -2475,13 +2475,22 @@ class SegmentedTrack {
         return stands;
     }
 
-    drawStands(ctx) {
+    // `view`, when given, is the world rectangle the camera can see: stands
+    // outside it are skipped. A circuit carries fifty to eighty of these and
+    // the window holds three or four of them, so the cull is most of the cost.
+    drawStands(ctx, view) {
         const stands = this.getStands();
         const shimmer = Math.floor(Date.now() / 260);
         const shirts = ['#e53935', '#fdd835', '#1e88e5', '#43a047', '#fb8c00',
                         '#8e24aa', '#ffffff', '#00acc1', '#d81b60', '#6d4c41'];
 
         for (const s of stands) {
+            if (view) {
+                // the stand is rotated, so test its bounding circle
+                const r = Math.hypot(s.len, s.depth) / 2 + 8;
+                if (s.x + r < view.x || s.x - r > view.x + view.w ||
+                    s.y + r < view.y || s.y - r > view.y + view.h) continue;
+            }
             ctx.save();
             ctx.translate(s.x, s.y);
             ctx.rotate(s.angle);

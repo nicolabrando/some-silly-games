@@ -470,6 +470,20 @@ button:hover {
     border: 1px solid rgba(0, 0, 0, 0.6);
     vertical-align: middle;
 }
+/* The car's TRUE colour beside a name written in its readable version (see
+   carInk in main.js). The outline is LIGHT, unlike the tower's chip above: a
+   black swatch on a black panel with a black border is still nothing to look
+   at, and black is exactly the car this exists for. */
+.car-chip {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    margin-right: 7px;
+    border-radius: 2px;
+    outline: 1px solid rgba(255, 255, 255, 0.38);
+    outline-offset: 0;
+    vertical-align: baseline;
+}
 .ex-rival {
     display: inline-block;
     margin-left: 4px;
