@@ -2062,7 +2062,18 @@ function initAudio(){
     AU.crowdSrc.connect(bp); bp.connect(AU.crowdGain); AU.crowdGain.connect(AU.master);
     AU.crowdSrc.start();
     AU.ready = true;
+    if(AU.ctx.state === 'suspended') AU.ctx.resume().catch(()=>{});
   }catch(e){ /* audio non disponibile: pazienza */ }
+}
+/* iOS e i browser mobili sospendono il contesto audio quando l'app va in
+   secondo piano: a ogni tocco si controlla e, se serve, lo si risveglia. */
+function sbloccaAudio(){
+  if(!AU.ready){ initAudio(); }
+  if(AU.ctx && AU.ctx.state === 'suspended'){
+    AU.ctx.resume().then(()=>{ if(typeof G!=='undefined' && G && G.opts) musAggiorna(); }).catch(()=>{});
+  } else if(AU.ready && typeof G!=='undefined' && G && G.opts && G.opts.music && !MUS.avviata){
+    musAggiorna();
+  }
 }
 function sndOn(){ return AU.ready && G && G.opts.sound; }
 function crowdSet(level, t){ // 0..1
@@ -2132,7 +2143,7 @@ function musInit(){
 function musVolumeTarget(){
   if(!G || !G.opts || !G.opts.sound || !G.opts.music) return 0;
   const v = (G.opts.musicVol===undefined ? 0.5 : G.opts.musicVol);
-  return 0.16 * v * MUS.duck;
+  return 0.26 * v * MUS.duck;
 }
 function musApplicaVolume(t){
   if(!MUS.gain) return;
@@ -3052,12 +3063,22 @@ function backupAutomatico(){
       return Promise.all(daButtare.map(idbCancella));
     }).catch(()=>{});
 }
+/* Le opzioni nuove vanno aggiunte anche alle carriere già avviate:
+   senza questo, chi giocava da prima si ritrovava la musica spenta. */
+const OPZIONI_DEFAULT = {sound:true, music:true, musicVol:0.5, speed:2, autoXI:true};
+function normalizzaOpzioni(){
+  if(!G) return;
+  G.opts = Object.assign({}, OPZIONI_DEFAULT, G.opts||{});
+  for(const k in OPZIONI_DEFAULT)
+    if(G.opts[k]===undefined || G.opts[k]===null) G.opts[k] = OPZIONI_DEFAULT[k];
+}
 function loadGame(){
   try{
     const s = localStorage.getItem(SAVE_KEY);
     if(!s) return false;
     G = JSON.parse(s);
     if(!(G && G.teams && G.teams.length)) return false;
+    normalizzaOpzioni();
     _pid = G.nextPid || 1;
     const migrata = migrateSave();          // carriere nate prima di Serie C/D
     const riparati = repairIds();           // e riallineamento degli id dei giocatori
@@ -3143,7 +3164,7 @@ function importaCarriera(daTitolo){
 function applicaImport(dati){
   G = dati;
   // difese contro file di versioni diverse o parzialmente rovinati
-  G.opts = Object.assign({sound:true, music:true, musicVol:0.5, speed:2, autoXI:true}, G.opts||{});
+  normalizzaOpzioni();
   G.club = Object.assign({confidence:60, staff:{vice:0,med:0,oss:0,prep:0}, youth:1,
                           training:'equilibrato', sponsor:0}, G.club||{});
   G.club.staff = Object.assign({vice:0,med:0,oss:0,prep:0}, G.club.staff||{});
@@ -4067,6 +4088,7 @@ function renderClub(s){
       <div style="padding:6px 6px 10px">
         <div class="tiny faint mb">Volume musica: <span class="accT" id="volLbl">${vol}%</span></div>
         <input type="range" id="volMus" min="0" max="100" value="${vol}">
+        <div class="tiny mt" id="diagAudio"></div>
       </div>` : ''}
       <div class="teampick" onclick="esportaCarriera()"><div class="nm">Esporta carriera
         <small>scarica un file da conservare o portare altrove</small></div><span class="accT">⤓</span></div>
@@ -4083,6 +4105,19 @@ function renderClub(s){
     <div class="tabs">${tabs.map(([k,l])=>`<button class="btn ${k===clubTab?'on':''}" data-k="${k}">${l}</button>`).join('')}</div>
     ${body}</div>`;
   s.querySelectorAll('.tabs button').forEach(b=> b.onclick=()=>{ sndClick(); clubTab=b.dataset.k; nav('club', true); });
+  const diag = $('diagAudio');
+  if(diag){
+    const aggiornaDiag = ()=>{
+      const d = $('diagAudio'); if(!d) return;
+      if(!AU.ready) d.innerHTML = '<span class="badT">Audio non ancora attivo: tocca lo schermo.</span>';
+      else if(AU.ctx.state !== 'running')
+        d.innerHTML = `<span class="badT">Audio in pausa (${AU.ctx.state}): tocca lo schermo per riattivarlo.</span>`;
+      else if(!MUS.avviata) d.innerHTML = '<span class="badT">Musica ferma.</span>';
+      else d.innerHTML = `<span class="okT">Musica in esecuzione</span> <span class="faint">· se non la senti controlla il volume del dispositivo e, su iPhone, l'interruttore silenzioso</span>`;
+    };
+    aggiornaDiag();
+    setTimeout(aggiornaDiag, 700);
+  }
   const slider = $('volMus');
   if(slider){
     const agg = ()=>{
@@ -4520,12 +4555,10 @@ function startUI(){
 
 /* ================== AVVIO ================== */
 function boot(){
-  // l'audio può partire solo dopo un gesto dell'utente: al primo tocco si accende tutto
-  document.addEventListener('pointerdown', function once(){
-    initAudio();
-    if(G && G.opts) musAggiorna();
-    document.removeEventListener('pointerdown', once);
-  });
+  // l'audio parte solo dopo un gesto dell'utente, e va risvegliato ogni volta
+  // che il browser lo sospende (app in secondo piano, schermo bloccato…)
+  document.addEventListener('pointerdown', sbloccaAudio);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) sbloccaAudio(); });
   initLongPress();
   chiediMemoriaPermanente();
   leggiSpazio();
@@ -4538,6 +4571,7 @@ function boot(){
         const dati = JSON.parse(rec.json);
         if(!carrieraValida(dati)){
           G = dati; _pid = G.nextPid || 1;
+          normalizzaOpzioni();
           migrateSave(); repairIds(); saveGame();
           has = true;
           addNews('Salvataggio rapido perduto: carriera recuperata dal deposito durevole.','club');
