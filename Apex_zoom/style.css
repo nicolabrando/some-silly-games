@@ -1786,6 +1786,10 @@ tr.ex-me td:nth-child(2) { font-weight: 700; }
 .ex-note b { color: #dbe8f5; }
 /* win rate, and the two things you can do to a season */
 .ex-rate b { color: #eceff1; }
+/* The season's average finishing position, under the championship place in the
+   same cell. Its own line, because "P1" and "avg P2.30" side by side read as
+   one number with a typo in it. */
+.ex-avgfin { display: block; opacity: 0.55; white-space: nowrap; }
 td.ex-actions { white-space: nowrap; text-align: right; padding-left: 4px; }
 .ex-go, .ex-del {
     width: auto;

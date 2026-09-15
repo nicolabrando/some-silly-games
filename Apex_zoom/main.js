@@ -6669,6 +6669,12 @@ function careerTally(list) {
         seasons: list.length, complete: 0, titles: 0, runnerUp: 0,
         races: 0, wins: 0, podiums: 0, poles: 0, fl: 0, chelem: 0,
         dnf: 0, dns: 0, points: 0, bestFinish: null, wetRaces: 0,
+        // ...and where you finish on an ordinary day, which is the number a
+        // career of 563 races is actually made of. posSum/posN rather than an
+        // average of averages: a five-round season and a twelve-round one do
+        // not carry the same weight, and averaging their averages pretends they
+        // do. Retirements are left out - a DNF has no finishing position.
+        posSum: 0, posN: 0,
         circuits: {}, chassis: {}, rivals: {}
     };
     for (const e of list) {
@@ -6685,6 +6691,7 @@ function careerTally(list) {
             if (me.best !== null && (out.bestFinish === null || me.best < out.bestFinish)) {
                 out.bestFinish = me.best;
             }
+            out.posSum += me.posSum; out.posN += me.posN;
             if (me.chassis) out.chassis[me.chassis] = (out.chassis[me.chassis] || 0) + 1;
         }
         (e.results || []).forEach((r, i) => {
@@ -7620,7 +7627,7 @@ function exTrackHistoryHtml(key) {
             exCell('Skipped', me.dns) +
             exCell('Best finish', me.best === null ? '—' : 'P' + me.best) +
             exCell('Worst', me.worst === null ? '—' : 'P' + me.worst) +
-            exCell('Average finish', me.posN ? 'P' + (me.posSum / me.posN).toFixed(1) : '—',
+            exCell('Average finish', me.posN ? 'P' + (me.posSum / me.posN).toFixed(2) : '—',
                    'retirements are not counted in the average') +
             exCell('Points', me.points +
                    '<span class="ex-sml"> · ' + (me.points / me.races).toFixed(1) + '/race</span>') +
@@ -8062,6 +8069,11 @@ function exRenderSeasons() {
             exCell('Retirements', c.dnf) +
             exCell('Points', c.points) +
             exCell('Best finish', c.bestFinish === null ? '—' : 'P' + c.bestFinish) +
+            // Next to the best one, because the pair is the point: the best
+            // finish is your best day and this is every other one.
+            exCell('Average finish', c.posN ? 'P' + (c.posSum / c.posN).toFixed(2) : '—',
+                   c.posN ? 'across ' + c.posN + ' classified finishes — retirements ' +
+                            'are not counted' : 'no classified finish yet') +
             exCell('Wet races', c.wetRaces) +
             exCell('Best circuit', fav ? (TRACK_LABELS[fav] || fav) : '—',
                    fav ? (c.circuits[fav].wins + ' win(s) from ' + c.circuits[fav].races) : '') +
@@ -8109,7 +8121,16 @@ function exRenderSeasons() {
                 '<td>' + e.done + ' / ' + e.rounds + '</td>' +
                 '<td>' + (champ ? '<span class="tt-chip" style="background:' + champ.color +
                     ';"></span> ' + champ.name : '—') + '</td>' +
-                '<td class="' + cls + '">' + (place ? 'P' + place : '—') + '</td>' +
+                // the championship place, and under it where you finished on an
+                // ordinary Sunday of that season - the two answer different
+                // questions and the second is the one you can compare across a
+                // row of seasons
+                '<td class="' + cls + '">' + (place ? 'P' + place : '—') +
+                (me && me.posN
+                    ? '<span class="ex-sml ex-avgfin" title="your average finishing ' +
+                      'position that season — retirements are not counted">avg P' +
+                      (me.posSum / me.posN).toFixed(2) + '</span>'
+                    : '') + '</td>' +
                 '<td class="ex-rate">' + rate + '</td>' +
                 '<td class="ex-state">' + (e.fromLog
                     ? '<span class="ex-fromlog" title="rebuilt from a downloaded race log: ' +
