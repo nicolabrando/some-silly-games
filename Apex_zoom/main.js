@@ -5454,9 +5454,17 @@ function showGpPreview(trackType) {
 //  measured cannot disagree with the build it is printed in.
 // ===========================================================================
 
-const EX_DRIVER_NAMES = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton',
-    'Max Verstappen', 'Fernando Alonso', 'Sebastian Vettel', 'Alain Prost',
-    'Jim Clark', 'Niki Lauda', 'Juan Manuel Fangio'];
+// EVERY NAME THE GAME WILL PUT IN A CAR, taken from the grid rather than typed
+// out again here. Ten of these cards did not exist for a build and a half: the
+// current drivers were added to LEGEND_NAMES and to AI_DRIVER_STYLES, raced
+// perfectly well, and had nothing to read about them - because this list was a
+// second copy of the first ten, and a second copy of a list is a list that goes
+// out of date. It cannot now: a driver in the game is a driver with a card.
+const EX_DRIVER_NAMES = (typeof LEGEND_NAMES !== 'undefined' && LEGEND_NAMES.length)
+    ? LEGEND_NAMES.slice()
+    : ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton',
+       'Max Verstappen', 'Fernando Alonso', 'Sebastian Vettel', 'Alain Prost',
+       'Jim Clark', 'Niki Lauda', 'Juan Manuel Fangio'];
 
 // A line of prose per driver. The numbers below it are the truth; this is what
 // the numbers add up to.
@@ -5473,19 +5481,34 @@ const EX_DRIVER_NAMES = ['Ayrton Senna', 'Michael Schumacher', 'Lewis Hamilton',
 const EX_DRIVER_BLURB = {
     'Ayrton Senna': 'Blinding through the quick stuff and second to nobody but Schumacher in the rain. He gives it back on the straights, and he lives closer to the edge than anybody: by a distance the most mistakes on the grid.',
     'Alain Prost': 'The Professor. Almost never errs and is superb with the road to himself — and genuinely poor in the wet, and the most reluctant on the grid to go wheel to wheel.',
-    'Michael Schumacher': 'A relentless metronome. Brutal on defence, brakes later than almost anyone, and the quickest of the ten when it rains. Nothing special once the road is clear, which is where the others take it back.',
+    'Michael Schumacher': 'A relentless metronome. Brutal on defence, brakes later than almost anyone, and the quickest man on the grid when it rains. Nothing special once the road is clear, which is where the others take it back.',
     'Max Verstappen': 'The latest braker on the grid and he never yields an inch. That commitment is not free: he makes real mistakes, and he is mid-field at best in the wet.',
-    'Lewis Hamilton': 'Thrives in a fight and reads the circuit further ahead than anyone else. Handy in the rain and the weakest of the ten with the road to himself: a racer rather than a time-triallist.',
+    'Lewis Hamilton': 'Thrives in a fight and reads the circuit further ahead than anyone else. Handy in the rain and among the weakest here with the road to himself: a racer rather than a time-triallist.',
     'Fernando Alonso': 'Unbeatable wheel to wheel. He will sit closer to your gearbox than anyone, will not be moved off a line, and is one of the three quickest in the wet. Ordinary once the road is clear.',
     'Sebastian Vettel': 'Devastating in clean air and down a straight. Give him the lead and he disappears; put him in traffic and he would rather wait than fight. The rain is not his weather.',
     'Jim Clark': 'Famously smooth — the gentlest hands here — and almost mistake-free, which is why he is quick in the wet. Passive in a fight, and that is what it costs him.',
     'Niki Lauda': 'The computer. Calculated risk, no heroics, no mistakes, and real speed down a straight. He has no pace at all in the rain, and he will not fight you for a place he can take later.',
-    'Juan Manuel Fangio': 'Wins at the slowest speed necessary. No weakness anywhere and no standout either, which over a long calendar is its own kind of weapon.'
+    'Juan Manuel Fangio': 'Wins at the slowest speed necessary. No weakness anywhere and no standout either, which over a long calendar is its own kind of weapon.',
+    // ...and the ten who are racing now. Same rule as above: the prose says
+    // what the numbers in AI_DRIVER_STYLES already say, and where the two
+    // disagree the numbers win.
+    'Lando Norris': 'Blindingly quick through the fast stuff and a natural qualifier. The errors come under pressure, and of the quick ones he is the least decisive wheel to wheel.',
+    'Kimi Antonelli': 'Rotates the car harder than almost anybody — sharp hands, very late on the brakes, only Senna carries more speed into a corner — and unlike most drivers who go about it that way, he keeps it out of the wall. The bill arrives in two places: that aggression is among the hardest here on its own tyres, and a lap built on rotation is not a lap built on top end.',
+    'Charles Leclerc': 'A qualifying lap out of nowhere, and the second-best car on the grid with the road to itself. The race sometimes runs past the edge of that lap.',
+    'Carlos Sainz': 'Never throws it away, looks after the tyres, and is about as easy to pass as a locked door. Not a one-lap man, and he knows it.',
+    'Sergio Perez': 'The tyre whisperer: the most patient car here, untouchable on defence, and ordinary the moment the road in front of him is empty.',
+    'Valtteri Bottas': 'Pole-lap pace and a beautiful car in clean air. He goes quiet in a fight — the weakest on the grid both attacking and defending — which is his whole reputation in two columns.',
+    'George Russell': 'The metronome. Superb over one lap, the second-best in the rain, and he does not make mistakes. His speed is in the corners rather than on the straights, and he is not the one who forces the pass.',
+    'Nico Hulkenberg': 'The best wet-weather number in the game after Schumacher. The rest of him is a very good midfielder who has never had the car.',
+    'Pierre Gasly': 'Comes alive when the weather does. A racer rather than a qualifier, and streaky enough over a lap to sit below the field with the road to himself.',
+    'Oscar Piastri': 'Unflappable: late on the brakes, decisive alongside, and almost no mistakes — the coolest head here. No standout weather and no one-lap edge, which is the price of having no bad day either.'
 };
 
 // The bars. Each is a value from the style table turned into a 0..1 fill, with
-// the range chosen so the ten drivers actually spread across it - a bar where
-// everyone sits at 80% tells you nothing. `inv` means low is good.
+// the range chosen so the drivers actually spread across it - a bar where
+// everyone sits at 80% tells you nothing. Re-checked when the grid went from
+// ten names to twenty: the widest column now runs 0.02 to 0.99 and exactly one
+// driver is pinned at an end, so the ranges still earn their keep. `inv` means low is good.
 const EX_BARS = [
     { k: 'corner',   label: 'Cornering',  lo: 0.980, hi: 1.035 },
     { k: 'straight', label: 'Straights',  lo: 0.975, hi: 1.030 },
@@ -5658,13 +5681,28 @@ function exDriverCardHtml(name) {
         tags.down.map(t => `<span class="ex-tag down">${t}</span>`).join('') +
         `</div>${bars}${wetRow}</div>`;
 }
-// A stable colour per driver, so a card is recognisable at a glance.
+// A stable colour per driver, so a card is recognisable at a glance. The step
+// was 36 degrees, which is a full circle over TEN drivers and put the eleventh
+// card in the first one's colour exactly. The golden angle has no period, so it
+// keeps neighbours apart however many names the grid grows to.
 function exDriverHue(name) {
     const i = EX_DRIVER_NAMES.indexOf(name);
-    return `hsl(${(i * 36 + 12) % 360}, 62%, 58%)`;
+    return `hsl(${(i * 137.508 + 12) % 360}, 62%, 58%)`;
 }
 
+const EX_COUNT_WORD = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
+    'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+    'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+
 function exRenderDrivers() {
+    const sub = document.getElementById('ex-drivers-sub');
+    if (sub) {
+        const n = EX_DRIVER_NAMES.length;
+        const word = EX_COUNT_WORD[n] || String(n);
+        sub.innerHTML = word.charAt(0).toUpperCase() + word.slice(1) +
+            ' of them, and none is better than the rest. Every strength is paid ' +
+            'for somewhere else &mdash; that is the rule the numbers below are fitted to.';
+    }
     const grid = document.getElementById('ex-driver-grid');
     if (!grid) return;
     const head = exWet.done < exWet.total
@@ -8218,6 +8256,18 @@ function exShowSeason(id) {
         exCell('You', ((entry.results || []).length && me)
             ? 'P' + (rows.indexOf(me) + 1)
             : (me ? 'not raced yet' : 'spectator')) +
+        // TWO DECIMALS, and they are not decoration: over a ten-round season the
+        // difference between a good year and a poor one is often half a place,
+        // and one decimal rounds half a season's worth of it away. Retirements
+        // are left out because a DNF has no finishing position to average - it
+        // is counted in its own cell.
+        exCell('Your average finish', (me && me.posN)
+            ? 'P' + (me.posSum / me.posN).toFixed(2)
+            : '—',
+            me && me.posN
+                ? 'mean of your ' + me.posN + ' classified finish' +
+                  (me.posN === 1 ? '' : 'es') + ' — retirements are not counted'
+                : 'no classified finish yet') +
         exCell('Season rival', entry.rival || '—',
                'one opponent runs the whole season with a little more') +
         exCell('Calendar', entry.nightmare

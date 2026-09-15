@@ -350,10 +350,26 @@ const AI_DRIVER_STYLES = {
     // errors come under pressure, and he is the least decisive of the quick
     // ones wheel to wheel.
     'Lando Norris':       { corner: 1.020, straight: 0.992, brake: 1.00, steerTau: 0.85, err: 0.95, overtake: 0.85, gap: 1.00, defend: 0.80, wet: 1.005, cleanAir: 1.006, look: 2, trim: 0.9960 },
-    // The rookie: speed that does not need explaining and a brake pedal used
-    // like somebody with nothing to lose. Also the most mistakes on the grid
-    // bar Senna, which is what a first season costs.
-    'Kimi Antonelli':     { corner: 1.008, straight: 0.998, brake: 1.12, steerTau: 0.78, err: 1.45, overtake: 1.00, gap: 0.80, defend: 0.90, wet: 0.995, cleanAir: 0.996, look: -6, trim: 1.0048 },
+    // NOT THE ROOKIE ANY MORE. The first version of this row was written as a
+    // first-season driver - the most mistakes on the grid bar Senna, no edge
+    // anywhere - and by the time it shipped that had stopped being true.
+    // Fourteen rounds into 2026 he leads the championship with 292 points, 81
+    // clear of his own team mate, on eight wins and six poles.
+    //
+    // What the season says he actually IS, rather than what a rookie is: an
+    // attacking style built on rotating the car - sharp, rapid inputs, braking
+    // late and turning hard, "folding the corner up like a handkerchief" in his
+    // own words - which is why he is the quickest cornering number here and the
+    // sharpest pair of hands (steerTau 0.76, the lowest on the grid). That is
+    // not free, and the season shows the bill: at Barcelona he asked too much
+    // of the car and the rear went away in qualifying, and there is a DNF and a
+    // fifteenth in among the wins.
+    //
+    // So the cost is written where it belongs. steerTau is not decoration - it
+    // feeds scrub in car.js, and scrub feeds tyre wear, so the aggression
+    // shortens his stints for real. The column he sits below the field on is
+    // the STRAIGHTS: a lap built on rotation is not a lap built on top end.
+    'Kimi Antonelli':     { corner: 1.026, straight: 0.990, brake: 1.12, steerTau: 0.76, err: 0.40, overtake: 1.00, gap: 0.86, defend: 0.94, wet: 0.998, cleanAir: 1.011, look: -4, trim: 1.0035 },
     // A qualifying lap out of nowhere - the highest clean-air number of the
     // twenty after Vettel - and a race that sometimes runs past the edge of it.
     'Charles Leclerc':    { corner: 1.024, straight: 0.988, brake: 1.06, steerTau: 0.80, err: 1.15, overtake: 0.95, gap: 0.88, defend: 0.92, wet: 0.992, cleanAir: 1.010, look: -2, trim: 1.0031 },
