@@ -684,7 +684,7 @@ function newGame(teamIdx, seed){
     club:{ confidence:60, staff:{vice:0,med:0,oss:0,prep:0}, youth:1,
            training:'equilibrato', sponsor:0 },
     gameOver:null,
-    opts:{ sound:true, speed:2, autoXI:true }
+    opts:{ sound:true, music:true, musicVol:0.5, speed:2, autoXI:true }
   };
   G.fixturesA = genFixtures(G.divA);
   G.fixturesB = genFixtures(G.divB);
@@ -1882,18 +1882,24 @@ function ingaggioMinimo(p){
   if(p.contract<=0) m *= 1.08;             // già in scadenza: sa di avere il coltello dalla parte del manico
   return Math.max(1, Math.round(m));
 }
+/* Durata: sempre almeno 2 stagioni, altrimenti il "rinnovo" sarebbe finto —
+   con contract=1 il giocatore resta in scadenza e se ne va comunque a giugno. */
 function anniRinnovo(p){
-  if(p.age<=23) return ri(3,4);
-  if(p.age<=29) return ri(2,4);
+  if(p.age<=23) return ri(4,5);
+  if(p.age<=29) return ri(3,4);
   if(p.age<=32) return ri(2,3);
-  return 1;
+  return 2;
 }
-function offerteRinnovo(p){
+/* Il rialzo deve poter arrivare dove arriva la richiesta: se la cifra è nota
+   (osservatori, o un rifiuto che l'ha svelata) l'offerta massima la copre. */
+function offerteRinnovo(p, minimoNoto){
   const base = Math.max(p.wage, playerWage(p));
+  let rialzo = Math.round(base*1.32);
+  if(minimoNoto) rialzo = Math.max(rialzo, ingaggioMinimo(p));
   return {
     ribasso: Math.max(1, Math.round(p.wage*0.88)),
     pari:    Math.max(1, Math.round(p.wage)),
-    rialzo:  Math.max(1, Math.round(base*1.32))
+    rialzo:  Math.max(1, rialzo)
   };
 }
 function proponiRinnovo(pid, tipo){
@@ -1902,8 +1908,9 @@ function proponiRinnovo(pid, tipo){
   if(!p) return {ok:false, msg:'Giocatore non trovato.'};
   if(p.rifiutoSett === G.week)
     return {ok:false, msg:`${p.nm} ha già detto no questa settimana: riprova la prossima.`, chiede:p.chiede};
-  const off = offerteRinnovo(p)[tipo];
   const minimo = ingaggioMinimo(p);
+  const noto = (G.club.staff.oss>0) || !!p.chiede;
+  const off = offerteRinnovo(p, noto)[tipo];
   const bonus = off*4;
   if(t.budget < bonus)
     return {ok:false, msg:`Servono ${fmtK(bonus)} per il bonus alla firma: il bilancio non li regge.`};
@@ -1914,13 +1921,14 @@ function proponiRinnovo(pid, tipo){
     return {ok:false, chiede:minimo,
       msg:`${p.nm} rifiuta ${fmtK(off)}/sett. Il suo entourage fa sapere che non scende sotto ${fmtK(minimo)}/sett.`};
   }
-  const anni = anniRinnovo(p);
+  const anni = Math.max(2, anniRinnovo(p));   // mai un rinnovo che lascia in scadenza
   p.wage = off; p.contract = anni; p.rifiutoSett = null; p.chiede = null;
   p.mor = clamp(p.mor + (off>=minimo*1.15 ? 1.2 : 0.6), 1, 10);
   t.budget -= bonus;
   t.wageBill = Math.round(sum(t.players,x=>x.wage));
-  addNews(`<b>${p.nm}</b> rinnova per ${anni} stagion${anni===1?'e':'i'} a ${fmtK(off)}/sett.`,'squadra');
-  return {ok:true, msg:`Firmato: ${fmtK(off)}/sett per ${anni} stagion${anni===1?'e':'i'}. Bonus alla firma ${fmtK(bonus)}.`};
+  addNews(`<b>${p.nm}</b> rinnova per ${anni} stagioni a ${fmtK(off)}/sett.`,'squadra');
+  return {ok:true, anni,
+    msg:`Firmato: ${fmtK(off)}/sett per ${anni} stagioni, cioè fino a fine stagione ${G.season+anni-1}. Bonus alla firma ${fmtK(bonus)}.`};
 }
 function contrattiInScadenza(){
   return playerTeam().players.filter(p=>p.contract<=1)
@@ -2086,6 +2094,156 @@ function sndGoal(mine){
 function sndCard(){ beep(880,0.09,'sawtooth',0.08); beep(660,0.09,'sawtooth',0.08,0.1); }
 function sndClick(){ beep(1200,0.03,'square',0.04); }
 function sndSad(){ [392,330,262].forEach((f,i)=>beep(f,0.18,'triangle',0.08,i*0.15)); }
+
+/* =====================================================
+   Musica di sottofondo generativa.
+   Non è un file audio: è un sequencer che compone al volo
+   su giri armonici che ruotano, così può suonare per ore
+   senza diventare la solita loop di quattro battute.
+   ===================================================== */
+const MUS = {
+  gain:null, filtro:null, timer:null, avviata:false,
+  t:0, step:0, bar:0, giro:0, sezione:0, duck:1, ultimaNota:0
+};
+const MUS_BPM = 92;
+const MUS_PASSO = 60/MUS_BPM/4;            // durata di un sedicesimo
+/* giri armonici: [grado in semitoni dal DO, maggiore/minore] */
+const MUS_GIRI = [
+  [[9,0],[5,1],[0,1],[7,1]],   // La- / Fa / Do / Sol
+  [[9,0],[2,0],[7,1],[0,1]],   // La- / Re- / Sol / Do
+  [[0,1],[7,1],[9,0],[5,1]],   // Do / Sol / La- / Fa
+  [[2,0],[7,1],[0,1],[9,0]],   // Re- / Sol / Do / La-
+  [[9,0],[7,1],[5,1],[4,1]],   // La- / Sol / Fa / Mi  (cadenza andalusa)
+  [[5,1],[0,1],[2,0],[7,1]]    // Fa / Do / Re- / Sol
+];
+const MUS_SCALA = [9,11,0,2,4,5,7];        // la minore naturale
+function midiHz(n){ return 440*Math.pow(2,(n-69)/12); }
+
+function musInit(){
+  if(!AU.ready || MUS.gain) return;
+  MUS.gain = AU.ctx.createGain();
+  MUS.gain.gain.value = 0;
+  MUS.filtro = AU.ctx.createBiquadFilter();
+  MUS.filtro.type = 'lowpass';
+  MUS.filtro.frequency.value = 2600;       // toglie l'asprezza delle onde quadre
+  MUS.gain.connect(MUS.filtro);
+  MUS.filtro.connect(AU.master);
+}
+function musVolumeTarget(){
+  if(!G || !G.opts || !G.opts.sound || !G.opts.music) return 0;
+  const v = (G.opts.musicVol===undefined ? 0.5 : G.opts.musicVol);
+  return 0.16 * v * MUS.duck;
+}
+function musApplicaVolume(t){
+  if(!MUS.gain) return;
+  MUS.gain.gain.setTargetAtTime(musVolumeTarget(), AU.ctx.currentTime, t||0.4);
+}
+/* una nota: oscillatore con inviluppo breve */
+function musNota(freq, quando, durata, tipo, vol, detune){
+  const o = AU.ctx.createOscillator(), g = AU.ctx.createGain();
+  o.type = tipo; o.frequency.value = freq;
+  if(detune) o.detune.value = detune;
+  g.gain.setValueAtTime(0.0001, quando);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), quando+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, quando+durata);
+  o.connect(g); g.connect(MUS.gain);
+  o.start(quando); o.stop(quando+durata+0.03);
+}
+function musPercussione(quando, vol){
+  const len = Math.floor(AU.ctx.sampleRate*0.05);
+  const buf = AU.ctx.createBuffer(1, len, AU.ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/len, 3);
+  const src = AU.ctx.createBufferSource(); src.buffer = buf;
+  const hp = AU.ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=5200;
+  const g = AU.ctx.createGain(); g.gain.value = vol;
+  src.connect(hp); hp.connect(g); g.connect(MUS.gain);
+  src.start(quando);
+}
+/* programma i prossimi sedicesimi */
+function musProgramma(){
+  if(!MUS.avviata || !AU.ctx) return;
+  const orizzonte = AU.ctx.currentTime + 0.35;
+  while(MUS.t < orizzonte){
+    const s = MUS.step % 16;
+    if(s===0){
+      MUS.bar++;
+      if(MUS.bar % 8 === 0){                        // ogni 8 battute si cambia giro
+        MUS.giro = (MUS.giro + 1 + Math.floor(rnd()*2)) % MUS_GIRI.length;
+        MUS.sezione++;
+      }
+    }
+    const giro = MUS_GIRI[MUS.giro];
+    const [grado, maggiore] = giro[(MUS.bar-1) % 4];
+    const terza = maggiore ? 4 : 3;
+    const denso = (MUS.sezione % 3) !== 2;          // ogni tanto una sezione più rarefatta
+    const t = MUS.t;
+
+    // basso: fondamentale e quinta
+    if(s===0) musNota(midiHz(36+grado), t, 0.42, 'triangle', 0.30);
+    else if(s===6) musNota(midiHz(36+grado), t, 0.20, 'triangle', 0.18);
+    else if(s===10) musNota(midiHz(43+grado), t, 0.26, 'triangle', 0.16);
+
+    // accordo: pizzicato breve in levare
+    if(s===4 || s===12){
+      [0, terza, 7].forEach((iv,k)=>
+        musNota(midiHz(60+grado+iv), t, 0.20, 'square', 0.055, k*3));
+    }
+
+    // arpeggio/melodia
+    if(denso && (s===0 || s===3 || s===6 || s===8 || s===11 || s===14)){
+      if(rnd() < 0.78){
+        const accordo = [grado, (grado+terza)%12, (grado+7)%12];
+        let n;
+        if(rnd() < 0.62) n = accordo[Math.floor(rnd()*3)];
+        else n = MUS_SCALA[Math.floor(rnd()*MUS_SCALA.length)];
+        // si sceglie l'ottava più vicina alla nota precedente, dentro un registro
+        // comodo (RE4–LA5): così la melodia cammina invece di saltare
+        let scelta = null, distanza = 1e9;
+        for(let ott=60; ott<=84; ott+=12){
+          const cand = ott + n;
+          if(cand < 62 || cand > 81) continue;
+          const d = Math.abs(cand - MUS.ultimaNota);
+          if(d < distanza){ distanza = d; scelta = cand; }
+        }
+        if(scelta === null) scelta = 72 + n;
+        MUS.ultimaNota = scelta;
+        musNota(midiHz(scelta), t, (s===0||s===8)?0.32:0.22, 'square', 0.050);
+      }
+    }
+    // battito leggero
+    if(s%4===2) musPercussione(t, 0.020);
+    if(s===8) musPercussione(t, 0.030);
+
+    MUS.t += MUS_PASSO;
+    MUS.step++;
+  }
+}
+function musStart(){
+  initAudio();
+  if(!AU.ready) return;
+  musInit();
+  if(MUS.avviata){ musApplicaVolume(); return; }
+  MUS.avviata = true;
+  MUS.t = AU.ctx.currentTime + 0.12;
+  MUS.step = 0; MUS.bar = 0; MUS.ultimaNota = 72;
+  MUS.giro = Math.floor(rnd()*MUS_GIRI.length);
+  MUS.sezione = 0;
+  musApplicaVolume(1.2);
+  MUS.timer = setInterval(musProgramma, 90);
+  musProgramma();
+}
+function musStop(){
+  MUS.avviata = false;
+  if(MUS.timer){ clearInterval(MUS.timer); MUS.timer = null; }
+  if(MUS.gain) MUS.gain.gain.setTargetAtTime(0, AU.ctx.currentTime, 0.25);
+}
+/* durante la partita la musica scende sotto il boato dello stadio */
+function musDuck(v){ MUS.duck = v; musApplicaVolume(0.8); }
+function musAggiorna(){
+  if(!G || !G.opts) return;
+  if(G.opts.sound && G.opts.music) musStart(); else musStop();
+}
 /* =====================================================
    06_matchview: campo 2D pixel, animazione sincronizzata
    con gli eventi del motore, cronaca e comandi in diretta
@@ -2596,6 +2754,7 @@ function showMatch(pm, sim, onEnd){
   };
   MV.running = true; MV.lastT = 0; MV.acc = 0;
   crowdSet(0.3, 2);
+  musDuck(0.28);            // sotto il boato dello stadio la musica si ritira
   MV.raf = requestAnimationFrame(mvFrame);
 }
 function mvHalfTime(){
@@ -2684,6 +2843,7 @@ function mvFullTime(){
 function mvClose(){
   const el = document.getElementById('matchwrap');
   if(el) el.remove();
+  musDuck(1);
   const sim = MV.sim; MV.sim=null;
   if(MV.onEnd) MV.onEnd(sim);
 }
@@ -2983,7 +3143,7 @@ function importaCarriera(daTitolo){
 function applicaImport(dati){
   G = dati;
   // difese contro file di versioni diverse o parzialmente rovinati
-  G.opts = Object.assign({sound:true, speed:2, autoXI:true}, G.opts||{});
+  G.opts = Object.assign({sound:true, music:true, musicVol:0.5, speed:2, autoXI:true}, G.opts||{});
   G.club = Object.assign({confidence:60, staff:{vice:0,med:0,oss:0,prep:0}, youth:1,
                           training:'equilibrato', sponsor:0}, G.club||{});
   G.club.staff = Object.assign({vice:0,med:0,oss:0,prep:0}, G.club.staff||{});
@@ -3502,16 +3662,21 @@ function trattativaRinnovo(pid){
   const t = playerTeam();
   const p = t.players.find(x=>x.id===pid);
   if(!p) return;
-  const off = offerteRinnovo(p);
   const minimo = ingaggioMinimo(p);
   const noto = chiedeNoto(p);
+  const off = offerteRinnovo(p, noto);
   const bloccato = p.rifiutoSett === G.week;
+  let senzaFondi = false;
   const bottone = (tipo, etichetta, valore)=>{
     const bonus = valore*4;
     const povero = t.budget < bonus;
+    if(povero) senzaFondi = true;
+    // quando la richiesta supera il rialzo standard, il tasto la copre esattamente
+    const eti = (tipo==='rialzo' && noto && valore>=minimo && minimo>Math.round(Math.max(p.wage,playerWage(p))*1.32))
+      ? 'ACCONTENTALO' : etichetta;
     return `<button class="btn small ${tipo==='rialzo'?'acc':''} grow ${bloccato||povero?'dis':''}"
-      onclick="uiRinnova(${pid},'${tipo}')">${etichetta}<br>
-      <span class="tiny">${fmtK(valore)}/sett</span></button>`;
+      onclick="uiRinnova(${pid},'${tipo}')">${eti}<br>
+      <span class="tiny">${fmtK(valore)}/sett${povero?' · fondi ko':''}</span></button>`;
   };
   openModal(`
     <h2>RINNOVO: ${esc(p.nm)}</h2>
@@ -3532,8 +3697,11 @@ function trattativaRinnovo(pid){
       <tr><td>Bilancio</td><td class="r">${fmtK(t.budget)}</td></tr>
     </table>
     <p class="tiny faint mt">Alla firma si paga un bonus pari a quattro settimane di ingaggio.
-      La durata dipende dall'età: i giovani firmano lungo, i veterani un anno.</p>
+      La durata dipende dall'età — i giovani firmano lungo, i veterani due stagioni — e in ogni caso
+      il rinnovo vale almeno oltre questa stagione.
+      ${noto ? '' : 'Finché non conosci la cifra esatta, l\'offerta massima resta il +32%: se rifiuta scoprirai quanto chiede davvero.'}</p>
     ${bloccato?'<p class="sm badT mt">Ha già rifiutato questa settimana: riprova dopo la prossima partita.</p>':''}
+    ${senzaFondi?`<p class="sm badT mt">Alcune offerte sono fuori portata: servono quattro settimane di ingaggio come bonus e il bilancio non le copre.</p>`:''}
     <div class="row mt wrap">
       ${bottone('ribasso','AL RIBASSO', off.ribasso)}
       ${bottone('pari','STESSO INGAGGIO', off.pari)}
@@ -3578,7 +3746,7 @@ function showPlayer(pid){
       <tr><td>Stagione</td><td class="r">${p.sApps} presenze, ${p.sGoals} gol, ${p.sAssists||0} assist${p.sVotiN?` · media <b class="accT">${mediaVoto(p).toFixed(2)}</b>`:''}</td></tr>
     </table>
     <div class="row mt wrap">
-      ${p.contract<=1?`<button class="btn small ok" onclick="uiRenew(${p.id})">RINNOVA</button>`:''}
+      ${p.contract<=2?`<button class="btn small ok" onclick="closeModal();trattativaRinnovo(${p.id})">RINNOVA</button>`:''}
       <button class="btn small ${listed?'bad':''}" onclick="uiToggleList(${p.id})">${listed?'TOGLI DAL MERCATO':'METTI SUL MERCATO'}</button>
       <button class="btn small" onclick="uiHelpStats('showPlayer(${p.id})')">?</button>
       <button class="btn small grow" onclick="closeModal()">CHIUDI</button>
@@ -3888,9 +4056,18 @@ function renderClub(s){
   } else if(clubTab==='storico'){
     body = storicoHtml();
   } else {
+    const vol = Math.round((G.opts.musicVol===undefined?0.5:G.opts.musicVol)*100);
     body = `
-      <div class="teampick" onclick="uiSound()"><div class="nm">Audio<small>stadio ed effetti</small></div>
+      <div class="teampick" onclick="uiSound()"><div class="nm">Audio<small>stadio, effetti e musica</small></div>
         <span class="${G.opts.sound?'okT':'badT'}">${G.opts.sound?'ON':'OFF'}</span></div>
+      <div class="teampick ${G.opts.sound?'':'dis'}" onclick="uiMusic()" style="${G.opts.sound?'':'opacity:.45'}">
+        <div class="nm">Musica di sottofondo<small>si abbassa da sola durante le partite</small></div>
+        <span class="${G.opts.music?'okT':'badT'}">${G.opts.music?'ON':'OFF'}</span></div>
+      ${G.opts.sound && G.opts.music ? `
+      <div style="padding:6px 6px 10px">
+        <div class="tiny faint mb">Volume musica: <span class="accT" id="volLbl">${vol}%</span></div>
+        <input type="range" id="volMus" min="0" max="100" value="${vol}">
+      </div>` : ''}
       <div class="teampick" onclick="esportaCarriera()"><div class="nm">Esporta carriera
         <small>scarica un file da conservare o portare altrove</small></div><span class="accT">⤓</span></div>
       <div class="teampick" onclick="importaCarriera()"><div class="nm">Carica da file
@@ -3906,6 +4083,16 @@ function renderClub(s){
     <div class="tabs">${tabs.map(([k,l])=>`<button class="btn ${k===clubTab?'on':''}" data-k="${k}">${l}</button>`).join('')}</div>
     ${body}</div>`;
   s.querySelectorAll('.tabs button').forEach(b=> b.onclick=()=>{ sndClick(); clubTab=b.dataset.k; nav('club', true); });
+  const slider = $('volMus');
+  if(slider){
+    const agg = ()=>{
+      G.opts.musicVol = parseInt(slider.value)/100;
+      const l = $('volLbl'); if(l) l.textContent = slider.value+'%';
+      musApplicaVolume(0.1);
+    };
+    slider.oninput = agg;
+    slider.onchange = ()=>{ agg(); saveGame(); };
+  }
 }
 /* ---------- storico completo delle stagioni ---------- */
 const VERDETTI = {promo:'Promozione', great:'Oltre le attese', ok:'Obiettivo centrato',
@@ -4001,7 +4188,16 @@ function uiYouth(){
   sndClick(); if(!r.ok) openModal(`<h2>VIVAIO</h2><p class="sm">${esc(r.msg)}</p><button class="btn wide mt" onclick="closeModal()">OK</button>`);
   topbarUpdate(); saveGame(); if(r.ok) nav('club');
 }
-function uiSound(){ G.opts.sound=!G.opts.sound; if(!G.opts.sound) crowdStop(); saveGame(); nav('club'); }
+function uiSound(){
+  G.opts.sound = !G.opts.sound;
+  if(!G.opts.sound) crowdStop();
+  musAggiorna(); saveGame(); nav('club');
+}
+function uiMusic(){
+  if(!G.opts.sound) return;
+  G.opts.music = !G.opts.music;
+  musAggiorna(); saveGame(); nav('club');
+}
 /* ---------- pannello Dati e backup ---------- */
 function uiArchivio(){
   openModal(`<h2>DATI E BACKUP</h2><p class="sm dim">Controllo in corso…</p>`);
@@ -4315,6 +4511,7 @@ function beginCareer(idx){
   startUI();
 }
 function startUI(){
+  musAggiorna();
   $('topbar').classList.remove('hidden');
   $('navbar').classList.remove('hidden');
   buildNav();
@@ -4323,7 +4520,12 @@ function startUI(){
 
 /* ================== AVVIO ================== */
 function boot(){
-  document.addEventListener('pointerdown', function once(){ initAudio(); document.removeEventListener('pointerdown', once); });
+  // l'audio può partire solo dopo un gesto dell'utente: al primo tocco si accende tutto
+  document.addEventListener('pointerdown', function once(){
+    initAudio();
+    if(G && G.opts) musAggiorna();
+    document.removeEventListener('pointerdown', once);
+  });
   initLongPress();
   chiediMemoriaPermanente();
   leggiSpazio();
