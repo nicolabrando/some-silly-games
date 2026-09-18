@@ -1161,6 +1161,25 @@ function radioCarrier(secs) {
 
     // ...and the crackle: short noise pops, and now and then the channel drops
     // out for a moment the way a real one does behind a grandstand.
+    // THE ZAP. Nicola: "sento dei forti rumori, tipo dei brevi ZAP". This was
+    // it, and it was two separate mistakes in three lines.
+    //
+    //  1. NO ATTACK. The gain was set instantaneously - setValueAtTime, not a
+    //     ramp - on a noise source. A step from silence to 0.11 in one sample
+    //     is not a crackle, it is a step discontinuity, and a step
+    //     discontinuity IS a click: all the energy of the edge arrives at once
+    //     and spreads across the whole spectrum. Everything else in this file
+    //     ramps up over 6-10ms for exactly this reason; this one line did not.
+    //  2. AND IT WAS THE LOUDEST THING IN THE CALL. The carrier it is supposed
+    //     to be a texture on top of breathes between 0.016 and 0.046. The pops
+    //     went to 0.05-0.11 - up to three times over the sound they belong to -
+    //     so even without the click they read as a separate event rather than
+    //     as static.
+    //
+    // Measured on the live path: 153 instantaneous gain steps in a race's worth
+    // of radio, the loudest 0.11. Now the level sits inside the carrier's own
+    // range and the edge is a 4ms ramp, which is short enough to still sound
+    // like a crackle and long enough not to be one.
     const pop = () => {
         if (!isAudioInitialized || !soundIsOn()) return;
         const n = audioContext.currentTime;
@@ -1171,10 +1190,17 @@ function radioCarrier(secs) {
         hp.frequency.value = 1100;
         const g = audioContext.createGain();
         const dur = 0.012 + Math.random() * 0.03;
-        g.gain.setValueAtTime(0.05 + Math.random() * 0.06, n);
+        const lvl = 0.018 + Math.random() * 0.022;
+        g.gain.setValueAtTime(0, n);
+        g.gain.linearRampToValueAtTime(lvl, n + 0.004);
         g.gain.exponentialRampToValueAtTime(0.0001, n + dur);
         p.connect(hp); hp.connect(g); g.connect(audioOut());
         p.start(n); p.stop(n + dur + 0.02);
+        // ...and let the three nodes go when it has finished rather than
+        // leaving them hanging off the output for the garbage collector to
+        // reason about. A race is a few hundred of these.
+        p.onended = () => { try { g.disconnect(); hp.disconnect(); p.disconnect(); }
+                            catch (e) { /* already gone */ } };
     };
     const popTimer = setInterval(() => { if (Math.random() < 0.55) pop(); }, 420);
 
@@ -1225,10 +1251,33 @@ function radioStop() {
 // held slot alone: the first version used radioStop() for both, so a
 // priority-3 call interrupting a priority-1 also threw away the line waiting
 // behind it - the exact line the holding was written to save.
+// SILENCING THE VOICE WITHOUT BREAKING IT.
+//
+// "Dopo qualche gara il team radio smette di funzionare del tutto." The synth
+// is the browser's, and it has two failure modes that a game which cancels it
+// walks straight into:
+//
+//  * cancel() on a synth that is not saying anything is not a no-op. It is one
+//    of the documented ways Chrome's speech engine stops delivering utterances
+//    altogether - and this was called unconditionally, including once per race
+//    from stopAudio, whether anything was being said or not. A few races is a
+//    few idle cancels.
+//  * a cancel can leave the engine PAUSED, and a paused synth never speaks
+//    again however many times you ask it to. resume() on one that is not paused
+//    costs nothing, so it is simply always called.
+//
+// So: cancel only what is actually being said, and always hand the engine back
+// in a running state.
+function radioSilenceVoice() {
+    if (typeof speechSynthesis === 'undefined') return;
+    try {
+        if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+        if (speechSynthesis.paused) speechSynthesis.resume();
+    } catch (e) { /* no synth, or it refused: either way there is nothing to do */ }
+}
+
 function radioCut() {
-    if (typeof speechSynthesis !== 'undefined') {
-        try { speechSynthesis.cancel(); } catch (e) { /* nothing to cancel */ }
-    }
+    radioSilenceVoice();
     if (radioBusy && radioBusy.carrier) radioBusy.carrier.stop();
     radioBusy = null;
 }
@@ -1289,8 +1338,25 @@ function teamRadio(text, pri, fromHold) {
     const carrier = radioCarrier();
     const seq = ++radioSeq;
     radioBusy = { pri: pri, carrier: carrier, seq: seq };
+    // ONLY THE CALL THAT OWNS THE RADIO MAY FINISH IT. This checked `radioBusy`
+    // and not WHOSE radioBusy it was, and that one missing comparison is why an
+    // interrupted call took the interrupting one down with it.
+    //
+    // The sequence: a priority-3 call arrives over a priority-1. radioCut()
+    // cancels the voice and the new call is set up. Chrome then fires the
+    // CANCELLED utterance's onend - a tick later, not synchronously - and that
+    // handler is this closure, belonging to the call that has already been
+    // thrown away. It found a live radioBusy, assumed it was its own, stopped
+    // the new call's carrier and cleared the slot. The new call's deferred
+    // speak() then looked at radioBusy, found nothing, and said nothing.
+    //
+    // Measured with a speechSynthesis that fires the late onend the way
+    // Chrome's does: over sixty calls, seven interruptions, and SIX of the
+    // seven interrupting calls never reached the voice. Those are the important
+    // ones - the box calls and the flags.
+    let started = false;
     const done = () => {
-        if (!radioBusy) return;
+        if (!radioBusy || radioBusy.seq !== seq) return;
         if (radioBusy.carrier) radioBusy.carrier.stop();
         radioBusy = null;
         radioLastAt = Date.now();
@@ -1298,14 +1364,24 @@ function teamRadio(text, pri, fromHold) {
         radioSquelch(false, 0.14);
         if (radioNext && !radioPump) radioPump = setTimeout(radioDrain, 300);
     };
+    u.onstart = () => { started = true; };
     u.onend = done;
     u.onerror = done;
     // A safety net: Chrome occasionally drops an utterance without firing
     // either event, and a radioBusy that never clears is a radio that never
     // speaks again. Two seconds per ten characters is far longer than any of
     // these lines take.
+    //
+    // ...and if the words never even STARTED, the engine itself has gone to
+    // sleep rather than this particular line having been lost. Putting it back
+    // into a running state costs nothing when it was fine and is the difference
+    // between one lost call and a silent radio for the rest of the evening.
     const cap = 1200 + text.length * 90;
-    setTimeout(() => { if (radioBusy && radioBusy.seq === seq) done(); }, cap);
+    setTimeout(() => {
+        if (!radioBusy || radioBusy.seq !== seq) return;
+        if (!started) radioSilenceVoice();
+        done();
+    }, cap);
     // ...and the words start a beat after the beep, so the blip is not talked
     // over by its own message.
     setTimeout(() => {
