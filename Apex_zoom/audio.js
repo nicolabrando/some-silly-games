@@ -1092,13 +1092,33 @@ function radioSquelch(open, delay) {
     peak.gain.value = 9;
     const env = audioContext.createGain();
     const dur = open ? 0.16 : 0.075;
+    // THE LOUD ZAP WAS THIS, not the crackle. Rendered offline, piece by piece,
+    // a call came out:
+    //
+    //      squelch open   peak 0.157        carrier hiss   peak 0.041
+    //      squelch close  peak 0.130        crackle        peak 0.036
+    //      roger beep     peak 0.132        a kerb strike  peak 0.121
+    //
+    // The squelch was the loudest thing in the radio by a distance - four times
+    // the carrier it frames, and louder than a car hitting a kerb - and it fires
+    // at the start AND the end of every single call. That is the "brevi ZAP",
+    // twice a message, however many messages a race makes.
+    //
+    // Halved. It is still the loudest part of the call, which is right - a
+    // squelch is a burst of static and it should announce itself - but at twice
+    // the carrier rather than four times it, it reads as a channel opening
+    // instead of as something going wrong with the speakers.
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(open ? 0.15 : 0.11, t + 0.006);
+    env.gain.linearRampToValueAtTime(open ? 0.075 : 0.055, t + 0.006);
     env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(bp); bp.connect(peak); peak.connect(env); env.connect(audioOut());
     src.start(t); src.stop(t + dur + 0.02);
-    // and the button, keyed and let go
-    sfxTone(open ? 1320 : 990, 0.035, 0.07, 'square', delay || 0);
+    // ...and the button, keyed and let go. This was a SQUARE wave: every odd
+    // harmonic of 1320Hz at full strength, for 35ms, which is the brightest and
+    // harshest shape there is and the reason the burst had an edge on it. A
+    // triangle has the same harmonics falling away as 1/n^2 - still a click,
+    // still a switch being thrown, without the buzz-saw on top.
+    sfxTone(open ? 1320 : 990, 0.035, 0.032, 'triangle', delay || 0);
 }
 
 // THE ROGER BEEP - the two-tone blip that tops and tails a real team radio.
@@ -1106,13 +1126,19 @@ function radioSquelch(open, delay) {
 // part of it that does not depend on the voice at all.
 function radioBeep(up, delay) {
     if (!isAudioInitialized || !soundIsOn()) return;
+    // A fifth off all four, which is about 2dB. With the squelch halved the
+    // beep became the loudest thing in a call - three times the carrier it tops
+    // and tails - and the framing is meant to frame the voice, not to be the
+    // event. These are sine tones with a 10ms attack, so they were never the
+    // click; if the blip now sounds too polite, this is where it lived and
+    // 0.10 / 0.11 / 0.09 / 0.10 is where it was.
     const d = delay || 0;
     if (up) {
-        sfxTone(1180, 0.055, 0.10, 'sine', d);
-        sfxTone(1570, 0.070, 0.11, 'sine', d + 0.055);
+        sfxTone(1180, 0.055, 0.080, 'sine', d);
+        sfxTone(1570, 0.070, 0.088, 'sine', d + 0.055);
     } else {
-        sfxTone(1570, 0.050, 0.09, 'sine', d);
-        sfxTone(1050, 0.085, 0.10, 'sine', d + 0.050);
+        sfxTone(1570, 0.050, 0.072, 'sine', d);
+        sfxTone(1050, 0.085, 0.080, 'sine', d + 0.050);
     }
 }
 
@@ -1204,14 +1230,28 @@ function radioCarrier(secs) {
     };
     const popTimer = setInterval(() => { if (Math.random() < 0.55) pop(); }, 420);
 
+    // THE TIMERS COME OFF FIRST, and the rest is allowed to fail.
+    //
+    // This is called from the code that ends a call, and it used to be called
+    // BEFORE that code cleared its "a call is live" flag - so anything thrown
+    // in here left the radio permanently believing it was still talking, and a
+    // radio that believes that never speaks again. The callers clear their flag
+    // first now, and this cannot throw at them either way: the two intervals
+    // are what actually must come off, and every audio node touched afterwards
+    // might belong to a context the session has already finished with.
     return { stop: () => {
         clearInterval(swellTimer);
         clearInterval(popTimer);
-        const n = audioContext.currentTime;
-        env.gain.cancelScheduledValues(n);
-        env.gain.setValueAtTime(env.gain.value, n);
-        env.gain.exponentialRampToValueAtTime(0.0001, n + 0.12);
-        try { src.stop(n + 0.2); } catch (e) { /* already stopped */ }
+        try {
+            const n = audioContext.currentTime;
+            env.gain.cancelScheduledValues(n);
+            env.gain.setValueAtTime(env.gain.value, n);
+            env.gain.exponentialRampToValueAtTime(0.0001, n + 0.12);
+            src.stop(n + 0.2);
+            src.onended = () => { try { env.disconnect(); peak.disconnect();
+                                        bp.disconnect(); src.disconnect(); }
+                                  catch (e) { /* already gone */ } };
+        } catch (e) { /* a stale context, or already stopped: the timers are off */ }
     } };
 }
 
@@ -1234,7 +1274,12 @@ let radioNext = null;          // ONE call waiting, and only for a few seconds
 let radioSeq = 0;              // which call is live, for the timers that outlive it
 const RADIO_GAP_MS = 1200;     // the wall does not chatter, but it does talk
 const RADIO_WAIT_MS = 7000;    // past this a held call is no longer news
+const RADIO_WAIT_BIG_MS = 12000; // ...but a flag or a box call still is
 const RADIO_BEEP_MS = 170;     // the blip, before the words that follow it
+// No line this game says takes anything like twenty seconds. If a call has held
+// the radio for longer than that, it is not talking - something went wrong with
+// it - and the radio is free. See the note in teamRadio.
+const RADIO_STUCK_MS = 20000;
 
 function setTeamRadio(on) { radioOn = !!on; if (!radioOn) radioStop(); }
 function teamRadioOn() { return radioOn; }
@@ -1276,10 +1321,15 @@ function radioSilenceVoice() {
     } catch (e) { /* no synth, or it refused: either way there is nothing to do */ }
 }
 
+// THE FLAG COMES DOWN FIRST. Both of the places that end a call used to stop
+// the carrier and THEN clear the flag, which meant anything thrown by the stop
+// left the flag up for ever - and with the flag up, teamRadio never says
+// another word. See the note on the carrier's stop().
 function radioCut() {
-    radioSilenceVoice();
-    if (radioBusy && radioBusy.carrier) radioBusy.carrier.stop();
+    const was = radioBusy;
     radioBusy = null;
+    radioSilenceVoice();
+    if (was && was.carrier) { try { was.carrier.stop(); } catch (e) { /* see above */ } }
 }
 
 // THE ONE HELD CALL. A lap crossing now produces two lines, not one, and the
@@ -1298,8 +1348,18 @@ function radioHold(text, pri) {
 function radioDrain() {
     radioPump = null;
     if (!radioNext) return;
-    if (Date.now() - radioNext.at > RADIO_WAIT_MS) { radioNext = null; return; }
-    if (radioBusy || Date.now() - radioLastAt < RADIO_GAP_MS) {
+    // HOW LONG A WAITING CALL IS STILL WORTH SAYING depends on what it is. "We
+    // have lost a place" is not true a moment later and is thrown away; a box
+    // call or the flag is exactly as true in eight seconds as it was in one,
+    // and it is the call you must not miss. Now that a big call waits for the
+    // voice instead of cutting it off, it has to be allowed to wait longer than
+    // one whole message takes to say.
+    const cap = radioNext.pri >= 3 ? RADIO_WAIT_BIG_MS : RADIO_WAIT_MS;
+    if (Date.now() - radioNext.at > cap) { radioNext = null; return; }
+    // ...and a big call does not also serve out the pause that follows a
+    // message: it is already late by however long that message was.
+    if (radioBusy ||
+        (Date.now() - radioLastAt < RADIO_GAP_MS && radioNext.pri < 3)) {
         radioPump = setTimeout(radioDrain, 300);
         return;
     }
@@ -1316,11 +1376,47 @@ function teamRadio(text, pri, fromHold) {
     if (!soundIsOn()) return false;                  // the volume control owns it too
     pri = pri || 1;
     const now = Date.now();
+    // ---- A RADIO THAT CANNOT STAY BROKEN ------------------------------
+    //
+    // "E la voce ha smesso di funzionare di nuovo." Everything below depends on
+    // one flag - radioBusy, "a call is in progress" - and every path that is
+    // supposed to lower it again is a callback: an utterance event from the
+    // browser, or a timer. Each of those has now been made exception-proof and
+    // ordered so the flag comes down before anything that could throw, which
+    // fixes the ways it was getting stuck that I can name.
+    //
+    // This is for the ways I cannot. If the flag has been up for longer than
+    // any line takes to say, then whatever is holding it is not a call - it is
+    // a bug, or an engine that went to sleep without telling us - and the next
+    // call takes the radio back rather than joining a queue that will never
+    // move. One missed message instead of a silent radio for the rest of the
+    // evening, and it costs a subtraction.
+    if (radioBusy && now - (radioBusy.at || 0) > RADIO_STUCK_MS) {
+        const stale = radioBusy;
+        radioBusy = null;
+        if (stale.carrier) { try { stale.carrier.stop(); } catch (e) { } }
+        radioSilenceVoice();
+    }
     // something is already being said: only a bigger call may cut in, and the
     // one it displaces goes into the held slot rather than into the bin
+    // SOMETHING IS ALREADY BEING SAID, AND IT IS ALLOWED TO FINISH.
+    //
+    // A bigger call used to cut in by cancelling the voice mid-word. Everything
+    // else in this file can be faded, because everything else is a Web Audio
+    // node with a gain on it - the voice cannot: speechSynthesis writes straight
+    // to the output device, so "stop talking" means stop, in one sample, in the
+    // middle of a vowel. There is no envelope to give it. That is the other half
+    // of what Nicola was hearing, and it is also the operation that leaves the
+    // browser's speech engine wedged.
+    //
+    // So nothing interrupts the voice any more. A priority-3 call goes to the
+    // front of the held slot and speaks the moment the current line ends, which
+    // costs it a second or two and is what a real engineer does anyway - he
+    // finishes his sentence. The held slot already keeps the bigger of two
+    // waiting calls, and radioDrain lets a big one skip the gap that follows a
+    // message, so a box call follows straight on rather than a beat later.
     if (radioBusy) {
-        if (pri <= radioBusy.pri) return fromHold ? false : radioHold(text, pri);
-        radioCut();
+        return fromHold ? false : radioHold(text, pri);
     } else if (now - radioLastAt < RADIO_GAP_MS && pri < 3) {
         return fromHold ? false : radioHold(text, pri);
     }
@@ -1337,7 +1433,7 @@ function teamRadio(text, pri, fromHold) {
     radioBeep(true, 0.05);
     const carrier = radioCarrier();
     const seq = ++radioSeq;
-    radioBusy = { pri: pri, carrier: carrier, seq: seq };
+    radioBusy = { pri: pri, carrier: carrier, seq: seq, at: Date.now() };
     // ONLY THE CALL THAT OWNS THE RADIO MAY FINISH IT. This checked `radioBusy`
     // and not WHOSE radioBusy it was, and that one missing comparison is why an
     // interrupted call took the interrupting one down with it.
@@ -1357,9 +1453,11 @@ function teamRadio(text, pri, fromHold) {
     let started = false;
     const done = () => {
         if (!radioBusy || radioBusy.seq !== seq) return;
-        if (radioBusy.carrier) radioBusy.carrier.stop();
+        // the flag first, then the audio - see radioCut
+        const mine = radioBusy;
         radioBusy = null;
         radioLastAt = Date.now();
+        if (mine.carrier) { try { mine.carrier.stop(); } catch (e) { /* see above */ } }
         radioBeep(false, 0.02);
         radioSquelch(false, 0.14);
         if (radioNext && !radioPump) radioPump = setTimeout(radioDrain, 300);
