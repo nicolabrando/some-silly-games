@@ -1162,8 +1162,12 @@ function radioBeep(up, delay) {
         sfxTone(1180, 0.055, 0.080, 'sine', d);
         sfxTone(1570, 0.070, 0.088, 'sine', d + 0.055);
     } else {
-        sfxTone(1570, 0.050, 0.072, 'sine', d);
-        sfxTone(1050, 0.085, 0.080, 'sine', d + 0.050);
+        // ...and the DOWN blip lower again than the up one. It is the tone that
+        // ends a message, so it is the one heard against a bed that is on its
+        // way out rather than against two seconds of voice - and it was the
+        // loudest thing in the ending by a factor of seven.
+        sfxTone(1570, 0.050, 0.050, 'sine', d);
+        sfxTone(1050, 0.085, 0.056, 'sine', d + 0.050);
     }
 }
 
@@ -1280,7 +1284,7 @@ function radioCarrier(secs) {
     // first now, and this cannot throw at them either way: the two intervals
     // are what actually must come off, and every audio node touched afterwards
     // might belong to a context the session has already finished with.
-    return { stop: () => {
+    return { stop: (after) => {
         clearInterval(swellTimer);
         clearInterval(popTimer);
         try {
@@ -1345,10 +1349,16 @@ function radioCarrier(secs) {
                 }
             }
             lvl = Math.max(0.0002, Math.min(0.06, lvl));
+            // THE BED STAYS UNDER THE FRAMING, and then dissolves instead of
+            // stopping. `hold` is how long the static is kept up before it
+            // starts to go - see the note in done() on why the end of a call
+            // needs it and the beginning does not.
+            const hold = Math.max(0, Math.min(0.6, after || 0));
             env.gain.cancelScheduledValues(n);
             env.gain.setValueAtTime(lvl, n);
-            env.gain.exponentialRampToValueAtTime(0.0001, n + 0.12);
-            src.stop(n + 0.2);
+            if (hold) env.gain.setValueAtTime(lvl, n + hold);
+            env.gain.exponentialRampToValueAtTime(0.0001, n + hold + 0.22);
+            src.stop(n + hold + 0.30);
             src.onended = () => { try { env.disconnect(); peak.disconnect();
                                         bp.disconnect(); src.disconnect(); }
                                   catch (e) { /* already gone */ } };
@@ -1418,7 +1428,9 @@ function radioStop() {
 function radioSilenceVoice() {
     if (typeof speechSynthesis === 'undefined') return;
     try {
-        if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+        if (speechSynthesis.speaking || speechSynthesis.pending) {
+            speechSynthesis.cancel(); radioStats.cancelled++; radioNote('engine cleared');
+        }
         // ...and resume UNCONDITIONALLY. resume() on an engine that is not
         // paused does nothing at all, and `paused` is not a flag worth trusting
         // - an engine can stop delivering without ever admitting to it. The
@@ -1447,7 +1459,9 @@ function radioCut() {
 // seconds is thrown away rather than said, because by then it is not true.
 let radioPump = null;
 function radioHold(text, pri) {
-    if (radioNext && radioNext.pri > pri) return false;
+    if (radioNext && radioNext.pri > pri) { radioStats.dropped++; return false; }
+    if (radioNext) radioStats.dropped++;          // the one it replaces
+    radioStats.held++;
     radioNext = { text: text, pri: pri, at: Date.now() };
     if (!radioPump) radioPump = setTimeout(radioDrain, 300);
     return true;
@@ -1462,7 +1476,11 @@ function radioDrain() {
     // voice instead of cutting it off, it has to be allowed to wait longer than
     // one whole message takes to say.
     const cap = radioNext.pri >= 3 ? RADIO_WAIT_BIG_MS : RADIO_WAIT_MS;
-    if (Date.now() - radioNext.at > cap) { radioNext = null; return; }
+    if (Date.now() - radioNext.at > cap) {
+        radioStats.dropped++;
+        radioNote('a waiting call went stale', 'pri ' + radioNext.pri);
+        radioNext = null; return;
+    }
     // ...and a big call does not also serve out the pause that follows a
     // message: it is already late by however long that message was.
     if (radioBusy ||
@@ -1478,6 +1496,8 @@ function radioDrain() {
 // `text` is what the wall says. `pri` decides whether it may interrupt, and
 // whether it waits its turn or is forgotten.
 function teamRadio(text, pri, fromHold) {
+    radioPulse();                       // the first call of the session starts the pulse
+    if (!fromHold) { radioStats.asked++; radioNote('asked', 'pri ' + pri); }
     if (!radioOn || !text) return false;
     if (typeof speechSynthesis === 'undefined') return false;
     if (!soundIsOn()) return false;                  // the volume control owns it too
@@ -1566,14 +1586,47 @@ function teamRadio(text, pri, fromHold) {
         radioBusy = null;
         radioLive = null;
         radioLastAt = Date.now();
-        if (mine.carrier) { try { mine.carrier.stop(); } catch (e) { /* see above */ } }
+        // AND THE STATIC IS HELD UNDER ALL OF IT.
+        //
+        // "C'e' ancora il rumore forte alla fine del messaggio" - after the
+        // teardown burst was found and fixed, which means that burst was a real
+        // bug but not the sound. So the ending was printed as an ENVELOPE, ten
+        // milliseconds at a time, instead of being read as code, and the two
+        // ends of a call do not look remotely alike:
+        //
+        //    opening                        ending
+        //    0.02  squelch   0.024          2.00  carrier   0.009
+        //    0.06  beep      0.064          2.03  beep      0.061
+        //    0.09  (gap)     0.016          2.06  (gap)     0.003
+        //    0.12  beep      0.075          2.08  beep      0.062
+        //    0.17  carrier   0.011  ...     2.14  squelch   0.021
+        //    ...the voice, for two seconds  2.17  0.0017
+        //                                   2.24  0.00000
+        //
+        // Same sounds, same levels - and one of them is a tick and the other is
+        // not. LOUDNESS IS CONTRAST. At the start the beep sits on a carrier
+        // that is coming up and hands over to two seconds of voice, and the
+        // gaps between its tones are filled. At the end it was seven times the
+        // bed it sat on, with a near-total hole between its two tones, and
+        // eighty milliseconds later the whole radio was at digital zero. A loud
+        // transient with holes around it and nothing after it is the definition
+        // of a click, and no amount of turning it down was going to fix it,
+        // which is exactly what three goes at turning it down had shown.
+        //
+        // So the order is inverted: the framing plays FIRST and the bed is held
+        // up underneath it, and only once the squelch tail has gone does the
+        // static dissolve - over 220ms, rather than stopping. The ending now
+        // descends the way the opening climbs. It costs a quarter of a second
+        // at the end of a call and nothing else.
         radioBeep(false, 0.02);
-        radioSquelch(false, 0.14);
+        radioSquelch(false, 0.10);
+        if (mine.carrier) { try { mine.carrier.stop(0.22); } catch (e) { /* see above */ } }
         if (radioNext && !radioPump) radioPump = setTimeout(radioDrain, 300);
     };
-    u.onstart = () => { started = true; };
-    u.onend = done;
-    u.onerror = done;
+    u.onstart = () => { started = true; radioStats.started++; radioNote('speaking'); };
+    u.onend = () => { radioStats.ended++; radioNote('ended'); done(); };
+    u.onerror = (ev) => { radioStats.errored++;
+                          radioNote('ENGINE ERROR', (ev && ev.error) || '?'); done(); };
     // A safety net: Chrome occasionally drops an utterance without firing
     // either event, and a radioBusy that never clears is a radio that never
     // speaks again.
@@ -1603,6 +1656,8 @@ function teamRadio(text, pri, fromHold) {
     const cap = 2000 + text.length * 130;
     setTimeout(() => {
         if (!radioBusy || radioBusy.seq !== seq) return;
+        radioStats.capped++;
+        radioNote('DEADLINE, no end from the engine', started ? 'it had started' : 'never started');
         radioSilenceVoice();
         done();
     }, cap);
@@ -1625,7 +1680,170 @@ function teamRadio(text, pri, fromHold) {
         // is a documented way to leave that queue stalled, which is this same
         // bug arriving by a different road. One reference, dropped in done().
         radioLive = u;
-        try { speechSynthesis.speak(u); } catch (e) { done(); }
+        radioStats.spoke++;
+        try { speechSynthesis.speak(u); }
+        catch (e) { radioNote('speak() THREW', String(e && e.message || e)); done(); }
     }, RADIO_BEEP_MS);
     return true;
+}
+
+// ---------------------------------------------------------------------------
+//  THE RADIO'S BLACK BOX, and a pulse that does not need a call to arrive.
+//
+//  "E il team radio ha di nuovo smesso di funzionare." Three goes at this now,
+//  each one a real bug, none of them the one that kills it - and every one of
+//  them found by reading the code and reasoning about what the browser might
+//  do. That method has run out: the failure happens on his machine, in Firefox,
+//  after a number of races I cannot reproduce here, and I have been guessing.
+//
+//  So this is the instrument. It costs a counter per event and a two-second
+//  interval, it is always on, and when the radio dies he can press SHIFT+R and
+//  read back what the state actually was - which of the two sides stopped, our
+//  bookkeeping or the engine, and which event was the last one to happen. One
+//  screenshot ends the guessing.
+//
+//  ...and the same pulse that watches also repairs. Everything written so far
+//  recovers INSIDE teamRadio, which means it only recovers when the next call
+//  arrives - and if the thing that is stuck is what stops calls arriving, that
+//  is a watchdog that sleeps through the fire.
+const radioLog = [];
+const radioStats = { asked: 0, spoke: 0, started: 0, ended: 0, errored: 0,
+                     capped: 0, cancelled: 0, held: 0, dropped: 0, revived: 0 };
+function radioNote(what, extra) {
+    radioLog.push({ t: Date.now(), what: what, extra: extra === undefined ? '' : extra });
+    if (radioLog.length > 40) radioLog.shift();
+}
+
+// What the engine says about itself, defensively - a dead synth can throw on
+// the getters as readily as on the methods.
+function radioEngineState() {
+    if (typeof speechSynthesis === 'undefined') return { none: true };
+    try {
+        return { speaking: !!speechSynthesis.speaking,
+                 pending: !!speechSynthesis.pending,
+                 paused: !!speechSynthesis.paused,
+                 voices: (speechSynthesis.getVoices() || []).length };
+    } catch (e) { return { threw: String(e && e.message || e) }; }
+}
+
+function radioReport() {
+    const now = Date.now();
+    const e = radioEngineState();
+    const lines = [];
+    lines.push('TEAM RADIO  ' + new Date().toLocaleTimeString());
+    lines.push('radio on         ' + radioOn);
+    lines.push('a call live      ' + (radioBusy
+        ? 'yes, seq ' + radioBusy.seq + ', pri ' + radioBusy.pri +
+          ', ' + ((now - radioBusy.at) / 1000).toFixed(1) + 's old'
+        : 'no'));
+    lines.push('utterance held   ' + (radioLive ? 'yes' : 'no'));
+    lines.push('one waiting      ' + (radioNext
+        ? 'pri ' + radioNext.pri + ', ' + ((now - radioNext.at) / 1000).toFixed(1) + 's old'
+        : 'no') + (radioPump ? '   (pump alive)' : '   (no pump)'));
+    lines.push('last call ended  ' + (radioLastAt
+        ? ((now - radioLastAt) / 1000).toFixed(1) + 's ago' : 'never'));
+    lines.push('engine           ' + (e.none ? 'not present in this browser'
+        : e.threw ? 'THREW: ' + e.threw
+        : 'speaking ' + e.speaking + '  pending ' + e.pending +
+          '  paused ' + e.paused + '  voices ' + e.voices));
+    lines.push('audio            ' + (isAudioInitialized ? 'on' : 'off') +
+               (typeof audioContext !== 'undefined' && audioContext
+                ? ', context ' + audioContext.state : ', no context'));
+    lines.push('');
+    lines.push('asked ' + radioStats.asked + '   spoke ' + radioStats.spoke +
+               '   started ' + radioStats.started + '   ended ' + radioStats.ended);
+    lines.push('held ' + radioStats.held + '   dropped ' + radioStats.dropped +
+               '   errors ' + radioStats.errored + '   deadlines ' + radioStats.capped);
+    lines.push('cancels ' + radioStats.cancelled + '   repairs ' + radioStats.revived);
+    lines.push('');
+    lines.push('the last few things that happened:');
+    radioLog.slice(-14).forEach(r => lines.push(
+        '  -' + ((now - r.t) / 1000).toFixed(1).padStart(6) + 's  ' +
+        r.what + (r.extra === '' ? '' : '  ' + r.extra)));
+    return lines.join('\n');
+}
+
+// SHIFT+R, and a panel that is not in the way of anything. It refreshes while
+// it is up so it can be watched through the moment it breaks.
+let radioPanel = null, radioPanelTimer = null;
+function radioPanelToggle() {
+    if (radioPanel) {
+        clearInterval(radioPanelTimer); radioPanelTimer = null;
+        radioPanel.remove(); radioPanel = null;
+        return;
+    }
+    radioPanel = document.createElement('pre');
+    radioPanel.style.cssText =
+        'position:fixed;right:10px;top:10px;z-index:99999;margin:0;' +
+        'background:rgba(8,10,14,0.93);color:#cfe3ff;border:1px solid #3a4a63;' +
+        'border-radius:8px;padding:10px 12px;font:11px/1.45 ui-monospace,Menlo,monospace;' +
+        'max-height:86vh;overflow:auto;pointer-events:none;white-space:pre;';
+    document.body.appendChild(radioPanel);
+    const paint = () => { if (radioPanel) radioPanel.textContent = radioReport(); };
+    paint();
+    radioPanelTimer = setInterval(paint, 500);
+}
+if (typeof window !== 'undefined') {
+    window.radioReport = radioReport;
+    window.addEventListener('keydown', (ev) => {
+        const t = ev && ev.target;
+        const tag = t && t.tagName ? t.tagName.toUpperCase() : '';
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+        if (ev.shiftKey && (ev.key === 'R' || ev.key === 'r')) {
+            ev.preventDefault(); radioPanelToggle();
+        }
+    });
+}
+
+// THE PULSE. Two seconds, always, from the first call of the session on.
+//
+//  1. A CALL THAT NEVER ENDED. teamRadio has had this check since zoom84 - but
+//     at the top of teamRadio, so it only fires when something else asks to
+//     speak. Here it fires anyway.
+//  2. AN ENGINE THAT SAYS IT IS TALKING WHEN NOTHING OF OURS IS. Ours is the
+//     only voice on the page, so if the engine claims to be busy six seconds
+//     after our last call ended, what it is holding is never going to finish.
+//     zoom87 cleared that just before speaking; this clears it without waiting
+//     for a reason to speak, because a jam that is cleared between messages
+//     costs nothing and a jam that is cleared at the last moment has already
+//     delayed a message.
+//  3. A HELD CALL WITH NOTHING BEHIND IT. One cleared timeout and the queue
+//     never moves again.
+let radioHeart = null, radioIdleBusyAt = 0;
+function radioPulse() {
+    if (radioHeart || typeof setInterval !== 'function') return;
+    radioHeart = setInterval(() => {
+        try {
+            const now = Date.now();
+            if (radioBusy && now - (radioBusy.at || 0) > RADIO_STUCK_MS) {
+                const stale = radioBusy;
+                radioBusy = null; radioLive = null;
+                if (stale.carrier) { try { stale.carrier.stop(); } catch (er) { } }
+                radioSilenceVoice();
+                radioStats.revived++;
+                radioNote('a call that never ended, cleared',
+                          ((now - (stale.at || now)) / 1000).toFixed(0) + 's');
+            }
+            if (!radioBusy) {
+                const e = radioEngineState();
+                if (e.speaking || e.pending) {
+                    if (!radioIdleBusyAt) radioIdleBusyAt = now;
+                    else if (now - radioIdleBusyAt > 6000) {
+                        radioIdleBusyAt = 0;
+                        radioStats.revived++;
+                        radioNote('engine stuck busy with nothing of ours, cleared');
+                        radioSilenceVoice();
+                    }
+                } else {
+                    radioIdleBusyAt = 0;
+                    if (e.paused) { try { speechSynthesis.resume(); } catch (er) { } 
+                                    radioNote('engine found paused, resumed'); }
+                }
+            }
+            if (radioNext && !radioPump) {
+                radioNote('a held call with no pump behind it, restarted');
+                radioPump = setTimeout(radioDrain, 300);
+            }
+        } catch (er) { /* the pulse never throws at the game */ }
+    }, 2000);
 }
