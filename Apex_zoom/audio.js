@@ -1200,14 +1200,25 @@ function radioCarrier(secs) {
 
     // ...breathing. A slow random walk at roughly syllable rate, scheduled a
     // few seconds ahead and topped up while the call runs.
+    //
+    // Every breakpoint is also KEPT, because the teardown at the bottom of this
+    // function needs to know where the walk had got to and there is no way to
+    // ask - see the note down there. Only the last second or so is worth
+    // holding on to: all the teardown needs is the pair that brackets the
+    // moment it runs.
     let at = t + 0.05;
+    const pts = [{ t: t, v: 0 }, { t: t + 0.05, v: 0.032 }];
     const swell = () => {
         const until = audioContext.currentTime + 3;
         while (at < until) {
             const step = 0.09 + Math.random() * 0.11;
             at += step;
-            env.gain.linearRampToValueAtTime(0.016 + Math.random() * 0.030, at);
+            const v = 0.016 + Math.random() * 0.030;
+            env.gain.linearRampToValueAtTime(v, at);
+            pts.push({ t: at, v: v });
         }
+        const old = audioContext.currentTime - 1;
+        while (pts.length > 2 && pts[1].t < old) pts.shift();
     };
     swell();
     const swellTimer = setInterval(swell, 1800);
@@ -1274,8 +1285,68 @@ function radioCarrier(secs) {
         clearInterval(popTimer);
         try {
             const n = audioContext.currentTime;
+            // THE TAC AT THE END OF EVERY MESSAGE WAS THIS ONE LINE.
+            //
+            // Nicola, after the squelch and the crackle were fixed: "Ora il TAC
+            // c'e' solamente alla fine dei messaggi, ma mai all'inizio." The
+            // squelch and the roger beep both fire at both ends, so neither of
+            // them could be it. This teardown is the ONLY thing that happens at
+            // the end of a call and nowhere else.
+            //
+            // It used to read the carrier's own level back out of the parameter
+            // in order to fade from wherever the breathing had got to:
+            //
+            //      env.gain.setValueAtTime(env.gain.value, n);
+            //
+            // AudioParam.value does not report the automation. The value a
+            // parameter is playing lives on the audio thread; `.value` reads a
+            // copy on the main thread that scheduling never touches - it is
+            // only written by the audio thread feeding it back, and by the
+            // setter. A gain node that has only ever been driven by ramps, and
+            // whose feedback has not arrived, reads back as the default: ONE.
+            //
+            // Measured, on a carrier the code had just scheduled between 0.016
+            // and 0.046:
+            //
+            //      gain.value fresh from createGain : 1
+            //      ...after setValueAtTime(0, 0)    : 1
+            //      ...after 20 ramps                : 1
+            //      ...after cancelScheduledValues   : 1
+            //
+            // So the fade did not start from 0.03. It started from 1, and the
+            // end of every call was a 120ms burst of band-passed noise at
+            // THIRTY TIMES the carrier it was supposed to be fading out - a
+            // peak of 0.72 against the squelch's 0.13, by a distance the
+            // loudest thing the game makes, straight into the limiter, which
+            // then holds the whole mix down for its release. Rendered:
+            //
+            //      largest sample jump, call opening : 0.036
+            //      largest sample jump, mid-call     : 0.020
+            //      largest sample jump, teardown     : 0.389
+            //
+            // A carrier node is built fresh for every call, so its copy starts
+            // at 1 every time - which is why it is every message, always at the
+            // end, and why it did not depend on anything in the message.
+            //
+            // The parameter cannot be asked, so it is not asked: the swell
+            // records the breakpoints it schedules and the value at `n` is
+            // interpolated from the two that bracket it. Exact, the same on
+            // every browser, and no cross-thread read. The clamp is deliberate
+            // belt and braces - this carrier is never legitimately above 0.046,
+            // so however wrong the arithmetic ever goes the worst case is a
+            // small step and never again a full-scale burst.
+            let lvl = pts[pts.length - 1].v;
+            if (n <= pts[0].t) lvl = pts[0].v;
+            else for (let i = 1; i < pts.length; i++) {
+                if (pts[i].t >= n) {
+                    const a = pts[i - 1], c = pts[i];
+                    lvl = c.t > a.t ? a.v + (c.v - a.v) * (n - a.t) / (c.t - a.t) : c.v;
+                    break;
+                }
+            }
+            lvl = Math.max(0.0002, Math.min(0.06, lvl));
             env.gain.cancelScheduledValues(n);
-            env.gain.setValueAtTime(env.gain.value, n);
+            env.gain.setValueAtTime(lvl, n);
             env.gain.exponentialRampToValueAtTime(0.0001, n + 0.12);
             src.stop(n + 0.2);
             src.onended = () => { try { env.disconnect(); peak.disconnect();
@@ -1302,6 +1373,7 @@ let radioBusy = null;          // { pri, carrier } while a call is live
 let radioLastAt = 0;           // wall clock of the last call, for the gap
 let radioNext = null;          // ONE call waiting, and only for a few seconds
 let radioSeq = 0;              // which call is live, for the timers that outlive it
+let radioLive = null;          // the utterance being spoken, held so it is not collected
 const RADIO_GAP_MS = 1200;     // the wall does not chatter, but it does talk
 const RADIO_WAIT_MS = 7000;    // past this a held call is no longer news
 const RADIO_WAIT_BIG_MS = 12000; // ...but a flag or a box call still is
@@ -1347,7 +1419,11 @@ function radioSilenceVoice() {
     if (typeof speechSynthesis === 'undefined') return;
     try {
         if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
-        if (speechSynthesis.paused) speechSynthesis.resume();
+        // ...and resume UNCONDITIONALLY. resume() on an engine that is not
+        // paused does nothing at all, and `paused` is not a flag worth trusting
+        // - an engine can stop delivering without ever admitting to it. The
+        // check was costing nothing and buying nothing.
+        speechSynthesis.resume();
     } catch (e) { /* no synth, or it refused: either way there is nothing to do */ }
 }
 
@@ -1358,6 +1434,7 @@ function radioSilenceVoice() {
 function radioCut() {
     const was = radioBusy;
     radioBusy = null;
+    radioLive = null;
     radioSilenceVoice();
     if (was && was.carrier) { try { was.carrier.stop(); } catch (e) { /* see above */ } }
 }
@@ -1424,6 +1501,7 @@ function teamRadio(text, pri, fromHold) {
     if (radioBusy && now - (radioBusy.at || 0) > RADIO_STUCK_MS) {
         const stale = radioBusy;
         radioBusy = null;
+        radioLive = null;
         if (stale.carrier) { try { stale.carrier.stop(); } catch (e) { } }
         radioSilenceVoice();
     }
@@ -1486,6 +1564,7 @@ function teamRadio(text, pri, fromHold) {
         // the flag first, then the audio - see radioCut
         const mine = radioBusy;
         radioBusy = null;
+        radioLive = null;
         radioLastAt = Date.now();
         if (mine.carrier) { try { mine.carrier.stop(); } catch (e) { /* see above */ } }
         radioBeep(false, 0.02);
@@ -1497,23 +1576,55 @@ function teamRadio(text, pri, fromHold) {
     u.onerror = done;
     // A safety net: Chrome occasionally drops an utterance without firing
     // either event, and a radioBusy that never clears is a radio that never
-    // speaks again. Two seconds per ten characters is far longer than any of
-    // these lines take.
+    // speaks again.
     //
-    // ...and if the words never even STARTED, the engine itself has gone to
-    // sleep rather than this particular line having been lost. Putting it back
-    // into a running state costs nothing when it was fine and is the difference
-    // between one lost call and a silent radio for the rest of the evening.
-    const cap = 1200 + text.length * 90;
+    // AND THE ENGINE IS HANDED BACK FREE, not just our own flag lowered.
+    //
+    // "Con build zoom85 il problema del team radio che smette di funzionare ad
+    // un certo punto si e' ripresentato." Everything written so far watches
+    // radioBusy, which is OUR bookkeeping. The engine keeps a queue of its own,
+    // and its common failure in the wild is an utterance that starts and never
+    // finishes: onstart fires, onend never does, `speaking` stays true for
+    // good. This net lowered our flag and left that behind - so the next
+    // speak() went into the engine's queue BEHIND A HEAD THAT WILL NEVER
+    // FINISH, and so did every one after it. The radio was then silent until
+    // the page was reloaded, which is the report word for word.
+    //
+    // It used to clear the engine only when the words never STARTED - which is
+    // precisely the case that does not jam anything, and the opposite of the
+    // one that does. Now it always asks, and radioSilenceVoice only cancels
+    // something the engine says it is actually holding, so an idle synth is
+    // still never cancelled (see 5c - idle cancels are how engines die).
+    //
+    // The deadline is generous on purpose: two seconds plus 130ms a character
+    // against a voice that manages about 17, so on a healthy engine this never
+    // fires at all and nothing is ever cut off mid-word. A stall costs a couple
+    // of seconds more before the radio comes back, which is the right way round.
+    const cap = 2000 + text.length * 130;
     setTimeout(() => {
         if (!radioBusy || radioBusy.seq !== seq) return;
-        if (!started) radioSilenceVoice();
+        radioSilenceVoice();
         done();
     }, cap);
     // ...and the words start a beat after the beep, so the blip is not talked
     // over by its own message.
     setTimeout(() => {
         if (!radioBusy || radioBusy.seq !== seq) return;            // cut off before it began
+        // ONE UTTERANCE AT A TIME, AND THIS ONE IS IT. Nothing else in the game
+        // speaks, and a call that is over has had its utterance accounted for -
+        // so an engine that claims to be busy at the moment we are about to
+        // speak is holding something stale, and adding to the queue behind it
+        // would lose this line and every line after it. The same check as the
+        // net above, at the other end: whatever is stuck there is cleared
+        // before this goes in, and an engine that says it is idle is left
+        // alone.
+        radioSilenceVoice();
+        // ...AND THE UTTERANCE IS KEPT ALIVE. Once the closure around this
+        // timeout is released, the only thing referring to `u` is the engine's
+        // internal queue - and an utterance collected while it is still queued
+        // is a documented way to leave that queue stalled, which is this same
+        // bug arriving by a different road. One reference, dropped in done().
+        radioLive = u;
         try { speechSynthesis.speak(u); } catch (e) { done(); }
     }, RADIO_BEEP_MS);
     return true;
