@@ -861,7 +861,18 @@ function sfxImpact(severity, pan, dist) {
         g.gain.linearRampToValueAtTime(amp, when + (att || 0.002));
         g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
         src.connect(f); f.connect(g); g.connect(dest);
-        src.start(when); src.stop(when + dur + 0.02);
+        // ...from somewhere else in the buffer each time, for the reason in the
+        // note on radioSquelch: a crash is eight of these bursts and a race is
+        // a lot of crashes, and the same samples every time read as a sound
+        // effect rather than as an impact. The random playbackRate above was
+        // already reaching for this; an offset is the direct way to get it.
+        // ...but never so late in the buffer that the burst runs off the end of
+        // it. A BufferSource that is not looping simply STOPS when the samples
+        // run out, and the long bursts are the crash's debris tail: an offset
+        // of half a second on a six-tenths buffer cut that tail from 6% of the
+        // head to 2%, which the suite caught.
+        const room = Math.max(0, 0.58 - dur);
+        src.start(when, Math.random() * room); src.stop(when + dur + 0.02);
     };
 
     // ---- the grains: first contact, then what follows it ----------------
@@ -1104,15 +1115,29 @@ function radioSquelch(open, delay) {
     // at the start AND the end of every single call. That is the "brevi ZAP",
     // twice a message, however many messages a race makes.
     //
-    // Halved. It is still the loudest part of the call, which is right - a
-    // squelch is a burst of static and it should announce itself - but at twice
-    // the carrier rather than four times it, it reads as a channel opening
-    // instead of as something going wrong with the speakers.
+    // Brought down, though not as far as the first attempt at this: cutting it
+    // in half made it thinner rather than softer, and a thin burst of static is
+    // MORE tick-like, not less. The body is what makes it read as a channel
+    // opening. What actually fixes it is the line below.
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(open ? 0.075 : 0.055, t + 0.006);
+    env.gain.linearRampToValueAtTime(open ? 0.105 : 0.078, t + 0.008);
     env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(bp); bp.connect(peak); peak.connect(env); env.connect(audioOut());
-    src.start(t); src.stop(t + dur + 0.02);
+    // A DIFFERENT PIECE OF NOISE EVERY TIME. This is the one that mattered.
+    //
+    // There is a single noise buffer shared by everything in the game, and
+    // every burst that read from it started at sample zero - so every squelch
+    // of every call of every race was the SAME 160 milliseconds, to the sample.
+    // Measured: two bursts rendered half a second apart were 100% identical,
+    // largest difference between them exactly 0.
+    //
+    // Identical repeated noise is not static. Static is different every time;
+    // a waveform you hear twenty times a race is a mechanism, and the ear
+    // stops hearing "hiss" and starts hearing "that click again". Which is
+    // exactly why this arrived when it did: the radio did not change, the
+    // number of messages did, and the same burst went from occasional to
+    // constant. Starting at a random point in the buffer costs one argument.
+    src.start(t, Math.random() * 0.4); src.stop(t + dur + 0.02);
     // ...and the button, keyed and let go. This was a SQUARE wave: every odd
     // harmonic of 1320Hz at full strength, for 35ms, which is the brightest and
     // harshest shape there is and the reason the burst had an edge on it. A
@@ -1169,7 +1194,9 @@ function radioCarrier(secs) {
     env.gain.setValueAtTime(0, t);
     env.gain.linearRampToValueAtTime(0.032, t + 0.05);
     src.connect(bp); bp.connect(peak); peak.connect(env); env.connect(audioOut());
-    src.start(t);
+    // the hiss too: it loops a six-tenths buffer, so without an offset every
+    // call's static begins on the same sample and runs the same way round
+    src.start(t, Math.random() * 0.6);
 
     // ...breathing. A slow random walk at roughly syllable rate, scheduled a
     // few seconds ahead and topped up while the call runs.
@@ -1221,7 +1248,10 @@ function radioCarrier(secs) {
         g.gain.linearRampToValueAtTime(lvl, n + 0.004);
         g.gain.exponentialRampToValueAtTime(0.0001, n + dur);
         p.connect(hp); hp.connect(g); g.connect(audioOut());
-        p.start(n); p.stop(n + dur + 0.02);
+        // ...and every crackle was the same crackle, for the same reason as the
+        // squelch: same buffer, always from sample zero. A tick repeated twice a
+        // second is the most mechanical sound there is.
+        p.start(n, Math.random() * 0.5); p.stop(n + dur + 0.02);
         // ...and let the three nodes go when it has finished rather than
         // leaving them hanging off the output for the garbage collector to
         // reason about. A race is a few hundred of these.
