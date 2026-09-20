@@ -1710,7 +1710,22 @@ function teamRadio(text, pri, fromHold) {
         //
         // radioSquelch(false, ...) used to be here. The opening one stays: he
         // has never once complained about the start of a message.
-        radioBeep(false, 0.02);
+        //
+        // ...AND NEITHER DOES THE BLIP, NOW. "Voce morta di nuovo. E il TAC a
+        // fine messaggio c'e' ancora" - with the burst already gone, and with
+        // the voice dead, so it is not the speech engine's output closing
+        // either. That leaves exactly two things at the end of a call: the
+        // roger beep and the static fading out. The fade is 220ms to -80dB and
+        // cannot click. So it is the blip - two sine tones, 50 and 85
+        // milliseconds - and short tones are clicks for the same reason short
+        // noise is.
+        //
+        // I am not tuning it. Six rounds of measuring this ending have each
+        // produced a real improvement and left something he can still hear, and
+        // he has told me plainly what he wants: no noise at the end. So a call
+        // now ends with the static dissolving and NOTHING else - no tone, no
+        // burst, no transient of any kind. If a TAC survives that, it is not
+        // coming from this file and we will have learned something.
         if (mine.carrier) { try { mine.carrier.stop(0.22); } catch (e) { /* see above */ } }
         if (radioNext && !radioPump) radioPump = setTimeout(radioDrain, 300);
     };
@@ -1940,7 +1955,7 @@ if (typeof window !== 'undefined') {
 //     delayed a message.
 //  3. A HELD CALL WITH NOTHING BEHIND IT. One cleared timeout and the queue
 //     never moves again.
-let radioHeart = null, radioIdleBusyAt = 0;
+let radioHeart = null;
 function radioPulse() {
     if (radioHeart || typeof setInterval !== 'function') return;
     radioHeart = setInterval(() => {
@@ -1963,25 +1978,34 @@ function radioPulse() {
             // came back. cancel() does not clear a wedged Firefox synth; it is
             // one of the things that wedges it.
             //
-            // pause() followed by resume() is the one lever that moves a stuck
-            // queue without cancelling anything, and on a healthy engine the
-            // pair is a no-op. So that is what it does now, once, and then it
-            // leaves the engine alone rather than hammering it.
-            if (!radioBusy) {
-                const e = radioEngineState();
-                if (e.speaking || e.pending) {
-                    if (!radioIdleBusyAt) radioIdleBusyAt = now;
-                    else if (now - radioIdleBusyAt > 6000) {
-                        radioIdleBusyAt = now;          // and not again for six seconds
-                        radioStats.revived++;
-                        radioNote('engine says it is busy with nothing of ours, nudged');
-                        try { speechSynthesis.pause(); speechSynthesis.resume(); }
-                        catch (er) { }
-                    }
-                } else {
-                    radioIdleBusyAt = 0;
-                    try { speechSynthesis.resume(); } catch (er) { }
-                }
+            // ...AND THE NUDGE IS GONE TOO. It was pause() followed by resume(),
+            // on the theory that the pair moves a stuck queue and is a no-op on
+            // a healthy engine. His next screen:
+            //
+            //    engine: speaking true   pending true   paused TRUE
+            //
+            // I paused it. The resume() did not take, and a paused synth never
+            // speaks again - which is written in this very file, four hundred
+            // lines up, as the reason not to do exactly this.
+            //
+            // That is three times now that something I added to repair the
+            // engine has been the thing that killed it: the cancel storm, then
+            // the nudge. The engine lasted 9 utterances, then 24, then 64, and
+            // the only pattern is that it survives longer the less I touch it.
+            // So the pulse no longer touches it at all - except for the one
+            // operation that cannot make anything worse.
+            //
+            // RESUME, WHENEVER IT IS PAUSED, WITH NO OTHER CONDITION. A paused
+            // synth is stuck by definition and resume() on a running one does
+            // nothing. This used to sit in an `else` that only ran when the
+            // engine was idle - so on his machine, where it was paused AND
+            // claiming to speak, the one line that could have helped was the
+            // one line that never ran.
+            const e = radioEngineState();
+            if (e.paused) {
+                radioStats.revived++;
+                radioNote('engine was PAUSED, resumed');
+                try { speechSynthesis.resume(); } catch (er) { }
             }
             if (radioNext && !radioPump) {
                 radioNote('a held call with no pump behind it, restarted');
