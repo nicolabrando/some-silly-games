@@ -1060,11 +1060,39 @@ let radioVoiceTried = false;
 // A British male if there is one - it is the accent of the genre - then any
 // English, then whatever the machine has. Daniel is macOS's en-GB male and is
 // what the check on Nicola's machine picked.
+// ...AND A VOICE THAT HANGS IS NOT USED TWICE.
+//
+// His screen, two races apart, same shape both times:
+//
+//    asked 61   spoke 45   started 24   ended 23
+//    engine: speaking true   pending TRUE   voices 53
+//
+// One utterance began and never ended, and twenty-one more piled up behind it
+// in the engine's own queue. `cancels 2` - the cancel storm was gone by then,
+// so the cancels were never the cause either. What hangs a system speech
+// service like that is usually the VOICE: on macOS the enhanced and premium
+// ones stream from disk and are the ones that stall, and this picked exactly
+// one voice, once, and then used it for the rest of the evening.
+//
+// So a voice that has hung the engine goes on a list and is not chosen again.
+// If they all end up on the list the list is thrown away and we start over,
+// because a suspect voice beats no voice.
+const radioVoiceBad = [];
+function radioNextVoice() {
+    if (radioVoice && radioVoice.name) {
+        radioVoiceBad.push(radioVoice.name);
+        radioNote('voice "' + radioVoice.name + '" hung the engine, trying another');
+    }
+    radioVoice = null; radioVoiceTried = false;
+}
 function pickRadioVoice() {
     if (radioVoice || radioVoiceTried) return radioVoice;
     if (typeof speechSynthesis === 'undefined') { radioVoiceTried = true; return null; }
-    const vs = speechSynthesis.getVoices();
+    let vs = speechSynthesis.getVoices();
     if (!vs.length) return null;                 // not loaded yet; asked again next call
+    const fresh = vs.filter(v => radioVoiceBad.indexOf(v.name) < 0);
+    if (fresh.length) vs = fresh;
+    else radioVoiceBad.length = 0;               // all of them; start the list again
     radioVoiceTried = true;
     const by = (re) => vs.find(v => re.test(v.name) && /^en/i.test(v.lang));
     radioVoice = by(/^Daniel/) || by(/^(Oliver|Arthur|George|Malcolm)/) ||
@@ -1404,6 +1432,8 @@ let radioNext = null;          // ONE call waiting, and only for a few seconds
 let radioSeq = 0;              // which call is live, for the timers that outlive it
 let radioLive = null;          // the utterance being spoken, held so it is not collected
 let radioDeafRun = 0;          // utterances in a row the engine never began
+let radioDeafProbeAt = 0;      // when we last tried a dead engine again
+const RADIO_RETRY_MS = 45000;  // ...and how long we leave it alone between tries
 const RADIO_GAP_MS = 1200;     // the wall does not chatter, but it does talk
 const RADIO_WAIT_MS = 7000;    // past this a held call is no longer news
 const RADIO_WAIT_BIG_MS = 12000; // ...but a flag or a box call still is
@@ -1668,12 +1698,26 @@ function teamRadio(text, pri, fromHold) {
         // static dissolve - over 220ms, rather than stopping. The ending now
         // descends the way the opening climbs. It costs a quarter of a second
         // at the end of a call and nothing else.
+        // AND THE BURST AT THE END IS GONE. Nicola, after five goes at making it
+        // sound right: "non potresti semplicemente rimuovere il rumore alla
+        // fine del messaggio per farli sparire?" - and he is right, and I
+        // should have offered it three rounds ago. It is a flourish. It was
+        // never load-bearing: the roger beep is the part of a team radio
+        // anybody recognises, and the static fading out underneath it says the
+        // channel has closed perfectly well on its own. Five attempts to tune a
+        // sound into acceptability is four more than it deserved, and the fix
+        // he asked for is one line shorter than all of them.
+        //
+        // radioSquelch(false, ...) used to be here. The opening one stays: he
+        // has never once complained about the start of a message.
         radioBeep(false, 0.02);
-        radioSquelch(false, 0.10);
         if (mine.carrier) { try { mine.carrier.stop(0.22); } catch (e) { /* see above */ } }
         if (radioNext && !radioPump) radioPump = setTimeout(radioDrain, 300);
     };
-    u.onstart = () => { started = true; radioDeafRun = 0;
+    u.onstart = () => { started = true;
+                        if (radioDeafRun >= 2) radioNote('THE VOICE IS BACK',
+                            radioVoice ? radioVoice.name : 'default');
+                        radioDeafRun = 0;
                         radioStats.started++; radioNote('speaking'); };
     u.onend = () => { radioStats.ended++; radioNote('ended'); done(); };
     u.onerror = (ev) => { radioStats.errored++;
@@ -1718,8 +1762,10 @@ function teamRadio(text, pri, fromHold) {
         // AN ENGINE THAT NEVER STARTS IS AN ENGINE THAT HAS GONE. Two in a row
         // is not a dropped line, it is the service; say so once in the log and
         // let the subtitle carry the feature from here.
-        if (!started && ++radioDeafRun === 2)
+        if (!started && ++radioDeafRun === 2) {
             radioNote('THE ENGINE HAS STOPPED SPEAKING - the radio is on screen only now');
+            radioNextVoice();          // the voice it hung on does not get another go
+        }
         radioSilenceVoice();
         done();
     }, cap);
@@ -1747,6 +1793,23 @@ function teamRadio(text, pri, fromHold) {
         // internal queue - and an utterance collected while it is still queued
         // is a documented way to leave that queue stalled, which is this same
         // bug arriving by a different road. One reference, dropped in done().
+        // A DEAD ENGINE IS NOT FED. His screen: forty-five utterances handed
+        // over, twenty-four ever begun - twenty-one of them sitting in a queue
+        // that will never move, and each one added by a call that could see
+        // perfectly well that the last four had gone nowhere. Once the engine
+        // has failed to start two lines in a row, the caption carries the
+        // message and the engine is left alone but for one probe a minute, with
+        // a voice it has not already hung on. If that probe speaks, we are back
+        // and it says so in the log.
+        if (radioDeafRun >= 2) {
+            if (Date.now() - radioDeafProbeAt < RADIO_RETRY_MS) {
+                radioNote('engine is not answering, on screen only');
+                done();
+                return;
+            }
+            radioDeafProbeAt = Date.now();
+            radioNote('trying the engine again', radioVoice ? radioVoice.name : 'default');
+        }
         radioLive = u;
         radioStats.spoke++;
         try { speechSynthesis.speak(u); }
