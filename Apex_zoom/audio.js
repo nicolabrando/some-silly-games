@@ -1093,7 +1093,10 @@ function radioSquelch(open, delay) {
     src.loop = true;
     const bp = audioContext.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = open ? 1450 : 1950;
+    // ...and the closing one DARKER than the opening, not brighter. A squelch
+    // tail is a dull shhk as the carrier collapses; it was the bright one of
+    // the pair, which is the other half of what made it read as a tick.
+    bp.frequency.value = open ? 1450 : 1350;
     bp.Q.value = 0.9;
     // a second, resonant stage: one bandpass is a filter, two is a receiver
     const peak = audioContext.createBiquadFilter();
@@ -1102,7 +1105,23 @@ function radioSquelch(open, delay) {
     peak.Q.value = 3;
     peak.gain.value = 9;
     const env = audioContext.createGain();
-    const dur = open ? 0.16 : 0.075;
+    // THE TAC WAS THIS NUMBER, and I spent four goes measuring the wrong one.
+    //
+    // Nicola, five times, in five different words, and the last of them with
+    // the voice already dead: "il TAC finale e' ancora presente" - so it is not
+    // the voice ending, not the teardown, not the beep. It is this burst, and
+    // what makes a burst of noise a TICK is not how loud it is. Measured:
+    //
+    //              length    brightness    peak
+    //    opening   67ms      3148 Hz       0.079
+    //    closing   34ms      2878 Hz       0.069
+    //
+    // Same brightness, LOWER peak, and half the length. Thirty-four
+    // milliseconds of noise is not a sound with a body, it is an edge - which
+    // is exactly the word he kept reaching for, "secco". Every fix so far
+    // turned levels down, and the level was never the problem: the opening
+    // whooshes at 0.079 and the closing ticks at 0.069.
+    const dur = open ? 0.16 : 0.15;
     // THE LOUD ZAP WAS THIS, not the crackle. Rendered offline, piece by piece,
     // a call came out:
     //
@@ -1143,7 +1162,7 @@ function radioSquelch(open, delay) {
     // harshest shape there is and the reason the burst had an edge on it. A
     // triangle has the same harmonics falling away as 1/n^2 - still a click,
     // still a switch being thrown, without the buzz-saw on top.
-    sfxTone(open ? 1320 : 990, 0.035, 0.032, 'triangle', delay || 0);
+    sfxTone(open ? 1320 : 990, open ? 0.035 : 0.05, 0.032, 'triangle', delay || 0);
 }
 
 // THE ROGER BEEP - the two-tone blip that tops and tails a real team radio.
@@ -1384,6 +1403,7 @@ let radioLastAt = 0;           // wall clock of the last call, for the gap
 let radioNext = null;          // ONE call waiting, and only for a few seconds
 let radioSeq = 0;              // which call is live, for the timers that outlive it
 let radioLive = null;          // the utterance being spoken, held so it is not collected
+let radioDeafRun = 0;          // utterances in a row the engine never began
 const RADIO_GAP_MS = 1200;     // the wall does not chatter, but it does talk
 const RADIO_WAIT_MS = 7000;    // past this a held call is no longer news
 const RADIO_WAIT_BIG_MS = 12000; // ...but a flag or a box call still is
@@ -1400,6 +1420,7 @@ function teamRadioOn() { return radioOn; }
 // switched off. Everything that was going to be said is now not going to be.
 function radioStop() {
     radioCut();
+    if (radioCaption) { radioCaption.style.opacity = '0'; clearTimeout(radioCaptionOff); }
     radioNext = null;
     if (radioPump) { clearTimeout(radioPump); radioPump = null; }
 }
@@ -1425,11 +1446,23 @@ function radioStop() {
 //
 // So: cancel only what is actually being said, and always hand the engine back
 // in a running state.
+// ...AND IT GIVES UP AFTER TWO. A cancel that does not clear the engine is not
+// a cancel that failed once - it is an engine in the state his screen showed,
+// where `speaking` is stuck true and stays stuck however many times you ask.
+// Fifty-eight cancels bought thirty-two nothings there. So: cancel, look, and
+// if the engine still says it is speaking twice in a row, stop asking for the
+// rest of the session. One chance to be cleared, and then it is left alone.
+let radioCancelFutile = 0;
 function radioSilenceVoice() {
     if (typeof speechSynthesis === 'undefined') return;
     try {
-        if (speechSynthesis.speaking || speechSynthesis.pending) {
+        if ((speechSynthesis.speaking || speechSynthesis.pending) &&
+            radioCancelFutile < 2) {
             speechSynthesis.cancel(); radioStats.cancelled++; radioNote('engine cleared');
+            if (speechSynthesis.speaking || speechSynthesis.pending) {
+                if (++radioCancelFutile === 2)
+                    radioNote('cancel() does not clear this engine - it will not be asked again');
+            } else radioCancelFutile = 0;
         }
         // ...and resume UNCONDITIONALLY. resume() on an engine that is not
         // paused does nothing at all, and `paused` is not a flag worth trusting
@@ -1498,6 +1531,23 @@ function radioDrain() {
 function teamRadio(text, pri, fromHold) {
     radioPulse();                       // the first call of the session starts the pulse
     if (!fromHold) { radioStats.asked++; radioNote('asked', 'pri ' + pri); }
+    // THE MESSAGE IS SHOWN, NOT ONLY SAID - and shown the moment the wall says
+    // it, not when the engine gets round to it.
+    //
+    // His last screenshot: `spoke 18, started 9`. Nine utterances handed over
+    // that the engine simply never began - no error, no event - and `started`
+    // frozen at the same 9 three minutes later. I cannot restart a browser's
+    // speech service from inside the page; four attempts have settled that. But
+    // a team radio whose entire content lives inside one browser API is a
+    // feature with a single point of failure, and it did not have to be.
+    //
+    // So the line goes on screen as well as into the voice, the way a broadcast
+    // subtitles its radio. Healthy engine: a caption on something he can hear.
+    // Dead engine: it IS the team radio, and the feature degrades instead of
+    // disappearing. Put at the TOP on purpose - a call that has to wait for the
+    // voice, or that the held slot throws away in favour of a bigger one, has
+    // still been said by the pit wall and he should still get to read it.
+    radioShow(text, pri);
     if (!radioOn || !text) return false;
     if (typeof speechSynthesis === 'undefined') return false;
     if (!soundIsOn()) return false;                  // the volume control owns it too
@@ -1623,7 +1673,8 @@ function teamRadio(text, pri, fromHold) {
         if (mine.carrier) { try { mine.carrier.stop(0.22); } catch (e) { /* see above */ } }
         if (radioNext && !radioPump) radioPump = setTimeout(radioDrain, 300);
     };
-    u.onstart = () => { started = true; radioStats.started++; radioNote('speaking'); };
+    u.onstart = () => { started = true; radioDeafRun = 0;
+                        radioStats.started++; radioNote('speaking'); };
     u.onend = () => { radioStats.ended++; radioNote('ended'); done(); };
     u.onerror = (ev) => { radioStats.errored++;
                           radioNote('ENGINE ERROR', (ev && ev.error) || '?'); done(); };
@@ -1653,11 +1704,22 @@ function teamRadio(text, pri, fromHold) {
     // against a voice that manages about 17, so on a healthy engine this never
     // fires at all and nothing is ever cut off mid-word. A stall costs a couple
     // of seconds more before the radio comes back, which is the right way round.
-    const cap = 2000 + text.length * 130;
+    // ...and once the engine is known to be gone there is nothing to wait FOR.
+    // A dead one still costs the full deadline per call, which at seven seconds
+    // a line means the held slot throws messages away while the radio sits
+    // there hissing at nothing. When it is the caption carrying the feature,
+    // the call lasts about as long as the line takes to read.
+    const cap = radioDeafRun >= 2 ? Math.max(1400, 500 + text.length * 60)
+                                  : 2000 + text.length * 130;
     setTimeout(() => {
         if (!radioBusy || radioBusy.seq !== seq) return;
         radioStats.capped++;
         radioNote('DEADLINE, no end from the engine', started ? 'it had started' : 'never started');
+        // AN ENGINE THAT NEVER STARTS IS AN ENGINE THAT HAS GONE. Two in a row
+        // is not a dropped line, it is the service; say so once in the log and
+        // let the subtitle carry the feature from here.
+        if (!started && ++radioDeafRun === 2)
+            radioNote('THE ENGINE HAS STOPPED SPEAKING - the radio is on screen only now');
         radioSilenceVoice();
         done();
     }, cap);
@@ -1665,15 +1727,21 @@ function teamRadio(text, pri, fromHold) {
     // over by its own message.
     setTimeout(() => {
         if (!radioBusy || radioBusy.seq !== seq) return;            // cut off before it began
-        // ONE UTTERANCE AT A TIME, AND THIS ONE IS IT. Nothing else in the game
-        // speaks, and a call that is over has had its utterance accounted for -
-        // so an engine that claims to be busy at the moment we are about to
-        // speak is holding something stale, and adding to the queue behind it
-        // would lose this line and every line after it. The same check as the
-        // net above, at the other end: whatever is stuck there is cleared
-        // before this goes in, and an engine that says it is idle is left
-        // alone.
-        radioSilenceVoice();
+        // AND NOTHING IS CANCELLED HERE ANY MORE. This line was zoom87's fix
+        // and it was built on an assumption his own screen has now disproved:
+        // that `speaking` means something, and that cancel() clears it.
+        //
+        //    asked 29   spoke 18   started 9   ended 8
+        //    cancels 58   repairs 32
+        //    engine: speaking true   pending false   paused false   voices 53
+        //
+        // The engine died at the ninth utterance - started stops at 9 in both
+        // of his screenshots, three minutes apart - and from then on `speaking`
+        // was stuck true, cancel() would not clear it, and the only thing still
+        // happening was this code cancelling: fifty-eight times for eighteen
+        // messages, three cancels per line. An idle cancel is a documented way
+        // to kill a speech engine (see radioSilenceVoice) and I had built a
+        // machine for producing them.
         // ...AND THE UTTERANCE IS KEPT ALIVE. Once the closure around this
         // timeout is released, the only thing referring to `u` is the engine's
         // internal queue - and an utterance collected while it is still queued
@@ -1824,20 +1892,32 @@ function radioPulse() {
                 radioNote('a call that never ended, cleared',
                           ((now - (stale.at || now)) / 1000).toFixed(0) + 's');
             }
+            // ...AND THE ENGINE IS NUDGED, NOT CANCELLED. This block used to
+            // cancel a synth that claimed to be busy with nothing of ours, on
+            // an eight-second loop. His screen showed what that is worth: the
+            // engine sat at `speaking true` for minutes while this fired
+            // thirty-two times and cancelled fifty-eight, and it never once
+            // came back. cancel() does not clear a wedged Firefox synth; it is
+            // one of the things that wedges it.
+            //
+            // pause() followed by resume() is the one lever that moves a stuck
+            // queue without cancelling anything, and on a healthy engine the
+            // pair is a no-op. So that is what it does now, once, and then it
+            // leaves the engine alone rather than hammering it.
             if (!radioBusy) {
                 const e = radioEngineState();
                 if (e.speaking || e.pending) {
                     if (!radioIdleBusyAt) radioIdleBusyAt = now;
                     else if (now - radioIdleBusyAt > 6000) {
-                        radioIdleBusyAt = 0;
+                        radioIdleBusyAt = now;          // and not again for six seconds
                         radioStats.revived++;
-                        radioNote('engine stuck busy with nothing of ours, cleared');
-                        radioSilenceVoice();
+                        radioNote('engine says it is busy with nothing of ours, nudged');
+                        try { speechSynthesis.pause(); speechSynthesis.resume(); }
+                        catch (er) { }
                     }
                 } else {
                     radioIdleBusyAt = 0;
-                    if (e.paused) { try { speechSynthesis.resume(); } catch (er) { } 
-                                    radioNote('engine found paused, resumed'); }
+                    try { speechSynthesis.resume(); } catch (er) { }
                 }
             }
             if (radioNext && !radioPump) {
@@ -1846,4 +1926,51 @@ function radioPulse() {
             }
         } catch (er) { /* the pulse never throws at the game */ }
     }, 2000);
+}
+
+// ---------------------------------------------------------------------------
+//  THE LINE, ON SCREEN. See the note at the top of teamRadio: the voice is one
+//  browser API and it can stop for the evening, so the message does not live
+//  only inside it. A caption while the engine works, and the whole feature
+//  once it does not.
+//
+//  It is deliberately plain: bottom centre, out of the way of the HUD in the
+//  corner, never in the way of a click, and it leaves when the line would have
+//  finished being spoken rather than on a timer of its own.
+let radioCaption = null, radioCaptionOff = null;
+function radioShow(text, pri) {
+    if (typeof document === 'undefined' || !document.body) return;
+    try {
+        if (!radioCaption) {
+            radioCaption = document.createElement('div');
+            radioCaption.id = 'radio-caption';
+            radioCaption.style.cssText =
+                'position:fixed;left:50%;bottom:86px;transform:translateX(-50%);' +
+                'z-index:60;max-width:min(680px,84vw);box-sizing:border-box;' +
+                'padding:9px 16px;border-radius:999px;pointer-events:none;' +
+                'background:rgba(10,13,18,0.82);border:1px solid rgba(150,180,220,0.28);' +
+                'color:#e8f0fb;font:500 15px/1.35 system-ui,-apple-system,sans-serif;' +
+                'text-align:center;letter-spacing:0.01em;opacity:0;' +
+                'transition:opacity 180ms ease;' +
+                'box-shadow:0 6px 22px rgba(0,0,0,0.45)';
+            document.body.appendChild(radioCaption);
+        }
+        // the flag and the box call are the ones you must not miss
+        radioCaption.style.borderColor = pri >= 3 ? 'rgba(255,196,84,0.55)'
+                                                  : 'rgba(150,180,220,0.28)';
+        // clear of the HUD while racing, and out of the menu's way otherwise -
+        // the radio check that proves "On" works is fired from the menu, and
+        // with a dead engine this caption is the only thing that proves it.
+        const racing = typeof gameState !== 'undefined' &&
+                       (gameState === 'playing' || gameState === 'countdown');
+        radioCaption.style.bottom = racing ? '86px' : '18px';
+        radioCaption.textContent = text;
+        radioCaption.style.opacity = '1';
+        clearTimeout(radioCaptionOff);
+        // about as long as saying it takes, and never less than two seconds
+        const dwell = Math.max(2000, 700 + text.length * 72);
+        radioCaptionOff = setTimeout(() => {
+            if (radioCaption) radioCaption.style.opacity = '0';
+        }, dwell);
+    } catch (e) { /* the caption never breaks a call */ }
 }
