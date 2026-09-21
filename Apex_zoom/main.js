@@ -200,12 +200,12 @@ function cameraVisibleRect() {
         let want = 'on';
         try { want = window.localStorage.getItem('apexzoom.radio') || 'on'; } catch (e) { }
         radioSelect.value = want;
-        setTeamRadio(want === 'on');
+        setTeamRadio(want);
         radioSelect.addEventListener('change', () => {
-            setTeamRadio(radioSelect.value === 'on');
+            setTeamRadio(radioSelect.value);
             try { window.localStorage.setItem('apexzoom.radio', radioSelect.value); } catch (e) { }
-            // a line on the spot, so picking "On" proves it works
-            if (radioSelect.value === 'on' && typeof teamRadio === 'function') {
+            // a line on the spot, so picking either live setting proves it works
+            if (radioSelect.value !== 'off' && typeof teamRadio === 'function') {
                 if (typeof initAudio === 'function') initAudio();
                 teamRadio('Radio check. Loud and clear.', 3);
             }

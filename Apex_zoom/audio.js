@@ -1425,6 +1425,20 @@ function radioCarrier(secs) {
 //
 //  PRIORITY is the whole queue. 3 is the flag and the box call, 2 is the race
 //  changing under you, 1 is colour.
+// ON, TEXT, OR OFF.
+//
+// The TAC at the end of every message is not this file's. Eight rounds of
+// measuring and fixing this ending, and the bench page settled it in one
+// click: three utterances in a row, three TACs, and every sound the game makes
+// clean. It is macOS tearing down the audio unit the speech service opened,
+// and nothing in a web page reaches that.
+//
+// So there is a third setting. "Voice + text" is what it has always been;
+// "text only" keeps the blip, the static and the caption and simply does not
+// speak - a team radio with the sound of a team radio and no operating system
+// in it. Whatever the mitigations below turn out to be worth, this one cannot
+// fail, because the click needs an utterance to be at the end of.
+let radioMode = 'on';          // 'on' | 'text' | 'off'
 let radioOn = true;
 let radioBusy = null;          // { pri, carrier } while a call is live
 let radioLastAt = 0;           // wall clock of the last call, for the gap
@@ -1443,7 +1457,17 @@ const RADIO_BEEP_MS = 170;     // the blip, before the words that follow it
 // it - and the radio is free. See the note in teamRadio.
 const RADIO_STUCK_MS = 20000;
 
-function setTeamRadio(on) { radioOn = !!on; if (!radioOn) radioStop(); }
+function setTeamRadio(on) {
+    // a boolean from the old callers, a mode from the menu
+    radioMode = on === 'text' ? 'text' : (on === 'off' || on === false) ? 'off' : 'on';
+    radioOn = radioMode !== 'off';
+    // ...and touching the setting gives the engine a clean slate. If it had
+    // gone deaf, the player turning the radio off and on again is the most
+    // natural way there is to say "try again", and waiting out the retry timer
+    // after an explicit instruction would just look broken.
+    radioDeafRun = 0; radioDeafProbeAt = 0;
+    if (!radioOn) radioStop();
+}
 function teamRadioOn() { return radioOn; }
 
 // Silence, and nothing waiting: the race is over, or the radio has been
@@ -1462,43 +1486,41 @@ function radioStop() {
 // SILENCING THE VOICE WITHOUT BREAKING IT.
 //
 // "Dopo qualche gara il team radio smette di funzionare del tutto." The synth
-// is the browser's, and it has two failure modes that a game which cancels it
-// walks straight into:
+// NOTHING IN THIS GAME EVER CALLS cancel() AGAIN.
 //
-//  * cancel() on a synth that is not saying anything is not a no-op. It is one
-//    of the documented ways Chrome's speech engine stops delivering utterances
-//    altogether - and this was called unconditionally, including once per race
-//    from stopAudio, whether anything was being said or not. A few races is a
-//    few idle cancels.
-//  * a cancel can leave the engine PAUSED, and a paused synth never speaks
-//    again however many times you ask it to. resume() on one that is not paused
-//    costs nothing, so it is simply always called.
+// Nicola found the repro himself, on the bench page, in one sentence: "se ne
+// faccio partire un'altra mentre la prima sta ancora parlando non esce piu'
+// niente, e anche cliccare sui bottoni non fa andare piu' niente finche' non
+// ricarico la pagina."
 //
-// So: cancel only what is actually being said, and always hand the engine back
-// in a running state.
-// ...AND IT GIVES UP AFTER TWO. A cancel that does not clear the engine is not
-// a cancel that failed once - it is an engine in the state his screen showed,
-// where `speaking` is stuck true and stays stuck however many times you ask.
-// Fifty-eight cancels bought thirty-two nothings there. So: cancel, look, and
-// if the engine still says it is speaking twice in a row, stop asking for the
-// rest of the session. One chance to be cleared, and then it is left alone.
-let radioCancelFutile = 0;
-function radioSilenceVoice() {
+// One cancel during speech and his speech service is gone for the life of the
+// page. Not degraded, not slow - gone, and no sequence of cancel, pause,
+// resume or speak brings it back. That is the whole mystery: not a queue, not
+// a voice, not a cadence. ONE call at ONE wrong moment.
+//
+// And the game had that call in its race-end path. radioStop() runs when a
+// race finishes and when the setting changes, radioCut() ran under it, and
+// radioCut cancelled - so any race that ended while the wall was still talking
+// took the radio down for the rest of the evening. A few races, a few chances.
+// That is exactly the shape of the report from the very first message.
+//
+// The counters are kept so the panel can PROVE it: cancels must read 0.
+//
+// What this costs: a call cut short by the end of a race now finishes its
+// sentence into an empty screen, and a jammed engine queue can no longer be
+// cleared. Both are worth it several times over - the first is a second of
+// talking, the second degrades to the caption. A cancel is fatal here, and
+// nothing you can buy with a fatal operation is worth the price.
+function radioWakeVoice() {
     if (typeof speechSynthesis === 'undefined') return;
     try {
-        if ((speechSynthesis.speaking || speechSynthesis.pending) &&
-            radioCancelFutile < 2) {
-            speechSynthesis.cancel(); radioStats.cancelled++; radioNote('engine cleared');
-            if (speechSynthesis.speaking || speechSynthesis.pending) {
-                if (++radioCancelFutile === 2)
-                    radioNote('cancel() does not clear this engine - it will not be asked again');
-            } else radioCancelFutile = 0;
+        // resume() is the ONLY thing left. On a running engine it does
+        // nothing; on a paused one it is the only thing that helps. It cannot
+        // interrupt anything, so it cannot trigger the failure above.
+        if (speechSynthesis.paused) {
+            radioNote('engine was paused, resumed');
+            speechSynthesis.resume();
         }
-        // ...and resume UNCONDITIONALLY. resume() on an engine that is not
-        // paused does nothing at all, and `paused` is not a flag worth trusting
-        // - an engine can stop delivering without ever admitting to it. The
-        // check was costing nothing and buying nothing.
-        speechSynthesis.resume();
     } catch (e) { /* no synth, or it refused: either way there is nothing to do */ }
 }
 
@@ -1510,7 +1532,7 @@ function radioCut() {
     const was = radioBusy;
     radioBusy = null;
     radioLive = null;
-    radioSilenceVoice();
+    radioWakeVoice();
     if (was && was.carrier) { try { was.carrier.stop(); } catch (e) { /* see above */ } }
 }
 
@@ -1559,6 +1581,10 @@ function radioDrain() {
 // `text` is what the wall says. `pri` decides whether it may interrupt, and
 // whether it waits its turn or is forgotten.
 function teamRadio(text, pri, fromHold) {
+    // OFF IS OFF, and that has to be decided before anything at all happens -
+    // the caption included. Moving the caption to the top of this function put
+    // it above this guard, so "Off" went quiet and kept writing on the screen.
+    if (!radioOn || !text) return false;
     radioPulse();                       // the first call of the session starts the pulse
     if (!fromHold) { radioStats.asked++; radioNote('asked', 'pri ' + pri); }
     // THE MESSAGE IS SHOWN, NOT ONLY SAID - and shown the moment the wall says
@@ -1578,7 +1604,8 @@ function teamRadio(text, pri, fromHold) {
     // voice, or that the held slot throws away in favour of a bigger one, has
     // still been said by the pit wall and he should still get to read it.
     radioShow(text, pri);
-    if (!radioOn || !text) return false;
+    // ...and the rest of this only concerns the VOICE, so a machine with no
+    // synthesiser, or a muted one, still gets the line on screen.
     if (typeof speechSynthesis === 'undefined') return false;
     if (!soundIsOn()) return false;                  // the volume control owns it too
     pri = pri || 1;
@@ -1603,7 +1630,7 @@ function teamRadio(text, pri, fromHold) {
         radioBusy = null;
         radioLive = null;
         if (stale.carrier) { try { stale.carrier.stop(); } catch (e) { } }
-        radioSilenceVoice();
+        radioWakeVoice();
     }
     // something is already being said: only a bigger call may cut in, and the
     // one it displaces goes into the held slot rather than into the bin
@@ -1755,7 +1782,7 @@ function teamRadio(text, pri, fromHold) {
     //
     // It used to clear the engine only when the words never STARTED - which is
     // precisely the case that does not jam anything, and the opposite of the
-    // one that does. Now it always asks, and radioSilenceVoice only cancels
+    // one that does. Now it always asks, and radioWakeVoice only resumes
     // something the engine says it is actually holding, so an idle synth is
     // still never cancelled (see 5c - idle cancels are how engines die).
     //
@@ -1768,8 +1795,13 @@ function teamRadio(text, pri, fromHold) {
     // a line means the held slot throws messages away while the radio sits
     // there hissing at nothing. When it is the caption carrying the feature,
     // the call lasts about as long as the line takes to read.
-    const cap = radioDeafRun >= 2 ? Math.max(1400, 500 + text.length * 60)
-                                  : 2000 + text.length * 130;
+    // ...and in "text only" the channel stays open for as long as the line is
+    // on screen. It was closing about a second early, so the static dropped out
+    // from under a caption you were still reading - which reads as the radio
+    // having finished when it has not.
+    const cap = radioMode === 'text' ? Math.max(2800, 1000 + text.length * 88)
+              : radioDeafRun >= 2    ? Math.max(1400, 500 + text.length * 60)
+                                     : 2000 + text.length * 130;
     setTimeout(() => {
         if (!radioBusy || radioBusy.seq !== seq) return;
         radioStats.capped++;
@@ -1781,7 +1813,7 @@ function teamRadio(text, pri, fromHold) {
             radioNote('THE ENGINE HAS STOPPED SPEAKING - the radio is on screen only now');
             radioNextVoice();          // the voice it hung on does not get another go
         }
-        radioSilenceVoice();
+        radioWakeVoice();
         done();
     }, cap);
     // ...and the words start a beat after the beep, so the blip is not talked
@@ -1801,7 +1833,7 @@ function teamRadio(text, pri, fromHold) {
         // was stuck true, cancel() would not clear it, and the only thing still
         // happening was this code cancelling: fifty-eight times for eighteen
         // messages, three cancels per line. An idle cancel is a documented way
-        // to kill a speech engine (see radioSilenceVoice) and I had built a
+        // to kill a speech engine (see radioWakeVoice) and I had built a
         // machine for producing them.
         // ...AND THE UTTERANCE IS KEPT ALIVE. Once the closure around this
         // timeout is released, the only thing referring to `u` is the engine's
@@ -1816,6 +1848,10 @@ function teamRadio(text, pri, fromHold) {
         // message and the engine is left alone but for one probe a minute, with
         // a voice it has not already hung on. If that probe speaks, we are back
         // and it says so in the log.
+        // TEXT ONLY: the blip and the static play, the caption carries the
+        // words, and no utterance is created - so there is no utterance for
+        // macOS to click at the end of.
+        if (radioMode === 'text') { radioNote('text only, not spoken'); done(); return; }
         if (radioDeafRun >= 2) {
             if (Date.now() - radioDeafProbeAt < RADIO_RETRY_MS) {
                 radioNote('engine is not answering, on screen only');
@@ -1877,7 +1913,7 @@ function radioReport() {
     const e = radioEngineState();
     const lines = [];
     lines.push('TEAM RADIO  ' + new Date().toLocaleTimeString());
-    lines.push('radio on         ' + radioOn);
+    lines.push('radio            ' + radioMode);
     lines.push('a call live      ' + (radioBusy
         ? 'yes, seq ' + radioBusy.seq + ', pri ' + radioBusy.pri +
           ', ' + ((now - radioBusy.at) / 1000).toFixed(1) + 's old'
@@ -1965,7 +2001,7 @@ function radioPulse() {
                 const stale = radioBusy;
                 radioBusy = null; radioLive = null;
                 if (stale.carrier) { try { stale.carrier.stop(); } catch (er) { } }
-                radioSilenceVoice();
+                radioWakeVoice();
                 radioStats.revived++;
                 radioNote('a call that never ended, cleared',
                           ((now - (stale.at || now)) / 1000).toFixed(0) + 's');
@@ -2037,6 +2073,7 @@ function radioShow(text, pri) {
                 'padding:9px 16px;border-radius:999px;pointer-events:none;' +
                 'background:rgba(10,13,18,0.82);border:1px solid rgba(150,180,220,0.28);' +
                 'color:#e8f0fb;font:500 15px/1.35 system-ui,-apple-system,sans-serif;' +
+                'transition:opacity 180ms ease, font-size 120ms ease;' +
                 'text-align:center;letter-spacing:0.01em;opacity:0;' +
                 'transition:opacity 180ms ease;' +
                 'box-shadow:0 6px 22px rgba(0,0,0,0.45)';
@@ -2051,11 +2088,18 @@ function radioShow(text, pri) {
         const racing = typeof gameState !== 'undefined' &&
                        (gameState === 'playing' || gameState === 'countdown');
         radioCaption.style.bottom = racing ? '86px' : '18px';
+        radioCaption.style.fontSize = radioMode === 'text' ? '17px' : '15px';
         radioCaption.textContent = text;
         radioCaption.style.opacity = '1';
         clearTimeout(radioCaptionOff);
         // about as long as saying it takes, and never less than two seconds
-        const dwell = Math.max(2000, 700 + text.length * 72);
+        // ...AND IT STAYS UP LONGER WHEN IT IS THE RADIO. With the voice on,
+        // this is a caption on something you can hear and the ear sets the
+        // pace. In "text only" there is nothing setting the pace but the eye,
+        // and a line you are reading at 200km/h needs a moment more than a line
+        // you are only glancing at to confirm what was said.
+        const dwell = radioMode === 'text' ? Math.max(2800, 1000 + text.length * 88)
+                                           : Math.max(2000, 700 + text.length * 72);
         radioCaptionOff = setTimeout(() => {
             if (radioCaption) radioCaption.style.opacity = '0';
         }, dwell);
