@@ -1554,16 +1554,42 @@ class AI {
         // We move to the edge of the track on the opposite side to the car
         // coming through, and lift slightly so the pass is quick and clean.
         this.blueFlagLift = 1;
+        this.yieldHold = Math.max(0, (this.yieldHold || 0) - dt);
         const lapper = this.car.blueFlag ? this.car.blueFlagFrom : null;
+        if (!lapper) { this.yieldSide = 0; this.yieldHold = 0; }
         if (lapper) {
-            const lapperLat = (lapper.x - here.cx) * here.nx + (lapper.y - here.cy) * here.ny;
-            let side;
-            if (Math.abs(lapperLat - latCar) > 10) {
-                side = lapperLat > latCar ? -1 : 1;      // he is on that side, go the other way
-            } else {
-                side = here.alpha >= 0 ? -1 : 1;         // dead behind: concede the racing line
+            // ONCE WE HAVE PICKED A SIDE WE STAY ON IT.
+            //
+            // "Vanno a zig-zag... sono pericolosi, e' difficile evitarli."
+            // This is where that came from, and it was a feedback loop with
+            // the player in it. The side was recomputed from scratch every
+            // frame out of where the faster car happened to be AT THAT
+            // INSTANT, with a 10px dead band on cars three times that wide:
+            //
+            //    he moves left to pass   ->  we move right
+            //    he follows to the right ->  we move left, into him
+            //
+            // So the harder he hunts for a way through, the more we weave
+            // across his nose - and it reads as malice rather than as a
+            // missing variable. The decision is taken once and held for a
+            // second and a half, which is longer than any overtake of a
+            // crawling car takes, and the dead band is a car's width so a
+            // lapper sitting nearly dead astern cannot flip it either.
+            //
+            // The hold is dropped the moment the flag clears, so the next
+            // car through gets a fresh decision rather than the last one's.
+            if (!this.yieldHold || !this.yieldSide || this.yieldFor !== lapper) {
+                const lapperLat = (lapper.x - here.cx) * here.nx +
+                                  (lapper.y - here.cy) * here.ny;
+                if (Math.abs(lapperLat - latCar) > 34) {
+                    this.yieldSide = lapperLat > latCar ? -1 : 1;   // he is there, go the other way
+                } else {
+                    this.yieldSide = here.alpha >= 0 ? -1 : 1;      // dead astern: concede the line
+                }
+                this.yieldFor = lapper;
+                this.yieldHold = 1.5;
             }
-            desired = side * lim - lineLat;
+            desired = this.yieldSide * lim - lineLat;
             hasTarget = true;
             this.blueFlagLift = 0.88;
         }

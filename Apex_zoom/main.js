@@ -9374,6 +9374,30 @@ function humanLabel(car) {
     return car.playerIndex === 2 ? 'P2' : 'P1';
 }
 
+// A CAR THE FIELD HAS TO GET PAST — the one predicate behind the blue flag's
+// "crippled" branch, with a name so it can be tested as the arithmetic it is
+// rather than inferred from whatever a live race happened to do.
+//
+//  - a set past 100%, or one that has fallen below 0.6 of its grip: the tyre
+//    cliff, which is the whole argument for the pit box;
+//  - AND a battered car. This clause was missing, and Nicola's complaint was
+//    "quelli con gomma finita O CON LA MACCHINA DANNEGGIATA". condition is the
+//    damage handicap - it floors at 0.70, which is 30% off both grip and power
+//    - and a car carrying that on healthy tyres was never treated as a wreck,
+//    so it sat on the racing line being caught at 60 px/s with nothing telling
+//    it to move.
+//
+// 0.85 is a third of the health gone, which is where condition starts costing
+// double figures of pace. It does NOT put half the field on yield duty,
+// because the caller still demands that whoever is behind be 60 px/s faster -
+// a car with a dent and a healthy engine never trips that, and goes on racing.
+function isCrippled(c) {
+    if (!c) return false;
+    return (c.tyreWear || 0) >= 1.0 ||
+           (c.tyrePerf !== undefined && c.tyrePerf < 0.6) ||
+           (c.condition !== undefined && c.condition < 0.85);
+}
+
 function updatePhysics(dt) {
     if (dt > 0.05) dt = 0.05; // cap dt for physics stability (min 20fps logic)
     
@@ -9735,7 +9759,7 @@ function updatePhysics(dt) {
         // as it would to a lapper. ONLY a crippled car: a plain speed ratio
         // fires in every braking zone, where 120 against 250 is normal racing.
         const mySpeed = Math.hypot(c.velocity.x, c.velocity.y);
-        const crippled = (c.tyreWear || 0) >= 1.0 || (c.tyrePerf !== undefined && c.tyrePerf < 0.6);
+        const crippled = isCrippled(c);
 
         for (const other of cars) {
             if (other === c || other.isBroken || other.finished) continue;
@@ -9749,14 +9773,40 @@ function updatePhysics(dt) {
                 if (oSpeed < mySpeed + 60) continue;      // not actually catching me
             }
 
+            // HOW FAR BACK WE LOOK, which is the whole of the warning.
+            //
+            // This was 205px behind. Measured against his own log, that is
+            // about one second: the field closes on a wreck at 200-220 px/s,
+            // and the flag went up when the lapper was already on top of it.
+            // The correlation across his nine contacts is not subtle -
+            //
+            //    warning 12-17s  ->  damage  53, 77, 116, 259
+            //    warning ~2s     ->  damage  516, 331
+            //
+            // - the two that wrecked his car are the two the system had no
+            // time for, and in the worst of them the blue flags for the cars
+            // BEHIND him went up half a second AFTER his impact. The rule
+            // works whenever it is given room, so it is given room: 520px is
+            // about two and a half seconds at racing closing speeds.
+            //
+            // The lateral window opens with it. At 200px back a car on the
+            // far side of a 150px road is comfortably inside 95; at 520, on a
+            // road that is bending, it is not, and a wreck that refuses to
+            // move because the car about to hit it is one lane over is the
+            // same bug wearing a different hat.
+            //
+            // Note the corner still limits this honestly: `side` is measured
+            // in OUR heading frame, so a car 500px back round a bend fails the
+            // lateral test and no flag is raised - which is correct, because
+            // he is not behind us on the road yet.
             const dx = other.x - c.x;
             const dy = other.y - c.y;
-            if (dx * dx + dy * dy > 215 * 215) continue;
+            if (dx * dx + dy * dy > 520 * 520) continue;
 
             const fwd = dx * hx + dy * hy;               // behind us => negative
             const side = -dx * hy + dy * hx;
-            if (fwd > 45 || fwd < -205) continue;        // not closing on us
-            if (Math.abs(side) > 95) continue;           // on another part of the track
+            if (fwd > 45 || fwd < -520) continue;        // not closing on us
+            if (Math.abs(side) > 130) continue;          // on another part of the track
 
             // Must be running the same way. On a circuit whose two straights
             // nearly touch (Circus Maximus), a car coming the other way down
