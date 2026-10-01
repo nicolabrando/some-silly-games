@@ -385,6 +385,70 @@ function tyreRainGrip(tyre, level) {
     return rg * ((tyre && tyre.dampMul) || 1);
 }
 
+// ---------------------------------------------------------------------------
+//  HOW WET THE ROAD IS - one number, so the weather can move.
+//
+//  The game had three roads: dry, damp and soaked, chosen before the start and
+//  kept to the flag. Rain that arrives or stops during a race needs every road
+//  in between, so wetness is a number from 0 to 1: 0 is dry, 0.5 is the damp
+//  road and 1 is the soaked one, and every rule that used to ask "is it
+//  raining?" now asks "how wet is it?".
+//
+//  AT EXACTLY 0, 0.5 AND 1 EVERY ANSWER IS THE ONE THE GAME ALWAYS GAVE, to the
+//  last bit: the blends below are written a*(1-k) + b*k, which returns b
+//  exactly when k is 1, where 1 + (b - 1)*k can be a rounding away from it. A
+//  race whose weather never changes drives exactly as it did before this.
+//
+//  trackWet is the live number while a race's weather is moving (main.js,
+//  WEATHER THAT MOVES); null means "the weather of the session", read from
+//  isRaining and wetLevel as before - which is also what every headless
+//  simulation runs on, because they set isRaining and nothing else.
+// ---------------------------------------------------------------------------
+let trackWet = null;
+const WET_DAMP = 0.5;
+function wetNow() {
+    if (typeof trackWet === 'number') return trackWet;
+    if (typeof isRaining === 'undefined' || !isRaining) return 0;
+    return (typeof wetLevel !== 'undefined' && wetLevel === 'damp') ? WET_DAMP : 1;
+}
+function wetLerp(a, b, k) { return a * (1 - k) + b * k; }
+// 0 on a dry road, 1 from damp upwards: how much of a wet-only effect applies.
+function wetShare(w) { return Math.max(0, Math.min(1, w / WET_DAMP)); }
+
+// What a compound keeps of its grip on a road this wet. 1 dry; the damp and
+// soaked products above at 0.5 and 1; straight lines in between - and for a
+// SLICK the first line is steeper, which is where the crossover lives.
+//
+// Measured before choosing (probe_wetcurve.js, five circuits, three drivers):
+// lap time in this model hardly moves with grip until grip drops to about a
+// fifth of dry - the steering rate binds, not the tyre - and then it falls off
+// a cliff. A slick reaches that cliff only a whisker before its damp value of
+// 0.156, so with every compound on the same line the slick stayed the
+// quicker tyre all the way to 0.47 and the change to intermediates was a
+// single instant at the very top of the rain, with no call to make. A slick
+// has nothing to clear water with: it loses its grip to the first film of
+// it, so it gets to its damp grip by SLICK_WET_REACH of the way (0.3 of
+// wetness) and the crossover moves to the middle of the climb, where there is
+// a lap of genuine argument about it. The tread holds on, so a rain tyre
+// keeps the straight line.
+const SLICK_WET_REACH = 0.6;
+function wetGripAt(tyre, w) {
+    if (!(w > 0)) return 1;
+    const damp = WET_GRIP * DAMP_GRIP_MUL * tyreRainGrip(tyre, 'damp');
+    if (w <= WET_DAMP) {
+        const reach = (tyre && tyre.rain) ? 1 : SLICK_WET_REACH;
+        return wetLerp(1, damp, Math.min(1, (w / WET_DAMP) / reach));
+    }
+    const soaked = WET_GRIP * tyreRainGrip(tyre, 'soaked');
+    return wetLerp(damp, soaked, Math.min(1, (w - WET_DAMP) / (1 - WET_DAMP)));
+}
+// Rain rubber on a dry road tears itself apart (dryWear). It needs water under
+// it to live, and by this much wetness it has enough.
+const RAIN_TYRE_SAFE_WET = 0.3;
+// ...and the drift compound's slow-corner hook is a dry-road device: gone by
+// this much wetness (see tyreHookAt).
+const HOOK_WET_OFF = 0.25;
+
 // The speed below which a compound's `hook` is worth anything, and the function
 // that says how much. Same 160 px/s as the yaw boost in powerOversteer, and
 // deliberately so: this is the band where a car is being rotated rather than
@@ -459,9 +523,13 @@ let YAW_WATER_FLOOR = 0.85;
 function tyreHookAt(tyre, speed, wet) {
     const h = (tyre && tyre.hook) || 0;
     if (!h) return 1;
-    if (wet === undefined ? (typeof isRaining !== 'undefined' && isRaining) : wet) return 1;
+    // `wet` may be the old yes/no, a wetness, or left out for the road as it is
+    const w = wet === undefined ? wetNow() : (wet === true ? 1 : (wet === false ? 0 : (+wet || 0)));
+    if (w >= HOOK_WET_OFF) return 1;
+    // fading out over the first of the rain rather than switched off by it
+    const fade = w > 0 ? 1 - w / HOOK_WET_OFF : 1;
     const band = (tyre && tyre.hookBand) || HOOK_BAND;
-    return 1 + h * Math.max(0, Math.min(1, 1 - speed / band));
+    return 1 + h * fade * Math.max(0, Math.min(1, 1 - speed / band));
 }
 
 // =========================================================================
@@ -1370,8 +1438,13 @@ class Car {
             // Rain rubber on a dry road tears itself apart. This is the reason
             // a wet tyre is not simply a safe default: get the call wrong and
             // the set is gone a third of the way in, and there are no stops.
-            const dry = !(typeof isRaining !== 'undefined' && isRaining);
-            const surfaceWear = dry ? (tyre.dryWear || 1) : 1;
+            // ...and how much of that applies is how DRY the road is: all of
+            // it on a dry one, none once there is water enough to cool the
+            // tread (RAIN_TYRE_SAFE_WET), a share in between, so a set on a
+            // drying track starts to go before the track is fully dry.
+            const wWear = wetNow();
+            const dryShare = wWear > 0 ? Math.max(0, 1 - wWear / RAIN_TYRE_SAFE_WET) : 1;
+            const surfaceWear = wetLerp(1, tyre.dryWear || 1, dryShare);
             // Two wear laws, one switch. The historical law scales a set to
             // the RACE: life x race laps, so a soft always died at 90% of the
             // distance whether the race was three laps or thirty - which is
@@ -1424,8 +1497,10 @@ class Car {
         let currentGrip = this.baseGrip * this.condition * this.tyrePerf;
         let currentFriction = this.baseFriction;
 
-        // Rain effect on asphalt
-        if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass') {
+        // Rain effect on asphalt - as wet as the road is now (wetNow), which
+        // is 0.5 or 1 for the whole of a race whose weather does not move.
+        const wGrip = surface !== 'grass' ? wetNow() : 0;
+        if (wGrip > 0) {
             // In this car model the *steering rate* is the binding limit
             // almost everywhere, so the wet grip clamp only bites well below
             // the value you would expect. 0.13 rather than 0.20: rain now
@@ -1435,9 +1510,10 @@ class Car {
             // number. It did not, for a while - see the note there - and an AI
             // that thinks the road is 54% grippier than it is drives straight
             // past the limit every corner.
-            currentGrip *= wetGripNow() * tyreRainGrip(tyre);
-            // Wet-weather skill, from the driver style table in ai.js.
-            if (this.wetGripBonus) currentGrip *= this.wetGripBonus;
+            currentGrip *= wetGripAt(tyre, wGrip);
+            // Wet-weather skill, from the driver style table in ai.js - which
+            // is skill in the WET, so it grows in with the water.
+            if (this.wetGripBonus) currentGrip *= wetLerp(1, this.wetGripBonus, wetShare(wGrip));
         }
 
         // The rotation ceiling further down is measured against the grip of
@@ -1458,7 +1534,9 @@ class Car {
         // ever present in the wet.
         this.inPuddle = false;
         this.aquaplane = 0;
-        if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass' &&
+        // (a puddle that the weather has not yet filled is not there: puddleAt
+        // asks the road's wetness about each one)
+        if (wGrip > 0 &&
             typeof track.puddleAt === 'function' && track.puddleAt(this.x, this.y)) {
             this.inPuddle = true;
             // Aquaplaning: the tyres are riding on water, so the front has
@@ -1561,6 +1639,17 @@ class Car {
             const vNow = Math.hypot(this.velocity.x, this.velocity.y);
             vscLimit = Math.max(0, Math.min(1, (VSC_SPEED - vNow) / 8));
             if (vNow > VSC_SPEED + 6) forwardForce -= this.brakingPower * 0.30;
+        }
+        // Behind the safety car the limit is per car: main.js leaves each one
+        // the speed it may do in the queue (scCap), the car in front's plus
+        // what the gap allows. Same limiter as the VSC's - the throttle closes
+        // on the way up to it and a touch of brake comes in above it - so a
+        // driver closing on the queue is slowed by the car, not stopped by the
+        // backstop clamp in main.js.
+        if (this.scCap !== undefined && this.scCap < 1e6) {
+            const vNow = Math.hypot(this.velocity.x, this.velocity.y);
+            vscLimit = Math.min(vscLimit, Math.max(0, Math.min(1, (this.scCap - vNow) / 10)));
+            if (vNow > this.scCap + 8) forwardForce -= this.brakingPower * 0.35;
         }
 
         if (thr > 0) {
@@ -1901,7 +1990,9 @@ class Car {
                 });
             }
             // Rain spray particles (check if it's raining via global var)
-            if (typeof isRaining !== 'undefined' && isRaining && surface !== 'grass' && Math.random() < 0.4) {
+            // - as much of it as there is water on the road
+            const wSpray = surface !== 'grass' ? wetNow() : 0;
+            if (wSpray > 0 && Math.random() < 0.4 * wetShare(wSpray)) {
                 globalParticles.push({
                     x: this.x - headingX * 12,
                     y: this.y - headingY * 12,

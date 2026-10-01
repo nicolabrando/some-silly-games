@@ -2627,7 +2627,13 @@ class SegmentedTrack {
 
     puddleAt(x, y) {
         if (!this.puddles || !this.puddles.length) return false;
+        // With the weather moving, a puddle is only there once the road is
+        // wet enough to have filled it (`wet`, set by main.js when it lays
+        // them down for a race whose weather will change). A puddle without
+        // one is the old kind: there for the whole of a wet session.
+        const wNow = (typeof wetNow === 'function') ? wetNow() : 1;
         for (const p of this.puddles) {
+            if (p.wet !== undefined && wNow < p.wet) continue;
             const dx = x - p.x, dy = y - p.y;
             const d2 = dx * dx + dy * dy;
             if (d2 > (p.rMax || p.r) * (p.rMax || p.r)) continue;   // cheap reject
@@ -2637,10 +2643,23 @@ class SegmentedTrack {
         return false;
     }
 
-    drawPuddles(ctx) {
+    // `live`: drawing for this frame rather than into the baked layer. A race
+    // whose weather moves keeps its puddles out of the bake (puddlesLive) and
+    // has main.js draw them every frame, each as full as the road is wet.
+    drawPuddles(ctx, live) {
         if (!this.puddles || !this.puddles.length) return;
+        if (this.puddlesLive && !live) return;
+        const wNow = live && typeof wetNow === 'function' ? wetNow() : 1;
         ctx.save();
         for (const p of this.puddles) {
+            let alpha = 1;
+            if (live && p.wet !== undefined) {
+                // filling over the last 0.06 of wetness before it counts, and
+                // emptying the same way as the road dries
+                alpha = Math.max(0, Math.min(1, (wNow - (p.wet - 0.06)) / 0.06));
+                if (alpha <= 0) continue;
+            }
+            ctx.globalAlpha = alpha;
             const n = (p.rad && p.rad.length) || 1;
             // Points on the outline, joined with a Catmull-Rom style smoothing
             // through the midpoints so the shape is organic, not a polygon.

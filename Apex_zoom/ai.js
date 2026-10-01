@@ -801,7 +801,8 @@ class AI {
         const condition = car.condition !== undefined ? car.condition : 1;
 
         let gripScale = condition;
-        if (typeof isRaining !== 'undefined' && isRaining) {
+        const wAI = (typeof wetNow === 'function') ? wetNow() : 0;
+        if (wAI > 0) {
             // WET_GRIP is car.js's number, imported rather than copied. It used
             // to be written out here as 0.20 with a comment saying it matched
             // car.js exactly. It had not matched for some time: car.js was taken
@@ -823,11 +824,18 @@ class AI {
             // Through the same function the physics uses, so the AI knows a
             // full wet is over-tyred on a damp road rather than driving to the
             // grip it would have had in a downpour.
-            const rainGrip = tyreRainGrip(car.tyre);
-            // wetGripNow, not WET_GRIP: a damp track is grippier than a
+            // wetGripAt, not WET_GRIP: a damp track is grippier than a
             // soaked one, and an AI that does not know which kind of wet it is
             // driving on is the WET_GRIP bug all over again with a new name.
-            gripScale = wetGripNow() * rainGrip * (this.p.wetSkill || 1);
+            // It is the SAME function car.js applies, at the same wetness -
+            // with the weather moving, two copies would drift apart within a
+            // lap. From damp upwards this is exactly the old product; below it
+            // everything blends towards the dry rule, including the damage
+            // (the old wet rule replaced `condition` rather than multiplying
+            // it, which on a road that is only just wet would have been a jump).
+            const sh = wetShare(wAI);
+            gripScale = wetLerp(condition, 1, sh) * wetGripAt(car.tyre, wAI) *
+                        wetLerp(1, this.p.wetSkill || 1, sh);
         }
         if (onGrass) gripScale *= 0.3;
         else if (onKerb) gripScale *= 0.80;
@@ -922,10 +930,13 @@ class AI {
         // telai e tutti i piloti, altrimenti la neutralizzazione cambia i
         // distacchi invece di congelarli.
         if (vscF < 1 && typeof VSC_SPEED !== 'undefined') vTop = VSC_SPEED;
+        // ...and behind the safety car, the speed the queue allows this car
+        // (main.js, applySafetyCarHold): aimed at, not run into.
+        if (car.scCap !== undefined && car.scCap < vTop) vTop = car.scCap;
         if (car.draftStrength > 0) vTop *= 1 + 0.17 * car.draftStrength;
         if (onGrass) vTop = Math.min(vTop, 150);
         else if (onKerb) vTop *= 0.95;
-        if (typeof isRaining !== 'undefined' && isRaining) vTop *= 0.97;
+        if (wAI > 0) vTop *= wetLerp(1, 0.97, wetShare(wAI));
 
         // Clean-air specialists (Vettel, Prost, Lauda) find that extra tenth
         // when there is nobody to worry about in front.
@@ -1281,12 +1292,22 @@ class AI {
                         // alongside speed rights below. A stopped car is
                         // still swerved round: obstacles override the rule.
                         const bail = !obstacle && slalomAhead() && yieldsTo(fwd, other);
+                        // BEHIND THE SAFETY CAR NOBODY PASSES - except a car
+                        // being lapped, which is moving over (see
+                        // applySafetyCarHold). So no move is started on a car
+                        // that is rolling along in the queue: without this the
+                        // AI pulled out to attack every car that slowed for a
+                        // corner and ran the queue two abreast. A car stopped
+                        // in the road is still gone round.
+                        const queued = (typeof scActive !== 'undefined' && scActive) &&
+                                       !(other.blueFlag && other.blueFlagFrom === car) &&
+                                       theirFwd0 > 25;
 
                         // Choose a side - but only if a move is actually on.
                         // Beyond AI_PASS_RANGE we hold the racing line and use
                         // the speed cap below, which is what keeps a queue a
                         // queue instead of a fan.
-                        if (!bail && fwd < (obstacle ? 140 : AI_PASS_RANGE)) {
+                        if (!bail && !queued && fwd < (obstacle ? 140 : AI_PASS_RANGE)) {
                         hasTarget = true;
                         // The side with the most room is the outside of the
                         // corner, and the outside is the long way round. Give
@@ -1487,7 +1508,8 @@ class AI {
         // p.defend, so Prost still leaves the door ajar where Schumacher
         // parks the car in front of it.
         this.coverLog = Math.max(0, this.coverLog - dt);
-        const vscHeld = (typeof vscPowerFactor !== 'undefined') && vscPowerFactor < 1;
+        const vscHeld = ((typeof vscPowerFactor !== 'undefined') && vscPowerFactor < 1) ||
+                        (typeof scActive !== 'undefined' && scActive);
         const mayDefend = this.p.defend > 0.05 && !this.car.blueFlag && !vscHeld;
         if (hasTarget || !mayDefend) {
             // somebody ahead or alongside, a flag, or the VSC: not defending

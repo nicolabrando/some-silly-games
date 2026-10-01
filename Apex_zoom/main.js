@@ -414,6 +414,16 @@ function drawMinimap(g) {
     g.strokeStyle = 'rgba(255, 255, 255, 0.8)';
     g.lineWidth = 1;
     g.strokeRect(x0 + v.x * sc, y0 + v.y * sc, v.w * sc, v.h * sc);
+    // the safety car, when it is out: a bigger amber dot, under the cars
+    if (safetyCar && safetyCar.phase !== 'gone') {
+        g.beginPath();
+        g.arc(x0 + safetyCar.x * sc, y0 + safetyCar.y * sc, 4.2, 0, Math.PI * 2);
+        g.fillStyle = safetyCar.phase === 'out' ? '#ffb300' : '#cfd8dc';
+        g.fill();
+        g.lineWidth = 1.2;
+        g.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+        g.stroke();
+    }
     // one dot per car; the followed car(s) get a white ring
     const followed = cameraTargets();
     for (const c of cars) {
@@ -502,6 +512,15 @@ const VSC_POWER = 0.50;   // engine power while the VSC is out
 const VSC_ENDING_MS = 3000;
 let vscEndsAt = null;      // wall-clock (raceNow) moment the VSC will end
 let recoveries = [];       // { car, phase, t, from, to, crane }
+// --- Safety car (see THE SAFETY CAR, beside the recovery code) -------------
+// A real car on the road in front of the leader, from deployment until the
+// green flag at the line. Declared up here with the VSC because the headless
+// lap simulators save and restore it like the rest of the race state.
+let scActive = false;      // deployed, until the restart at the line
+let safetyCar = null;      // the car itself: phase, where it is, how fast
+// --- The weather, when it moves (see WEATHER THAT MOVES) --------------------
+let wxPlan = null;         // this race's forecast, or null: the weather holds
+let rainNow = 0;           // how hard it is raining this moment, 0..1 (drawing)
 // and two of them never occupy the same patch of ground.
 let raceFinished = false;
 let isFalseStartResetting = false;
@@ -1491,7 +1510,7 @@ startBtn.addEventListener('click', () => {
     isChampionship = false;
     raceMode = 'race';
     pendingGrid = null; pendingQualiInfo = null;
-    pendingWeather = null; pendingWetLevel = null;
+    pendingWeather = null; pendingWetLevel = null; pendingWxPlan = null;
     const laps = raceLaps();
     // The car is chosen on the same screen a season uses, and asked once for
     // the whole weekend - not again between qualifying and the race. There
@@ -1522,7 +1541,7 @@ champBtn.addEventListener('click', () => {
     isChampionship = true;
     raceMode = 'championship';
     pendingGrid = null; pendingQualiInfo = null;
-    pendingWeather = null; pendingWetLevel = null;
+    pendingWeather = null; pendingWetLevel = null; pendingWxPlan = null;
     startChampionship();
 });
 
@@ -1538,7 +1557,7 @@ practiceBtn.addEventListener('click', () => {
     pendingGrid = null; pendingQualiInfo = null;
     // A fresh roll of the weather, as for a race: without this a practice
     // run after a wet weekend inherited that weekend's rain.
-    pendingWeather = null; pendingWetLevel = null;
+    pendingWeather = null; pendingWetLevel = null; pendingWxPlan = null;
     // The same two screens a race weekend opens with. Practice used to skip
     // the second and start on whatever set was chosen last, under weather it
     // never announced - so you could pull out on slicks into the rain and only
@@ -1896,9 +1915,12 @@ function renderPausePanel() {
                 ? fmtLapMs(fast.ms) + ' (' + fastName + ')' : 'not set');
         }
         pace += pzRow('Tyre age', (Math.min(1.25, car.tyreWear || 0) * 100).toFixed(0) + '% used');
-        pace += pzRow('Track', isRaining ? 'wet' : 'dry', isRaining ? 'pz-warn' : '');
-        if (typeof vscActive !== 'undefined' && vscActive)
+        pace += pzRow('Track', wxPlan ? Math.round(wetNow() * 100) + '% wet'
+                                      : (isRaining ? 'wet' : 'dry'), isRaining ? 'pz-warn' : '');
+        if (typeof scActive !== 'undefined' && scActive)
             pace += pzRow('Flag', 'SAFETY CAR', 'pz-warn');
+        else if (typeof vscActive !== 'undefined' && vscActive)
+            pace += pzRow('Flag', 'VIRTUAL SAFETY CAR', 'pz-warn');
         cols.push(pzCol('Pace', pace));
         cols.push(pauseCarCol(car));
     }
@@ -2034,7 +2056,7 @@ qualiRaceBtn.addEventListener('click', () => {
 qualiMenuBtn.addEventListener('click', () => {
     qualiScreen.style.display = 'none';
     pendingGrid = null; pendingQualiInfo = null;
-    pendingWeather = null; pendingWetLevel = null;
+    pendingWeather = null; pendingWetLevel = null; pendingWxPlan = null;
     isChampionship = false;
     weekendChassisAsked = false;   // a new weekend, a new choice of car
     showMenu();
@@ -2043,7 +2065,7 @@ qualiMenuBtn.addEventListener('click', () => {
 restartBtn.addEventListener('click', () => {
     gameOverScreen.style.display = 'none';
     pendingGrid = null; pendingQualiInfo = null;
-    pendingWeather = null; pendingWetLevel = null;
+    pendingWeather = null; pendingWetLevel = null; pendingWxPlan = null;
     skipMode = false;
     raceSpeed = 1;
     skipPlayer = null;
@@ -2087,7 +2109,7 @@ quitBtn.addEventListener('click', () => {
     qualiQueue = [];
     qualiTimes = [];
     pendingGrid = null; pendingQualiInfo = null;
-    pendingWeather = null; pendingWetLevel = null;
+    pendingWeather = null; pendingWetLevel = null; pendingWxPlan = null;
     skipMode = false;
     raceSpeed = 1;
     skipPlayer = null;
@@ -3068,6 +3090,218 @@ const RADIO_LINES = {
         'We are green. Push now.'
     ],
 
+    // ---- the safety car ---------------------------------------------------------
+    sc: [
+        'Safety car, safety car. Stay behind it, no overtaking.',
+        'The safety car is out. Hold your position and close up.',
+        'Safety car deployed. Follow the queue, no overtaking.',
+        'S C, S C. Safety car on track.',
+        'Safety car. Keep the tyres warm and stay in line.'
+    ],
+    scLead: [
+        'Safety car. Sorry, that is your lead gone. We go again at the restart.',
+        'Safety car is out and it takes your gap away. Stay calm, you control the restart.',
+        'Safety car. The whole field will bunch up behind you. Get ready to defend.',
+        'Safety car deployed. Your gap is gone, but you lead the restart.',
+        'Safety car, safety car. All that gap, gone. Keep your head, it is still your race.'
+    ],
+    scChase: [
+        'Safety car! The gap to {name} is gone. This is our chance.',
+        'Safety car. That puts you right back with {name}. Get ready for the restart.',
+        'Safety car is out. The field closes up, {name} is in reach now.',
+        'Safety car, safety car. A free gap to {name}. Make the restart count.',
+        'Safety car. Everything we lost to {name}, we get back now.'
+    ],
+    scBox: [
+        'Box under the safety car? It is a cheap stop now. B to box.',
+        'The stop is cheap under the safety car. Box this lap if you want tyres.',
+        'Cheap stop available under the safety car. Your call.',
+        'Safety car means a cheap stop. Box, if you want it.'
+    ],
+    scPitHold: [
+        'Hold, hold. The pit exit is closed for the safety car.',
+        'Wait in the box. The safety car is coming past.',
+        'Stay there, pit exit is red. Wait for the queue to go by.',
+        'Hold position in the box. You go after the safety car train.'
+    ],
+    scIn: [
+        'Safety car in this lap. Get ready.',
+        'The safety car comes in at the end of this lap. Warm the tyres.',
+        'Lights are off on the safety car. Restart coming.',
+        'Safety car in this lap. No overtaking until the line.',
+        'Safety car is coming in. Be ready for the restart.'
+    ],
+    scInLead: [
+        'Safety car in this lap. You control the restart, go when you want.',
+        'The safety car is coming in. You lead the restart, pick your moment.',
+        'Lights are off on the safety car. You set the pace from here, no overtaking before the line.',
+        'Safety car in this lap. Back them up if you like, then go.',
+        'Safety car in. Your restart. Make it a good one.'
+    ],
+    scGreen: [
+        'Green flag, green flag! Go, go, go.',
+        'Green flag. We are racing again.',
+        'Restart! Green, green, green.',
+        'Green flag. Push now.',
+        'And we are green. Go!'
+    ],
+
+    // ---- the weather, when it moves ---------------------------------------------
+    wxFcSprinkle: [
+        'Weather update. Some light rain around {when}, maybe not enough for inters.',
+        'Radar shows a light shower around {when}. Slicks might live through it.',
+        'A little rain is forecast around {when}. It may not be enough to matter.',
+        'Light rain on the radar, around {when}. Do not panic about it yet.'
+    ],
+    wxFcShower: [
+        'Weather update. Rain is forecast around {when}. That is intermediate weather.',
+        'Radar shows rain arriving around {when}. Think about the inters.',
+        'We have rain coming, around {when}. Plan for intermediates.',
+        'Rain expected around {when}. It should be enough for inters.'
+    ],
+    wxFcDownpour: [
+        'Big rain on the radar, around {when}. Standing water, full wets.',
+        'Heavy rain forecast around {when}. It will be a full wet track.',
+        'Storm coming around {when}. Full wets weather.',
+        'Weather update. A downpour around {when}. Be ready to box for wets.'
+    ],
+    wxFcDrying: [
+        'The rain should stop around {when}. Then the track dries.',
+        'Radar says the rain stops around {when}. Slicks later on.',
+        'Weather update. Dry from around {when}, the track will come to us.',
+        'Rain stopping around {when}. Think about slicks for the end.'
+    ],
+    wxFcHeavier: [
+        'More rain coming, heavier, around {when}. Full wets weather after that.',
+        'Radar shows heavy rain around {when}. Standing water will build.',
+        'Weather update. It gets much wetter around {when}.',
+        'Heavier rain forecast around {when}. Think about the full wets.'
+    ],
+    wxFcEasing: [
+        'The rain should ease around {when}. Inters after that.',
+        'Radar says it gets lighter around {when}. The standing water will go.',
+        'Weather update. Rain easing around {when}.',
+        'Less rain from around {when}. The full wet will be too much then.'
+    ],
+    wxSoonRain: [
+        'Rain is about a lap away now.',
+        'Rain is close. One lap, maybe less.',
+        'Radar says rain within a lap.',
+        'Rain incoming, about a lap.'
+    ],
+    wxSoonDry: [
+        'The rain should stop within a lap.',
+        'The rain is about to stop.',
+        'About a lap of rain left, then it dries.',
+        'Nearly through the rain now.'
+    ],
+    wxSoonHeavier: [
+        'The heavy rain is about a lap away.',
+        'Heavier rain within a lap. Be ready.',
+        'Big rain coming, about a lap.'
+    ],
+    wxSoonEasing: [
+        'The rain should ease within a lap.',
+        'About a lap of heavy rain left.',
+        'It gets lighter soon, about a lap.'
+    ],
+    wxRainStart: [
+        'It is starting to rain.',
+        'We have rain now. Light for the moment.',
+        'Rain, rain. It is starting to come down.',
+        'Drops on the visor? Yes, it is raining.'
+    ],
+    wxRainLight: [
+        'Light rain now. Stay on slicks, it should not be enough.',
+        'A bit of drizzle. Stay out, slicks are fine.',
+        'Some light rain. Keep the slicks on and keep it tidy.',
+        'Drizzle starting. No need to box for it.'
+    ],
+    wxRainHeavy: [
+        'Here comes the heavy rain.',
+        'It is pouring now. Careful.',
+        'Heavy rain, heavy rain. Standing water will build fast.',
+        'Big rain now. Watch for the puddles.'
+    ],
+    wxRainStop: [
+        'The rain has stopped. The track will start to dry.',
+        'Rain has stopped. A dry line will come.',
+        'No more rain. It dries from here.',
+        'Rain has eased off completely.'
+    ],
+    wxGoInter: [
+        'Inters are the tyre now. Box, box.',
+        'Track is wet enough for intermediates. Box this lap.',
+        'Crossover. Intermediates are quicker now, box when you can.',
+        'Slicks are done. Box for inters.'
+    ],
+    wxGoWet: [
+        'Standing water now. Full wets are the tyre. Box, box.',
+        'It is too wet for that tyre. Box for full wets.',
+        'Full wets are quicker now. Box this lap.',
+        'Crossover to the full wet. Box when you can.'
+    ],
+    wxGoInterDown: [
+        'The water is clearing. Inters are quicker than the full wet now. Box.',
+        'Too dry for the full wet now. Box for inters.',
+        'Crossover. Intermediates are the tyre again. Box when you can.',
+        'The full wet is overheating, inters are quicker now.'
+    ],
+    wxGoSlick: [
+        'There is a dry line. Slicks are the tyre now. Box, box.',
+        'Crossover. Slicks are quicker now, and the rain tyres are eating themselves.',
+        'Track is dry enough for slicks. Box this lap.',
+        'Time for slicks. Box when you can.'
+    ],
+    wxNextInter: [
+        'Inters are a little quicker now. Not worth a stop on its own, but when you box, take inters.',
+        'Track is just past the crossover. If you come in for tyres, it is inters.',
+        'Inters are the quicker tyre now, not by much. That is what goes on at your next stop.',
+        'Slicks are losing a bit of time now. Inters at your next stop.'
+    ],
+    wxNextWet: [
+        'Full wets are quicker now, but not by enough for a stop on its own. Wets at your next stop.',
+        'Standing water building. When you box next, it is full wets.',
+        'The full wet is the quicker tyre now. Take it at your next stop.',
+        'Wets are quicker now, not by a lot. Wets when you come in.'
+    ],
+    wxNextInterDown: [
+        'Inters are quicker than the full wet now, not by a lot. Inters at your next stop.',
+        'The water is clearing. When you box next, take inters.',
+        'The full wet is a bit too much now. Inters when you come in.',
+        'Inters are the quicker tyre again. Take them at your next stop.'
+    ],
+    wxNextSlick: [
+        'Slicks are a bit quicker now. Not worth a stop on its own, but slicks at your next stop.',
+        'Track is past the crossover to slicks. When you box, take slicks.',
+        'Dry line is there. Slicks when you come in next.',
+        'Slicks are the quicker tyre now. Take them at your next stop.'
+    ],
+    wxSoonInter: [
+        'Getting wetter. Inters probably at the end of this lap.',
+        'The crossover to inters is close. Box this lap?',
+        'Slicks are about to go off. Think about inters this lap.',
+        'It is nearly inter weather. Your call, box this lap?'
+    ],
+    wxSoonWet: [
+        'Water is building. Full wets probably at the end of this lap.',
+        'Nearly full wet weather. Box this lap?',
+        'Standing water is coming. Think about the full wets.',
+        'The crossover to wets is close. Your call.'
+    ],
+    wxSoonInterDown: [
+        'The water is going. Inters soon. Box this lap?',
+        'Nearly inter weather again. Your call.',
+        'Standing water is clearing. Think about the inters.',
+        'The full wet will be too much soon.'
+    ],
+    wxSoonSlick: [
+        'Track is drying. Slicks soon, maybe the end of this lap.',
+        'A dry line is forming. Box for slicks this lap?',
+        'Nearly slick weather. Your call.',
+        'Drying fast now. Think about slicks.'
+    ],
+
     // ---- the chequered flag ----------------------------------------------------
     finishChelem: [
         'That is the chequered flag, and that is a grand slam. Pole, every lap led, fastest lap and the win. Sensational.',
@@ -3546,7 +3780,10 @@ function radioLapReport(car, isBest) {
     // driving into one at speed takes the steering away from you until you are
     // through it. So the call names that, and the compound, which is the other
     // thing a wall would say the moment the rain arrives.
-    if (typeof isRaining !== 'undefined' && isRaining && !car._radioRain) {
+    // (a race whose weather moves has its own calls - radioWeather - and a
+    // road that has only just started to get wet is not "the wrong tyre")
+    if (typeof isRaining !== 'undefined' && isRaining && !car._radioRain &&
+        (!wxPlan || wxPlan.start > 0)) {
         car._radioRain = true;
         const soaked = (typeof wetLevel !== 'undefined' && wetLevel === 'soaked');
         const water = soaked ? 'There is standing water right across the circuit'
@@ -3574,6 +3811,9 @@ function radioLapReport(car, isBest) {
 
     // ---- 1: colour, when the wall has the room for it --------------------
     if (left === 0) { radioEmit(said); return; }
+    // Behind the safety car the gaps are being taken away by the rules, and a
+    // wall reading them out as gained or lost is reading noise.
+    if (scActive) { radioEmit(said); return; }
     if (ahead) {
         const nameA = radioName(ahead.car);
         const prevA = car._radioAhead;
@@ -3846,6 +4086,96 @@ function radioWatch() {
             say(2, radioLine(order[0] === by ? 'blueFlagLeader' : 'blueFlag', { name: radioName(by) })))
             st.lapped.set(by, now);
     }
+
+    // ---- the weather, when it moves -----------------------------------------
+    if (wxPlan && pitModeOn) radioWeather(me, st, say);
+}
+
+// THE WEATHER CALLS. The forecast once the race is under way, a warning
+// about a lap out, the rain starting and stopping - and the one that matters,
+// the tyre: said when the road has gone past the crossover for the kind of
+// tyre you are on (by more than a per cent, so the line is not read out
+// every time the number wobbles across it), with a heads-up when it will
+// have gone by the end of the lap - which is where the box is.
+function radioWeather(me, st, say) {
+    const plan = wxPlan;
+    if (!me.tyre) return;
+    const w = wetNow();
+    const done = wxLapsDone();
+    const ws = st.wx || (st.wx = { fc: false, soon: false, rain: rainNow > 0,
+                                   go: null, heads: null });
+    if (!ws.fc) {
+        if (done < 0.12) return;
+        const when = plan.fcFrom === plan.fcTo ? 'lap ' + radioWord(plan.fcFrom)
+                   : 'laps ' + radioWord(plan.fcFrom) + ' or ' + radioWord(plan.fcTo);
+        const fam = { sprinkle: 'wxFcSprinkle', shower: 'wxFcShower', downpour: 'wxFcDownpour',
+                      drying: 'wxFcDrying', heavier: 'wxFcHeavier', easing: 'wxFcEasing' }[plan.kind];
+        // too late to be a forecast, or said: either way it is done
+        if (!fam || !(plan.t0 > done + 0.3) || say(2, radioLine(fam, { when: when }))) ws.fc = true;
+        return;
+    }
+    // (each of these is kept until it has actually been said: the wall is
+    // one voice and a line that loses the slot comes back a moment later)
+    const toEvent = plan.t0 - done;
+    if (!ws.soon) {
+        if (toEvent <= 0.15) ws.soon = true;               // too late to warn
+        else if (toEvent < 1.0) {
+            const fam = { sprinkle: 'wxSoonRain', shower: 'wxSoonRain', downpour: 'wxSoonRain',
+                          drying: 'wxSoonDry', heavier: 'wxSoonHeavier', easing: 'wxSoonEasing' }[plan.kind];
+            if (!fam || say(2, radioLine(fam))) { ws.soon = true; return; }
+        }
+    }
+    const raining = rainNow > 0;
+    if (raining !== ws.rain) {
+        let fam = raining ? 'wxRainStart' : 'wxRainStop';
+        if (raining && plan.kind === 'sprinkle' && wxClassOf(me.tyre.key) === 'slick') fam = 'wxRainLight';
+        if (raining && (plan.kind === 'downpour' || plan.kind === 'heavier')) fam = 'wxRainHeavy';
+        if (say(2, radioLine(fam))) { ws.rain = raining; return; }
+    }
+    if (me.pitPhase || me.wantPit) return;
+    const mine = wxClassOf(me.tyre.key);
+    const best = wxBestClass(w);
+    const soon = wxBestClass(wxAt(plan, done + 0.6).w);
+    const famFor = (to) => to === 'slick' ? 'Slick'
+                         : to === 'wet' ? 'Wet' : (mine === 'wet' ? 'InterDown' : 'Inter');
+    if (best !== mine && wxPace(mine, w) - wxPace(best, w) > 1.0) {
+        // the wrong kind of tyre: worth a stop of its own, or only the tyre
+        // to take at the stop you will make anyway? The same sum the AI does.
+        const v = wxStopValue(me, pitRaceLeft(me), 0, WX_HUMAN_MUL);
+        const to = v.best || best;
+        if (v.gain > 0) {
+            if (ws.go !== to + '<' + mine && say(3, radioLine('wxGo' + famFor(to))))
+                ws.go = to + '<' + mine;
+        } else if (ws.next !== best + '<' + mine && say(2, radioLine('wxNext' + famFor(best)))) {
+            ws.next = best + '<' + mine;
+        }
+    } else if (soon !== mine && best === mine && ws.heads !== soon + '<' + mine &&
+               pitRaceLeft(me) > 1.6) {
+        if (say(2, radioLine('wxSoon' + famFor(soon)))) ws.heads = soon + '<' + mine;
+    }
+}
+
+// The wall on the safety car - one driver, one radio, as in radioWatch.
+function radioSafetyCar(state) {
+    if (skipMode || !playerCar || player2Car) return;
+    if (raceMode !== 'race' && raceMode !== 'championship') return;
+    const me = playerCar;
+    if (me.finished || me.isBroken) return;
+    if (state === 'out') {
+        const order = cars.slice().sort(raceCmp);
+        const pos = order.indexOf(me) + 1;
+        if (pos === 1) radioSay(radioLine('scLead'), 3);
+        else if (pos <= 6 && order[0]) radioSay(radioLine('scChase', { name: radioName(order[0]) }), 3);
+        else radioSay(radioLine('sc'), 3);
+        // a cheap stop, when one is coming to you anyway
+        if (pitModeOn && !me.wantPit && !me.pitPhase && (me.tyreWear || 0) > 0.3 && pitRaceLeft(me) > 2.2)
+            radioSay(radioLine('scBox'), 2);
+    } else if (state === 'in') {
+        const q = safetyCar ? scQueue() : [];
+        radioSay(radioLine(q.length && q[0].c === me ? 'scInLead' : 'scIn'), 3);
+    } else if (state === 'green') {
+        radioSay(radioLine('scGreen'), 3);
+    }
 }
 
 // THE CHEQUERED FLAG. The result, said the way the race went - by how much,
@@ -4054,6 +4384,8 @@ function pitFitOrder() {
 // hand. What the AI fits, and what the box falls back on if a human somehow
 // leaves without choosing.
 function pitSuggestTyre(car) {
+    // a race whose weather moves asks the forecast, not the label
+    if (typeof wxPlan !== 'undefined' && wxPlan) return wxPickTyre(car, null);
     const line = track.getRacingLine('standard');
     const left = Math.max(0.5, TOTAL_LAPS - car.lap) * line.length * 1.06;
     const order = (typeof isRaining !== 'undefined' && isRaining)
@@ -4241,10 +4573,24 @@ function renderPitPanel() {
             (left * 100).toFixed(0) + '%</span></div>';
     }).join('');
 
+    // THE WEATHER, when it is moving: how wet it is now, which kind of tyre
+    // that makes the right one, and what the next couple of laps will do -
+    // the half of this decision the board above cannot see.
+    let wx = '';
+    if (wxPlan) {
+        const w = wetNow(), done = wxLapsDone();
+        const later = wxAt(wxPlan, done + 1.5).w;
+        const nm = { slick: 'slicks', inter: 'intermediates', wet: 'full wets' };
+        const now = wxBestClass(w), next = wxBestClass(later);
+        wx = '<div class="pp-wx">Track ' + Math.round(w * 100) + '% wet' +
+             (later > w + 0.03 ? ', getting wetter' : (later < w - 0.03 ? ', drying' : '')) +
+             ' &middot; right now: <b>' + nm[now] + '</b>' +
+             (next !== now ? ' &middot; in a lap or two: <b>' + nm[next] + '</b>' : '') + '</div>';
+    }
     el.innerHTML =
         '<div class="pp-head">IN THE BOX' + (pitPanelSeat === 2 ? ' — Player 2' : '') +
         '<span class="pp-sub">race held &middot; ' + lapsLeft.toFixed(0) +
-        ' laps to run &middot; the crew is waiting</span></div>' +
+        ' laps to run &middot; the crew is waiting</span></div>' + wx +
         '<div class="pp-cols">' +
           '<div class="pp-left"><div class="pp-title">FIT</div>' + rows + '</div>' +
           '<div class="pp-right"><div class="pp-title">THE FIELD</div>' + fieldRows + '</div>' +
@@ -5078,6 +5424,20 @@ function pitUpdate(car, dt) {
             return;
         }
         car.pitTimer -= dt;
+        // THE PIT EXIT IS CLOSED while the safety car and its queue go past
+        // (scPitExitClosed): the crew is done, the car waits, and rejoins at
+        // the back of the queue instead of cutting into the middle of it.
+        if (car.pitTimer <= 0 && scPitExitClosed()) {
+            car.pitTimer = 0;
+            if (!car._scPitHeld) {
+                car._scPitHeld = true;
+                if (car.isPlayer && !skipMode) radioSay(radioLine('scPitHold'), 3);
+                if (typeof RaceLog !== 'undefined')
+                    RaceLog.event('PIT', `${car.driverName || car.color} held at the pit exit — the safety car is passing`);
+            }
+            return;
+        }
+        car._scPitHeld = false;
         if (car.pitTimer <= 0) {
             const k = car.pitNextTyre || pitSuggestTyre(car);
             const old = car.tyre ? car.tyre.short : '?';
@@ -5321,6 +5681,10 @@ function buildField() {
 function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, raining, chassis, out) {
     const sCars = cars, sSkid = globalSkidMarks, sPart = globalParticles;
     const sRain = isRaining, sLaps = TOTAL_LAPS, sVsc = vscPowerFactor;
+    // the road's live wetness too: a simulated lap runs on `raining`, not on
+    // whatever the weather of the race in progress happens to be doing
+    const sWet = trackWet; trackWet = null;
+    const sSc = safetyCar; safetyCar = null;
     const sLeader = qTrack.leaderFinished, sTime = qTrack.currentRaceTime;
 
     const line = qTrack.getRacingLine();
@@ -5375,6 +5739,7 @@ function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, r
 
     cars = sCars; globalSkidMarks = sSkid; globalParticles = sPart;
     isRaining = sRain; TOTAL_LAPS = sLaps; vscPowerFactor = sVsc;
+    trackWet = sWet; safetyCar = sSc;
     qTrack.leaderFinished = sLeader; qTrack.currentRaceTime = sTime;
 
     return car.bestLapTime;   // null if the lap was never completed
@@ -5543,6 +5908,12 @@ function startQualifying(forceTrackType) {
     // the point is that this line cannot come to a different answer than the
     // banner the player has just read.
     isRaining = commitWeather();
+    // Qualifying runs in the weather the race STARTS in, and it holds: a
+    // race's moving weather (WEATHER THAT MOVES) is the race's alone, and
+    // whatever the last race left the road at is not this session's.
+    wxPlan = null; trackWet = null; wxDist = 0;
+    rainNow = isRaining ? 1 : 0;
+    endSafetyCar(true);
 
     let weatherIndicator = document.getElementById('weather-indicator');
     if (!weatherIndicator) {
@@ -6071,6 +6442,9 @@ function commitWeather() {
         pendingWetLevel = isChampionship ? nextChampionshipWetKind() : rollWetKind();
     }
     wetLevel = pendingWetLevel;
+    // ...and what it will DO, for a race with the box open: decided at the
+    // same moment, so the tyre screen can show the forecast it is choosing for
+    decideWxPlan();
     return pendingWeather;
 }
 
@@ -6092,6 +6466,363 @@ function weatherLabel() {
 function upcomingWeather() {
     return pendingWeather !== null ? pendingWeather
          : (typeof isRaining !== 'undefined' && isRaining);
+}
+
+// =========================================================================
+//  WEATHER THAT MOVES
+// -------------------------------------------------------------------------
+//  A race used to keep the weather it started with. With the box open it may
+//  not any more: a shower can arrive on a dry afternoon, a wet race can dry
+//  out, a damp one can turn into a downpour. The forecast is known before the
+//  start - the tyre screen, the Grand Prix preview, the radio - to within a
+//  lap, and the race becomes a question of WHEN to change.
+//
+//  ONLY WITH PIT STOPS. Without the box a change of weather can only be
+//  suffered, not answered: slicks in a downpour you are not allowed to change
+//  out of are a lottery, not a strategy. A race with stops off keeps the
+//  weather it started with, exactly as before - and so does qualifying.
+//
+//  A plan is a list of points - race distance in laps (the leader's),
+//  wetness, rain - joined by straight lines. Wetness is what the physics
+//  reads, through wetNow() in car.js; rain is only what you see falling. A
+//  plan never touches the weather the race STARTS in: that is still the 20%
+//  roll, the season's calendar, the checkbox. A championship's plans come
+//  from their own stream of the season seed (see championshipWxPlan), so a
+//  seed played before this existed keeps its calendar, its rain and its rival.
+//
+//  THE CROSSOVERS ARE MEASURED (probe_wetcurve.js: five circuits, three
+//  drivers, sets a quarter worn, puddles filling as a moving race fills
+//  them): slicks are the quicker tyre below 0.27 of wetness, the intermediate
+//  from there to 0.72 - where the rest of the standing water arrives - and
+//  the full wet above. WX_PACE is the same measurement as a table: what each
+//  class gives away to the quickest one at each wetness, in % of a lap. It is
+//  how the AI prices a change, and how the radio knows when to say so.
+// =========================================================================
+let pendingWxPlan = null;     // null: not decided; false: the weather holds; else the plan
+let wxDist = 0;               // the leader's race distance in laps, never going back
+const WX_CROSS_INTER = 0.27;
+const WX_CROSS_WET = 0.72;
+const WX_WET_LABEL = 0.12;    // isRaining from here up: labels and the record books
+const WX_SOAKED_LABEL = 0.75;
+const WX_PACE_W = [0, 0.1, 0.2, 0.24, 0.27, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1];
+const WX_PACE = {
+    slick: [0,   0,   0,   0,   0.3, 6.5, 5.9, 4.2, 4.8, 5.7, 6.7, 7.8, 9.6, 11.2],
+    inter: [5.1, 4.8, 3.5, 1.8, 0.3, 0,   0,   0,   0,   0,   2.5, 2.7, 3.7, 4.4],
+    wet:   [7.8, 7.3, 6.2, 4.4, 2.8, 2.6, 2.8, 3.2, 2.2, 1.1, 0,   0,   0,   0]
+};
+function wxClassOf(key) {
+    const t = TYRES[key];
+    return (t && t.rain) ? t.key : 'slick';
+}
+function wxPace(cls, w) {
+    const tab = WX_PACE[cls] || WX_PACE.slick, W = WX_PACE_W;
+    if (!(w > W[0])) return tab[0];
+    for (let i = 1; i < W.length; i++) {
+        if (w <= W[i]) return tab[i - 1] + (tab[i] - tab[i - 1]) * (w - W[i - 1]) / (W[i] - W[i - 1]);
+    }
+    return tab[tab.length - 1];
+}
+function wxBestClass(w) {
+    return w < WX_CROSS_INTER ? 'slick' : (w < WX_CROSS_WET ? 'inter' : 'wet');
+}
+
+// What a race's weather will do. `start` is its wetness at the lights - 0, 0.5
+// or 1, the weather it was always going to have - `laps` the distance and
+// `rand` the stream to draw from. Returns false for a race whose weather holds,
+// which is most of them: about a third of the dry ones see rain, about half of
+// the wet ones change.
+function rollWxPlan(start, laps, rand) {
+    const r = rand || Math.random;
+    const L = Math.max(2, laps || 5);
+    const pts = (list) => list.map(([at, w, rain]) => ({ at: at, w: w, r: rain }));
+    let kind, keys, t0;
+    if (!(start > 0)) {
+        if (r() >= 0.32) return false;
+        // a sprinkle that slicks live through, a proper shower (intermediates)
+        // or a downpour (full wets, standing water) - the forecast says which
+        const x = r();
+        kind = x < 0.25 ? 'sprinkle' : (x < 0.68 ? 'shower' : 'downpour');
+        t0 = L * (0.2 + r() * 0.4);
+        // laps from the first drop to the worst: a road takes a while to get
+        // wet, and the while is the window for the call
+        const ramp = (kind === 'downpour' ? 1.2 : 1.0) + r() * 0.8;
+        const peak = kind === 'sprinkle' ? 0.17 + r() * 0.07
+                   : kind === 'shower' ? 0.44 + r() * 0.14 : 0.86 + r() * 0.14;
+        const rain = kind === 'sprinkle' ? 0.3 : (kind === 'shower' ? 0.6 : 1);
+        const lasts = 1.0 + r() * 2.4;                // laps of it at its worst
+        const dry = Math.max(1.0, peak * (3.2 + r() * 1.6));   // laps to dry out again
+        const top = t0 + ramp, stop = top + lasts;
+        keys = pts([[0, 0, 0], [t0, 0, 0], [t0 + 0.15, 0.01, rain], [top, peak, rain],
+                    [stop, peak, rain], [stop + 0.1, peak, 0], [stop + 0.1 + dry, 0, 0]]);
+    } else if (start < WX_SOAKED_LABEL) {
+        if (r() >= 0.55) return false;
+        kind = r() < 0.7 ? 'drying' : 'heavier';
+        t0 = L * (0.15 + r() * 0.4);
+        if (kind === 'drying') {
+            const dry = 1.8 + r() * 1.2;
+            keys = pts([[0, start, 0.5], [t0, start, 0.5], [t0 + 0.1, start, 0], [t0 + 0.1 + dry, 0, 0]]);
+        } else {
+            const ramp = 0.8 + r() * 0.6, peak = 0.88 + r() * 0.12;
+            keys = pts([[0, start, 0.5], [t0, start, 0.5], [t0 + 0.2, start + 0.02, 1], [t0 + ramp, peak, 1]]);
+        }
+    } else {
+        if (r() >= 0.5) return false;
+        kind = r() < 0.5 ? 'easing' : 'drying';
+        t0 = L * (0.15 + r() * 0.4);
+        if (kind === 'easing') {
+            const ease = 1.2 + r() * 0.8, to = 0.42 + r() * 0.14;
+            keys = pts([[0, start, 1], [t0, start, 1], [t0 + 0.2, start, 0.45], [t0 + ease, to, 0.45]]);
+        } else {
+            const dry = 3.2 + r() * 1.6;
+            keys = pts([[0, start, 1], [t0, start, 1], [t0 + 0.1, start, 0], [t0 + 0.1 + dry, 0, 0]]);
+        }
+    }
+    // The forecast: the lap it happens on, give or take one - which side of
+    // it the window falls is drawn too, so the board is right but not exact.
+    const lapOf = Math.floor(t0) + 1;
+    const early = r() < 0.5 ? 1 : 0;
+    let peak = 0;
+    for (const k of keys) peak = Math.max(peak, k.w);
+    // (never "lap one": nothing happens before the first lap is done, and a
+    // board that says so reads as a mistake)
+    const fcFrom = Math.max(Math.min(2, lapOf), lapOf - early);
+    return { kind: kind, start: start, keys: keys, t0: t0, laps: L, peak: peak,
+             fcFrom: fcFrom, fcTo: Math.max(fcFrom, Math.min(L, lapOf + 1 - early)) };
+}
+
+// Where the plan is at a given race distance.
+function wxAt(plan, x) {
+    const k = plan.keys;
+    if (!(x > k[0].at)) return { w: k[0].w, r: k[0].r };
+    for (let i = 1; i < k.length; i++) {
+        if (x <= k[i].at) {
+            const a = k[i - 1], b = k[i];
+            const f = b.at > a.at ? (x - a.at) / (b.at - a.at) : 1;
+            return { w: a.w + (b.w - a.w) * f, r: a.r + (b.r - a.r) * f };
+        }
+    }
+    const z = k[k.length - 1];
+    return { w: z.w, r: z.r };
+}
+
+// A championship round's plan: from its OWN stream of the season seed, keyed
+// by the round, so it is the same every time it is asked for - preview, tyre
+// screen, race, a resumed season - and a season seeded before the weather
+// could move keeps everything it had: the plans are new draws, not a
+// reshuffle of the old ones.
+function championshipWxPlan(i, start) {
+    const cs = championshipState;
+    if (!cs || !cs.pitStops) return false;
+    const rng = seededRng(seedFrom(String(cs.seed || cs.id || '') + ':weather:' + i));
+    return rollWxPlan(start, raceLaps(), rng);
+}
+// The season's starting weather for a round, as a wetness.
+function championshipStartWet(i) {
+    const cs = championshipState;
+    if (!cs || !cs.weather || !cs.weather[i]) return 0;
+    return (cs.wetKind && cs.wetKind[i] === 'damp') ? WET_DAMP : 1;
+}
+
+// Pinned with the rest of the weekend's weather, at the same moment.
+function decideWxPlan() {
+    if (pendingWxPlan !== null) return pendingWxPlan;
+    if (!pitRulesOn()) return (pendingWxPlan = false);
+    const start = pendingWeather ? (pendingWetLevel === 'damp' ? WET_DAMP : 1) : 0;
+    pendingWxPlan = (isChampionship && championshipState)
+        ? championshipWxPlan(championshipState.currentTrackIndex, start)
+        : rollWxPlan(start, raceLaps(), Math.random);
+    return pendingWxPlan;
+}
+
+// The forecast in words, for the tyre screen and the preview.
+function wxForecastText(plan) {
+    if (!plan) return '';
+    const laps = plan.fcFrom === plan.fcTo ? 'lap ' + plan.fcFrom
+                                           : 'laps ' + plan.fcFrom + '–' + plan.fcTo;
+    switch (plan.kind) {
+        case 'sprinkle': return 'light rain around ' + laps + ' — maybe not enough for intermediates';
+        case 'shower':   return 'rain around ' + laps + ' — intermediate weather';
+        case 'downpour': return 'heavy rain around ' + laps + ' — standing water, full wets';
+        case 'drying':   return 'rain stopping around ' + laps + ' — the track will dry';
+        case 'heavier':  return 'heavier rain around ' + laps + ' — standing water, full wets';
+        case 'easing':   return 'rain easing around ' + laps + ' — intermediates again';
+    }
+    return '';
+}
+
+// The leader's race distance in laps, for the plan. Never goes backwards: the
+// weather does not un-rain because the leader retired.
+function wxLapsDone() {
+    if (!track || !cars || !cars.length) return wxDist;
+    const L = track.getRacingLine ? track.getRacingLine('standard').length : 3000;
+    let best = 0;
+    for (const c of cars) {
+        if (c.isBroken && !c.finished) continue;
+        const f = Math.max(0, Math.min(1, (c.lapS || 0) / L));
+        // on lap zero the grid is BEHIND the line, most of a lap "into" it
+        const d = (c.lap || 0) > 0 || c.halfwayMarkerCrossed ? (c.lap || 0) + f : (f < 0.5 ? f : 0);
+        if (d > best) best = d;
+    }
+    if (best > wxDist) wxDist = best;
+    return wxDist;
+}
+
+// Puddles for a race whose weather moves: laid for the wettest it will get,
+// each one filling at its own wetness - a few with the first standing water,
+// the rest when it is properly soaked. They live outside the baked track
+// layer and are drawn every frame, as full as the road is wet.
+function wxLayPuddles(plan) {
+    track.puddles = [];
+    track.puddlesLive = true;
+    if (!(plan.peak >= 0.45) && !(plan.start >= 0.45)) return;
+    const nDamp = puddleCountFor('damp');
+    const n = Math.max(plan.peak, plan.start) >= WX_SOAKED_LABEL ? puddleCountFor('soaked') : nDamp;
+    track.makePuddles(n);
+    track.puddles.forEach((p, i) => {
+        p.wet = i < nDamp ? 0.45 + 0.02 * i : WX_SOAKED_LABEL + 0.015 * (i - nDamp);
+    });
+}
+
+// Every frame of a race with a plan: the road, the labels, the log.
+function updateWeather() {
+    if (!wxPlan) return;
+    const st = wxAt(wxPlan, wxLapsDone());
+    const prev = trackWet;
+    trackWet = Math.max(0, Math.min(1, st.w));
+    rainNow = Math.max(0, Math.min(1, st.r));
+    // the labels the rest of the game reads - the HUD, the pit board, the
+    // record books - follow the number; the physics reads the number itself
+    isRaining = trackWet >= WX_WET_LABEL;
+    wetLevel = trackWet >= WX_SOAKED_LABEL ? 'soaked' : (isRaining ? 'damp' : null);
+    const s = wxPlan._seen || (wxPlan._seen = { rain: rainNow > 0, cls: wxBestClass(trackWet) });
+    if ((rainNow > 0) !== s.rain) {
+        s.rain = rainNow > 0;
+        RaceLog.event('WEATHER', s.rain ? 'rain starting' : 'rain stopped — the track will dry');
+    }
+    const cls = wxBestClass(trackWet);
+    if (cls !== s.cls) {
+        RaceLog.event('WEATHER', `track ${typeof prev === 'number' && trackWet < prev ? 'drying' : 'getting wetter'}` +
+            ` (${(trackWet * 100).toFixed(0)}% wet) — ${cls === 'slick' ? 'slicks' : (cls === 'inter' ? 'intermediates' : 'full wets')} are the tyre now`);
+        s.cls = cls;
+    }
+    wxHud();
+}
+
+// The weather readout in the HUD, which now has a direction as well as a state.
+function wxHud() {
+    const el = document.getElementById('weather-indicator');
+    if (!el) return;
+    let txt;
+    const w = wetNow();
+    const next = wxPlan ? wxAt(wxPlan, wxDist + 0.3).w : w;
+    const trend = next > w + 0.01 ? ' ▲' : (next < w - 0.01 ? ' ▼' : '');
+    if (w < WX_WET_LABEL) txt = rainNow > 0 ? 'Rain 🌦️' + trend : (trend === ' ▼' ? 'Drying 🌤️' : 'Dry ☀️');
+    else if (w >= WX_SOAKED_LABEL) txt = 'Soaked 🌧️' + trend;
+    else txt = (rainNow > 0 ? 'Damp 🌦️' : 'Drying 🌤️') + trend;
+    if (el.innerText !== txt) el.innerText = txt;
+}
+
+// The compound for a stint, when the weather has a say in it. `planned` is
+// what the car meant to fit; it is kept if it is the right KIND of tyre for
+// the road the stint will mostly be run on, and replaced if not.
+function wxPickTyre(c, planned) {
+    if (!wxPlan) return planned || pitSuggestTyre(c);
+    const now = wxLapsDone();
+    // the stint ahead, a lap or two of it: what will it mostly be?
+    let acc = { slick: 0, inter: 0, wet: 0 };
+    for (let x = 0.25; x <= 2.0; x += 0.25) {
+        const w = wxAt(wxPlan, now + x).w;
+        acc.slick += wxPace('slick', w); acc.inter += wxPace('inter', w); acc.wet += wxPace('wet', w);
+    }
+    let cls = 'slick';
+    if (acc.inter < acc[cls]) cls = 'inter';
+    if (acc.wet < acc[cls]) cls = 'wet';
+    if (planned && wxClassOf(planned) === cls) return planned;
+    return wxTyreForClass(c, cls);
+}
+
+// A compound of a class: the rain tyres are one each; on slicks, the softest
+// that still reaches the flag, read for a dry road.
+function wxTyreForClass(c, cls) {
+    if (cls === 'inter' || cls === 'wet') return cls;
+    const line = track.getRacingLine('standard');
+    const left = Math.max(0.5, TOTAL_LAPS - c.lap) * line.length * 1.06;
+    for (const k of ['soft', 'medium', 'hard']) if (pitLifePx(k, line.length) >= left) return k;
+    return 'hard';
+}
+
+// WHAT A STOP FOR THE WEATHER IS WORTH to this car, now: the time it would
+// lose staying on the kind of tyre it is on until it was going to stop anyway
+// - the next stop of its plan, the end of the set it is on, or the flag - set
+// against the time it loses on each other kind over the same distance, and
+// against the stop. Positive is seconds in hand. `judge` shifts the forecast
+// by a fraction of a lap (an AI reading the sky early or late).
+//
+// MEASURED STAKES, AND THEY ARE NOT HUGE: on a damp road a slick gives away
+// four to six per cent to the intermediate (WX_PACE), which is under a second
+// a lap - and a stop is nearly five. A shower alone rarely pays for a stop
+// of its own; it decides what goes on at the one you were going to make. A
+// downpour is a different matter (ten per cent and more, and the standing
+// water), and so is a set of rain tyres on a road that has dried: slower, and
+// eating itself.
+const WX_STOP_LOSS = 4.8;      // s, a stop against staying out (the planner's PIT_TIME + 2.6)
+// `paceMul` scales the measured penalties: the AI drives the wrong tyre at its
+// exact limit, which a person cannot - the radio prices a human's stop at
+// WX_HUMAN_MUL of the AI's loss.
+const WX_HUMAN_MUL = 1.4;
+function wxStopValue(c, raceLeft, judge, paceMul) {
+    const pm = paceMul || 1;
+    if (!wxPlan || !c.tyre) return { best: null, gain: 0 };
+    const L = c._lapPixels || pitLineLen();
+    const frac = Math.max(0, Math.min(1, (c.lapS || 0) / L));
+    const now = wxLapsDone();
+    const lapSec = c.bestLapTime ? c.bestLapTime / 1000 : L / 220;
+    // measured from the end of THIS lap, where a stop called now happens
+    let horizon = Math.max(0, raceLeft - (1 - frac));
+    if (c.pitPlan && c.pitPlan.stopLap) horizon = Math.min(horizon, Math.max(0.5, c.pitPlan.stopLap - c.lap));
+    const rate = c._wearLapRate || 0;
+    if (rate > 0) horizon = Math.min(horizon, Math.max(0.5, (1 - (c.tyreWear || 0)) / rate - (1 - frac)));
+    const cost = (cls) => {
+        let s = 0;
+        for (let x = 0; x < horizon; x += 0.25) {
+            const w = wxAt(wxPlan, now + (judge || 0) + x + (1 - frac)).w;
+            s += wxPace(cls, w) * pm / 100 * lapSec * Math.min(0.25, horizon - x);
+        }
+        return s;
+    };
+    const mine = wxClassOf(c.tyre.key);
+    const stay = cost(mine);
+    // a set that is half gone was going to need changing soon anyway
+    const loss = WX_STOP_LOSS * (1 - 0.6 * Math.max(0, Math.min(1, c.tyreWear || 0)));
+    let best = null, gain = -Infinity;
+    for (const cls of ['slick', 'inter', 'wet']) {
+        if (cls === mine) continue;
+        const g = stay - cost(cls) - loss;
+        if (g > gain) { gain = g; best = cls; }
+    }
+    return { best: best, gain: gain };
+}
+
+// Does an AI car want to stop NOW because of the weather? Asked once a lap,
+// in the middle of it, before the pit window. Each driver reads the sky a
+// little differently - a fraction of a lap early or late - and wants a
+// different margin before committing: the gamblers stay out longest. Both
+// drawn once per race and kept.
+function wxWantsStop(c, raceLeft) {
+    if (!wxPlan || !c.tyre || c.isPlayer) return false;
+    const L = c._lapPixels || pitLineLen();
+    const frac = (c.lapS || 0) / L;
+    if (frac < 0.45 || frac > 0.8 || c._wxEvalLap === c.lap) return false;
+    c._wxEvalLap = c.lap;
+    if (c._wxJudge === undefined) {
+        const s = AI_DRIVER_STYLES[c.driverName];
+        c._wxJudge = (Math.random() - 0.5) * 0.7;
+        // risk-takers want more in hand before they stop; careful ones less
+        c._wxMargin = 0.3 + (s ? (s.err - 0.7) * 6 : 0) + Math.random() * 1.0;
+    }
+    const v = wxStopValue(c, raceLeft, c._wxJudge);
+    if (v.best && v.gain > c._wxMargin) { c._wxTo = v.best; return true; }
+    return false;
 }
 
 // What the tyre screen should promise about the race ahead. With pit stops on
@@ -6172,6 +6903,10 @@ function showTyreChoice(title, subtitle, laps, cb, seat) {
                 : (soaked
                     ? 'standing water everywhere — the full wet drives through it'
                     : 'barely any standing water — the intermediate keeps more steering'))
+            // ...and what it will DO, when it is going to move (the race's
+            // forecast: shown for qualifying too, which runs in the start's)
+            + (pendingWxPlan ? '<span class="tw-fc">🌦️ Race forecast: ' +
+                               wxForecastText(pendingWxPlan) + '</span>' : '')
             + '</span>';
     }
     // In the rain the treaded compounds lead, in the dry the slicks do. Nothing
@@ -6337,6 +7072,10 @@ function countCorners(track) {
 function measureTrackStats(qTrack, raining) {
     const sCars = cars, sSkid = globalSkidMarks, sPart = globalParticles;
     const sRain = isRaining, sLaps = TOTAL_LAPS, sVsc = vscPowerFactor;
+    // the road's live wetness too: a simulated lap runs on `raining`, not on
+    // whatever the weather of the race in progress happens to be doing
+    const sWet = trackWet; trackWet = null;
+    const sSc = safetyCar; safetyCar = null;
     const sLeader = qTrack.leaderFinished, sTime = qTrack.currentRaceTime;
 
     const line = qTrack.getRacingLine();
@@ -6377,6 +7116,7 @@ function measureTrackStats(qTrack, raining) {
 
     cars = sCars; globalSkidMarks = sSkid; globalParticles = sPart;
     isRaining = sRain; TOTAL_LAPS = sLaps; vscPowerFactor = sVsc;
+    trackWet = sWet; safetyCar = sSc;
     qTrack.leaderFinished = sLeader; qTrack.currentRaceTime = sTime;
     return { lap: lap, vmax: vmax };
 }
@@ -6524,9 +7264,13 @@ function showGpPreview(trackType) {
     const gpKind = wet ? (championshipState && championshipState.wetKind
                          ? championshipState.wetKind[championshipState.currentTrackIndex]
                          : null) : null;
+    // what it will do, if the weather is going to move this round
+    const gpPlan = championshipWxPlan(championshipState.currentTrackIndex,
+                                      championshipStartWet(championshipState.currentTrackIndex));
     document.getElementById('gp-weather').innerHTML =
         '<span class="gp-wx ' + (wet ? 'gp-wx-wet' : 'gp-wx-dry') + '">' +
         (wet ? ((gpKind === 'soaked' ? 'SOAKED 🌧️' : 'DAMP 🌦️')) : 'DRY ☀️') + '</span>' +
+        (gpPlan ? ' <span class="gp-fc">forecast: ' + wxForecastText(gpPlan) + '</span>' : '') +
         // The seed sits with the round because this is the screen you look at
         // every race: whatever else you forget, the name of the season you are
         // in is in front of you, and it is what makes running it again possible.
@@ -7198,7 +7942,7 @@ function resumeChampionship() {
     isChampionship = true;
     raceMode = 'championship';
     pendingGrid = null; pendingQualiInfo = null;
-    pendingWeather = null; pendingWetLevel = null;
+    pendingWeather = null; pendingWetLevel = null; pendingWxPlan = null;
     skipMode = false; skipPlayer = null; skipPlayers = [];
     const ch = championshipState.chassis || (championshipState.chassis = {});
     if (ch[1]) playerChassis = ch[1];
@@ -10069,11 +10813,29 @@ function startGame(forceTrackType = null) {
     // frame doesn't stutter while building it lazily.
     if (typeof track.getRacingLine === 'function') track.getRacingLine();
 
+    // THE WEATHER THIS RACE WILL HAVE, if it is going to move (WEATHER THAT
+    // MOVES): only in a race, only with the box open. Everything else - the
+    // qualifying session, practice, a race with stops off - keeps the weather
+    // it starts in, with trackWet null so the physics reads isRaining exactly
+    // as it always has.
+    wxPlan = null; trackWet = null; wxDist = 0;
+    rainNow = isRaining ? 1 : 0;
+    const racePlan = (raceMode === 'race' || raceMode === 'championship') && pitModeOn
+        ? decideWxPlan() : false;
+
     // Standing water, only when it is raining. Fresh every race.
     if (typeof track.makePuddles === 'function') {
         track.puddles = [];
-        if (isRaining) track.makePuddles(puddleCountFor(wetLevel));
+        if (racePlan) wxLayPuddles(racePlan);
+        else if (isRaining) track.makePuddles(puddleCountFor(wetLevel));
     }
+    if (racePlan) {
+        // a fresh copy: the plan object carries this race's bookkeeping
+        wxPlan = Object.assign({}, racePlan, { _seen: null });
+        trackWet = wxPlan.start;
+        rainNow = wxAt(wxPlan, 0).r;
+    }
+    endSafetyCar(true);
 
     cars = [];
     ais = [];
@@ -10175,7 +10937,7 @@ function startGame(forceTrackType = null) {
     // Consumed: the next race builds its own grid unless it too is qualified for.
     if (!recapQuali) recapQuali = pendingQualiInfo;
     pendingGrid = null; pendingQualiInfo = null;
-    pendingWeather = null; pendingWetLevel = null;
+    pendingWeather = null; pendingWetLevel = null; pendingWxPlan = null;
 
     racePoleColor = currentParticipants.length ? currentParticipants[0].color : null;
     lapLeaders = [];
@@ -10352,7 +11114,8 @@ function startGame(forceTrackType = null) {
             // of that race, not only in the menu it was ticked in
             + (!isPractice && typeof noAiHandicapOn !== 'undefined' && noAiHandicapOn
                ? ' (no AI handicap)' : ''),
-        weather: isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry',
+        weather: (isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry') +
+                 (wxPlan ? ', forecast ' + wxForecastText(wxPlan) : ''),
         seed: isChampionship && championshipState ? championshipState.seed : null,
         pits: isPractice ? null : (pitModeOn ? 'pit stops' : 'no stops'),
         playerTyre: (() => {
@@ -10663,7 +11426,11 @@ function updateBlueFlags(dt) {
 
 function updatePhysics(dt) {
     if (dt > 0.05) dt = 0.05; // cap dt for physics stability (min 20fps logic)
-    
+
+    // The road as wet as the forecast says it is by now (a race whose weather
+    // moves; nothing at all otherwise)
+    updateWeather();
+
     // Player input
     applyHumanInputs();
 
@@ -10725,10 +11492,14 @@ function updatePhysics(dt) {
                 };
                 if (c.pitPlan && c.pitPlan.stopLap === c.lap) {
                     c.wantPit = true;
-                    c.pitNextTyre = c.pitPlan.tyre || pitSuggestTyre(c);
+                    const meant = c.pitPlan.tyre || pitSuggestTyre(c);
+                    // the weather has a say in WHICH tyre, if it is moving
+                    c.pitNextTyre = wxPlan ? wxPickTyre(c, meant) : meant;
                     // the next call in the chain becomes the plan when this one
-                    // is taken (pitUpdate promotes it at the box)
-                    c._pitPlanNext = c.pitPlan.next || null;
+                    // is taken (pitUpdate promotes it at the box) - unless the
+                    // weather has just thrown the dry plan away
+                    c._pitPlanNext = (wxPlan && wxClassOf(c.pitNextTyre) !== wxClassOf(meant))
+                        ? null : (c.pitPlan.next || null);
                 } else if (pitMustStopNow(c, lapsLeft)) {
                     c.wantPit = true;
                     c.pitNextTyre = pitSuggestTyre(c);
@@ -10750,14 +11521,33 @@ function updatePhysics(dt) {
                 // same slot together. A fixed bias per car, drawn once, spreads
                 // the queue across the window the way the jitter on aiPitPlan's
                 // stop lap spreads it under green.
-                } else if (vscActive && (c.pitPlan && c.pitPlan.stopLap
+                // The safety car is the same bargain, and a better one: the field
+                // is queued behind it, so the stop costs the ground the queue
+                // covers while you are in the box and nothing else.
+                } else if ((vscActive || scActive) && (c.pitPlan && c.pitPlan.stopLap
                                             ? c.tyreWear > 0.45 + vscPitBias(c)
                                             : c.tyreWear > 0.80 + vscPitBias(c) * 0.5)) {
                     c.wantPit = true;
-                    c.pitNextTyre = (c.pitPlan && c.pitPlan.tyre) || pitSuggestTyre(c);
-                    c._pitPlanNext = planNext();
+                    const meant = (c.pitPlan && c.pitPlan.tyre) || pitSuggestTyre(c);
+                    c.pitNextTyre = wxPlan ? wxPickTyre(c, meant) : meant;
+                    c._pitPlanNext = (wxPlan && wxClassOf(c.pitNextTyre) !== wxClassOf(meant))
+                        ? null : planNext();
                     if (typeof RaceLog !== 'undefined')
-                        RaceLog.event('PIT', `${c.driverName || c.color} takes the VSC stop`);
+                        RaceLog.event('PIT', `${c.driverName || c.color} takes the ` +
+                                             `${scActive ? 'safety car' : 'VSC'} stop`);
+                // THE WEATHER STOP. Rain coming or going, and the wrong kind of
+                // tyre on: see wxWantsStop for when it is worth the box. The dry
+                // plan the car started with is thrown away - its stints were
+                // priced for a road that is no longer there - and from here the
+                // car runs on wear and weather.
+                } else if (wxPlan && wxWantsStop(c, lapsLeft)) {
+                    c.wantPit = true;
+                    c.pitNextTyre = wxTyreForClass(c, c._wxTo);
+                    c._pitPlanNext = null;
+                    if (typeof RaceLog !== 'undefined')
+                        RaceLog.event('PIT', `${c.driverName || c.color} calls the box for ` +
+                            `${TYRES[c.pitNextTyre].label.toLowerCase()} — the weather ` +
+                            `(${(wetNow() * 100).toFixed(0)}% wet)`);
                 }
             }
             // Armed and arriving: pick the car up at the pit window - but
@@ -10774,7 +11564,15 @@ function updatePhysics(dt) {
             // going north works exactly like one that arrives going east.
             const toLine = pitLineLen() - (c.lapS || 0);
             const winFrom = pitSpotFor(track).back + PIT_PICKUP_LEAD;
-            if (c.wantPit && !c.pitPhase && c.halfwayMarkerCrossed &&
+            // ONE BOX, TWO CARS AT MOST. A field queued nose to tail behind
+            // the safety car arrives at the box together, and every car whose
+            // stop fell due in that lap went in at once: seven of them parked
+            // on the same spot, measured. An AI car that finds two already in
+            // the box stays out and comes in next time round, as a real crew
+            // would turn it away; a human's call is never refused.
+            const boxFull = !c.isPlayer && scActive &&
+                cars.filter(o => o.pitPhase === 'approach' || o.pitPhase === 'stopped').length >= 2;
+            if (c.wantPit && !c.pitPhase && c.halfwayMarkerCrossed && !boxFull &&
                 (c.isPlayer || (TOTAL_LAPS - c.lap) >= 1.3) &&
                 Math.hypot(c.velocity.x, c.velocity.y) > 30 &&
                 toLine > winFrom && toLine < winFrom + PIT_PICKUP_WIDE) {
@@ -10974,9 +11772,11 @@ function updatePhysics(dt) {
         }
     });
     
-    // --- Wrecks, Virtual Safety Car and recovery --------------------------
+    // --- Wrecks, Virtual Safety Car, safety car and recovery ---------------
     updateRecovery(dt);
+    updateSafetyCar(dt);
     applyVscHold();
+    applySafetyCarHold();
 
     updateBlueFlags(dt);
     radioWatch();
@@ -11461,6 +12261,16 @@ function updateRecovery(dt) {
     // mid-corner with the throttle already open put you in the wall.
     const wanted = recoveries.length > 0;
 
+    // The safety car, once out, runs its own course (updateSafetyCar) - and a
+    // wreck may bring it out instead of the VSC, or in place of one already
+    // running (scShouldDeploy).
+    if (scActive) return;
+    if (wanted && scShouldDeploy()) {
+        const n = recoveries.length;
+        deploySafetyCar(n >= 2 ? n + ' cars to recover' : 'a car to recover');
+        if (scActive) return;
+    }
+
     if (wanted) {
         // a fresh wreck during the countdown: back to a full VSC
         if (vscEndsAt !== null) {
@@ -11504,7 +12314,12 @@ function updateRecovery(dt) {
 // results screen and the menu.
 function showVscBanner(on) {
     vscBanner.style.display = on ? 'flex' : 'none';
-    if (!on) renderVscCountdown(null);
+    // The strip is shared with the safety car (renderScBanner), which
+    // relabels it: whichever comes out next must find it saying VSC again.
+    vscBanner.classList.remove('sc-out', 'sc-in', 'sc-green');
+    const tag = document.getElementById('vsc-tag');
+    if (tag) tag.innerText = 'VSC';
+    if (!on) { renderVscCountdown(null); scBannerUntil = 0; }
 }
 
 // The banner's ending clock: seconds and tenths, or back to the normal
@@ -11521,6 +12336,476 @@ function renderVscCountdown(leftMs) {
         count.innerText = (Math.max(0, leftMs) / 1000).toFixed(1);
         sub.innerText = 'TRACK CLEAR — GREEN FLAG IN';
     }
+}
+
+// =========================================================================
+//  THE SAFETY CAR
+// -------------------------------------------------------------------------
+//  The VSC freezes the gaps; the safety car takes them away. It comes out on
+//  the road in front of the leader and the field queues up behind it - no
+//  overtaking, the cars further back allowed to close up - and when the wreck
+//  is gone and the queue has formed it turns its lights off, comes in at the
+//  end of the lap, and the leader restarts the race. Green at the line.
+//
+//  WHICH ONE. A wreck still brings out a neutralisation; the question is
+//  which. Two wrecks at once is always the safety car. A single one is the
+//  safety car SC_CHANCE of the time, decided once per wreck, and the VSC
+//  otherwise. A second wreck under the VSC upgrades it. And with less than
+//  SC_MIN_LAPS_LEFT laps left for the leader it is always the VSC: a safety
+//  car needs a lap to come in, and the race is owed a green last lap - which
+//  is also why a safety car still out when the leader starts his last two
+//  laps comes in at the end of that lap whatever else is going on.
+//
+//  THE QUEUE is the VSC's hold, generalised (applySafetyCarHold): every car
+//  is held behind whatever is in front of it on the road, car or safety car -
+//  but softly, the allowed closing speed falling with the gap, because cars
+//  arrive at this queue from racing speed and the VSC's instant cap would be
+//  a wall at 150 px/s. Nobody may do more than SC_CHASE anywhere while it is
+//  out; the safety car itself runs slower than that, so the gaps close.
+//
+//  LAPPED CARS DROP BACK. A car is not held behind one it is LAPPING (more
+//  than half a lap of race between them - the blue-flag rule): the lapped
+//  car has its blue flag, is slowed to let it by, and the queue sorts itself
+//  so the restart is between the cars racing for position, not between them
+//  and a backmarker.
+//
+//  THE CLASSIFICATION IS NOT FROZEN, unlike the VSC's (vscOrder). The VSC
+//  has to freeze it because its hold is a speed limit that a car with a run
+//  can still beat by a frame; the queue here cannot be passed at all, and
+//  what DOES change the order behind a safety car - a stop in the box - is
+//  supposed to: you pit, you rejoin at the back of the queue, you are
+//  classified there.
+// =========================================================================
+let SC_CHANCE = 0.6;            // a single wreck: the safety car rather than the VSC (a let: the tests set it)
+const SC_MIN_LAPS_LEFT = 2.4;   // leader's laps left below which it is always the VSC
+const SC_SPAWN_AHEAD = 320;     // px of road in front of the leader where it joins
+const SC_TOP = 180;             // px/s, its pace on a straight
+const SC_CORNER = 0.66;         // ...and its share of the line's corner speed
+const SC_TOP_IN = 230;          // the same two, once it is coming in
+const SC_CORNER_IN = 0.80;
+const SC_ACCEL = 90;            // px/s^2
+const SC_DECEL = 130;           // px/s^2: it joins at the leader's speed and eases down
+const SC_PULL = 160;            // px: the queue's head further back than this, it waits
+const SC_HOLD_ZONE = 170;       // px: inside this a car is held to the one in front
+const SC_WALL = 44;             // px: and never closer than this
+const SC_CLOSE_K = 1.5;         // 1/s: how fast a gap in the queue may close
+const SC_CHASE = 300;           // px/s: the most anybody may do while it is out
+const SC_MIN_OUT = 7;           // s it is out at the least
+const SC_MAX_OUT_LAPS = 1.15;   // ...and at the most, in laps of racing time, before it comes in anyway
+const SC_PIT_IN = 380;          // px before the line where it leaves the road
+const SC_CALL_MIN = 300;        // px: "in this lap" needs this much road to the pit entry
+const SC_LEAVE_S = 1.2;         // s to pull off and be gone
+const SC_TRAIN_GAP = 120;       // px: closer than this to the car in front is "in the queue"
+let scBannerUntil = 0;          // the green flag strip, for a moment after the restart
+
+function scLine() { return track.getRacingLine('standard'); }
+// The racing line at a lap distance, measured the way car.lapS is: 0 at the line.
+function scPoseAt(s) {
+    const line = scLine();
+    const L = line.length, N = line.count, ds = line.ds;
+    let sl = (s + (line.sStart || 0)) % L;
+    if (sl < 0) sl += L;
+    const fi = sl / ds;
+    const i = Math.floor(fi) % N, j = (i + 1) % N, f = fi - Math.floor(fi);
+    const a = line.nodes[i], b = line.nodes[j];
+    let dh = (b.heading || 0) - (a.heading || 0);
+    while (dh > Math.PI) dh -= 2 * Math.PI;
+    while (dh < -Math.PI) dh += 2 * Math.PI;
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f,
+             heading: (a.heading || 0) + dh * f, nx: a.nx || 0, ny: a.ny || 0, node: a };
+}
+// A car's speed along the circuit (not along its nose: see trackDirAt).
+function scForward(c) {
+    const t = trackDirAt(c);
+    if (!t) return Math.hypot(c.velocity.x, c.velocity.y);
+    return c.velocity.x * t.x + c.velocity.y * t.y;
+}
+// What the safety car aims at here: its top speed on the straights and a share
+// of the line's own corner speed where the road bends, looked for a little up
+// the road so it slows INTO a corner rather than in it - and less of both in
+// the wet, where the cars behind it have less of everything.
+function scTargetSpeed(s, coming) {
+    const sh = wetShare(wetNow());
+    // Coming in, its job is done - the queue is formed - and it is only
+    // getting itself to the pit entry: it picks the pace up, and the queue
+    // with it. Not to racing speed, but enough that "in this lap" does not
+    // cost the race a lap and a half of crawling.
+    const k = (coming ? SC_CORNER_IN : SC_CORNER) * (1 - 0.3 * sh);
+    let v = (coming ? SC_TOP_IN : SC_TOP) * (1 - 0.15 * sh);
+    for (let d = 0; d <= 140; d += 20) {
+        const n = scPoseAt(s + d).node;
+        if (n.vCorner) v = Math.min(v, n.vCorner * k);
+    }
+    return Math.max(45, v);
+}
+// The cars on the road, nearest first behind the safety car.
+function scQueue() {
+    const sc = safetyCar;
+    const L = scLine().length;
+    return cars.filter(c => !c.finished && !c.isBroken && !c.pitPhase)
+        .map(c => ({ c: c, behind: (((sc.s - (c.lapS || 0)) % L) + L) % L }))
+        .sort((a, b) => a.behind - b.behind);
+}
+// Has the queue formed: most of the field in one line behind it, each car
+// close to the one in front? (The rest are a lap away on the other side of
+// it, or crawling, and a safety car cannot wait for them for ever: see
+// SC_MAX_OUT_LAPS.)
+function scQueueFormed(q) {
+    if (!q.length) return true;
+    let n = 0, prev = 0;
+    for (const m of q) {
+        if (m.behind - prev > SC_TRAIN_GAP + (n === 0 ? SC_PULL : 0)) break;
+        prev = m.behind;
+        n++;
+    }
+    return n >= Math.max(1, Math.ceil(q.length * 0.7));
+}
+
+// How far behind the safety car the queue reaches: the last car of the line
+// of cars each close to the one in front.
+function scTrainTail(q) {
+    let prev = 0, tail = 0, n = 0;
+    for (const m of q) {
+        if (m.behind - prev > SC_TRAIN_GAP + (n === 0 ? SC_PULL : 0)) break;
+        prev = m.behind; tail = m.behind; n++;
+    }
+    return tail;
+}
+// The pit exit is shut while the safety car and its queue go past - the red
+// light at the end of a real pit lane - from just before it gets there until
+// the last car of the queue is by. A car that finishes its stop in that window
+// waits in the box, and rejoins at the BACK of the queue rather than in the
+// middle of it. Outside the window it simply goes: behind the safety car, it
+// is one more car closing up on the queue.
+function scPitExitClosed() {
+    if (!scActive || !safetyCar) return false;
+    if (safetyCar.phase !== 'out' && safetyCar.phase !== 'in') return false;
+    const L = scLine().length;
+    const exitS = L - 14;                                   // where a stop rejoins
+    const ahead = (((safetyCar.s - exitS) % L) + L) % L;    // how far past it the SC is
+    if (ahead > L - 250) return true;                       // just about to arrive
+    return ahead < scTrainTail(scQueue()) + 120;            // its queue still going by
+}
+
+// A wreck has happened: the safety car, or not?
+function scShouldDeploy() {
+    if (raceMode !== 'race' && raceMode !== 'championship') return false;
+    if (typeof leaderFinished !== 'undefined' && leaderFinished) return false;
+    if (!(pitLeaderLapsLeft() >= SC_MIN_LAPS_LEFT)) return false;
+    if (cars.filter(c => !c.finished && !c.isBroken).length < 3) return false;
+    if (recoveries.length >= 2) return true;
+    for (const r of recoveries) {
+        // decided once per wreck, not once per frame
+        if (r.scRoll === undefined) r.scRoll = Math.random() < SC_CHANCE;
+        if (r.scRoll) return true;
+    }
+    return false;
+}
+
+function deploySafetyCar(why) {
+    const L = scLine().length;
+    // it picks up the LEADER: the first car in the race order that is on the road
+    const order = cars.slice().sort(raceCmp).filter(c => !c.finished && !c.isBroken && !c.pitPhase);
+    const lead = order[0];
+    if (!lead) return false;
+    const s0 = ((lead.lapS || 0) + SC_SPAWN_AHEAD) % L;
+    const p = scPoseAt(s0);
+    safetyCar = { phase: 'out', s: s0, v: Math.max(80, Math.min(260, scForward(lead))), t: 0,
+                  x: p.x, y: p.y, heading: p.heading, alpha: 0, lat: 0, leaveT: 0,
+                  pitSide: 1, head: null, headLap: null, restartT: 0, lead: lead };
+    scActive = true;
+    // a VSC already out gives way to it
+    if (vscActive) {
+        vscActive = false; vscPowerFactor = 1; vscEndsAt = null;
+        RaceLog.event('VSC', 'replaced by the safety car');
+    }
+    renderScBanner('out');
+    if (typeof sfxVsc === 'function') sfxVsc(true);
+    RaceLog.event('SC', `deployed — ${why}; it picks up ${lead.driverName || lead.color}`);
+    radioSafetyCar('out');
+    return true;
+}
+
+// Off the road for good: the green flag (silent=false), or a session being
+// torn down (silent=true).
+function endSafetyCar(silent) {
+    const was = scActive || !!safetyCar;
+    scActive = false;
+    safetyCar = null;
+    if (typeof cars !== 'undefined' && cars) for (const c of cars) c.scCap = undefined;
+    if (!was) return;
+    if (silent) {
+        if (!vscActive) showVscBanner(false);
+        return;
+    }
+    renderScBanner('green');
+    scBannerUntil = raceNow() + 2500;
+    // A RESTART IS A START. The field is nose to tail at the line and every
+    // car in it is in range of a move on the one in front, all at once: the
+    // first version restarted the AI at full aggression and one restart in
+    // four had a wreck in it within eight seconds - and every wreck is
+    // another safety car. The same caution the AI takes off the grid, most
+    // of it, for the first seconds of green.
+    if (typeof ais !== 'undefined' && typeof AI_START_CAUTION !== 'undefined')
+        for (const ai of ais) if (ai.car && !ai.car.isBroken && !ai.car.finished)
+            ai.startCaution = Math.max(ai.startCaution || 0, AI_START_CAUTION * 0.8);
+    if (typeof sfxVsc === 'function') sfxVsc(false);
+    RaceLog.event('SC', 'green flag — racing');
+    radioSafetyCar('green');
+}
+
+function updateSafetyCar(dt) {
+    if (!scActive) {
+        // the green strip comes down a moment after the restart
+        if (scBannerUntil && raceNow() > scBannerUntil) {
+            scBannerUntil = 0;
+            if (!vscActive) showVscBanner(false);
+        }
+        return;
+    }
+    const sc = safetyCar;
+    if (!sc || (typeof leaderFinished !== 'undefined' && leaderFinished)) { endSafetyCar(true); return; }
+    const L = scLine().length;
+    sc.t += dt;
+    const q = scQueue();
+    const head = q.length ? q[0] : null;
+
+    // ---- how fast ---------------------------------------------------------
+    if (sc.phase === 'out' || sc.phase === 'in') {
+        let want = scTargetSpeed(sc.s, sc.phase === 'in');
+        // never running away from the queue: with its head further back than
+        // SC_PULL it goes SLOWER than the head does, by more the further back
+        // the head is - so the gap closes. (Matching the head's speed, as the
+        // first version did, holds a gap rather than closing it: measured,
+        // the leader sat 430px behind the safety car for a whole lap.)
+        if (head && head.behind > SC_PULL && head.behind < L * 0.5)
+            want = Math.min(want, Math.max(30, scForward(head.c) - 0.9 * (head.behind - SC_PULL)));
+        const a = want > sc.v ? SC_ACCEL : SC_DECEL;
+        sc.v += Math.max(-a * dt, Math.min(a * dt, want - sc.v));
+    }
+    const pitAt = L - SC_PIT_IN;
+    const toPitBefore = ((pitAt - sc.s) % L + L) % L;
+    sc.s = (sc.s + sc.v * dt) % L;
+    const toPitNow = ((pitAt - sc.s) % L + L) % L;
+    if (sc.phase === 'leaving') {
+        sc.leaveT += dt;
+        const k = Math.min(1, sc.leaveT / SC_LEAVE_S);
+        sc.lat = k * 46 * sc.pitSide;              // across towards the pit side...
+        sc.alpha = Math.max(0, 1 - k);             // ...and gone
+    } else if (sc.phase !== 'gone') {
+        sc.alpha = Math.min(1, sc.alpha + dt / 0.6);
+    }
+    const pose = scPoseAt(sc.s);
+    sc.x = pose.x + pose.nx * sc.lat;
+    sc.y = pose.y + pose.ny * sc.lat;
+    sc.heading = pose.heading;
+
+    // ---- in this lap ------------------------------------------------------
+    if (sc.phase === 'out') {
+        const left = pitLeaderLapsLeft();
+        const forced = left <= 2.05;
+        const tooLong = sc.t >= Math.max(SC_MIN_OUT + 6, SC_MAX_OUT_LAPS * L / 200);
+        const ready = recoveries.length === 0 && sc.t >= SC_MIN_OUT &&
+                      (tooLong || scQueueFormed(q));
+        if ((ready && toPitNow >= SC_CALL_MIN) || forced) {
+            sc.phase = 'in';
+            renderScBanner('in');
+            RaceLog.event('SC', 'in this lap' + (forced && !ready ? ' — the last laps have to be green' : ''));
+            radioSafetyCar('in');
+        }
+    }
+    // THE LAST LAP IS GREEN, whatever else is going on: if the leader is about
+    // to start it and the safety car is still on the road - it was called in
+    // just after passing the pit entry, or the leader is not behind it - it
+    // pulls off where it is, now, and the restart is at this line.
+    if ((sc.phase === 'out' || sc.phase === 'in') && pitLeaderLapsLeft() <= 1.15) {
+        sc.phase = 'in';
+        sc.forceOff = true;
+    }
+    if (sc.phase === 'in') {
+        if (!sc.forceOff && recoveries.length > 0 && toPitNow > SC_CALL_MIN && pitLeaderLapsLeft() > 2.05) {
+            // a new wreck before it got there: it stays out
+            sc.phase = 'out';
+            renderScBanner('out');
+            RaceLog.event('SC', 'stays out — a new incident');
+        } else if (toPitNow > toPitBefore + 1 || sc.forceOff) {
+            // through the pit entry: it pulls off, and the head of the queue
+            // has the race in his hands until the line
+            sc.phase = 'leaving';
+            sc.leaveT = 0;
+            const spot = pitSpotFor(track);
+            const ppose = scPoseAt(pitAt);
+            sc.pitSide = ((spot.x - ppose.x) * ppose.nx + (spot.y - ppose.y) * ppose.ny) >= 0 ? 1 : -1;
+            sc.head = head ? head.c : null;
+            sc.headLap = head ? head.c.lap : null;
+            renderScBanner('restart');
+            RaceLog.event('SC', 'in — ' + (sc.head ? (sc.head.driverName || sc.head.color) + ' leads the restart' : 'restart'));
+        }
+    } else if (sc.phase === 'leaving' || sc.phase === 'gone') {
+        if (sc.phase === 'leaving' && sc.leaveT >= SC_LEAVE_S) sc.phase = 'gone';
+        sc.restartT += dt;
+        const h = sc.head;
+        const crossed = !h || h.lap > sc.headLap || h.isBroken || h.finished || h.pitPhase;
+        if (crossed || sc.restartT > 25) endSafetyCar(false);
+    }
+}
+
+// THE QUEUE. Run after the physics, like the VSC's hold, on the cars' actual
+// velocities - and it leaves each car a `scCap`, the speed it may do, which
+// car.js turns into a throttle limit for the human and ai.js into a target
+// for the AI, so the hard clamp here is the backstop and not the brakes.
+function applySafetyCarHold() {
+    if (!scActive) return;
+    const sc = safetyCar;
+    const L = scLine().length;
+    const onRoad = sc && (sc.phase === 'out' || sc.phase === 'in');
+    const mem = [];
+    for (const c of cars) {
+        if (c.finished || c.isBroken || c.pitPhase) { c.scCap = undefined; continue; }
+        mem.push({ c: c, s: c.lapS || 0 });
+    }
+    if (onRoad) mem.push({ c: null, s: sc.s });
+    mem.sort((a, b) => b.s - a.s);
+    const n = mem.length;
+    // THE WRECK ITSELF. Until the crane has it off the ground it is debris in
+    // the road, and the AI does not steer for debris: under the VSC that is
+    // safe because nobody is doing more than 90. Under the safety car the
+    // cars still closing up on the queue are at racing speed, and the first
+    // version put three more of them into the wreck in as many seconds. So
+    // the road leading up to a wreck still on the ground is a slow zone at
+    // the VSC's speed - double yellows - until it is lifted.
+    const zones = [];
+    for (const r of recoveries) {
+        if (r.car && !r.car.recovered && !((r.car.liftAmount || 0) > 0.05)) zones.push(r.car.lapS || 0);
+    }
+    // NOBODY ON THE LEAD LAP GETS AWAY IN FRONT OF IT. Where the safety car is
+    // in RACE terms: the progress of the car right behind it plus the road
+    // between them. A car ahead of that, and not a lap down - one that got out
+    // of the pits in front of it, say, which the pit exit now prevents - may
+    // not run off at its own pace while the queue crawls: it is slowed until
+    // the safety car has it. A lapped car up the road is a different thing:
+    // it is on its way round to the back of the queue, as in a real race.
+    let scProg = null;
+    if (onRoad) {
+        let best = null, bestBehind = Infinity;
+        for (const m of mem) {
+            if (!m.c) continue;
+            const behind = (((sc.s - m.s) % L) + L) % L;
+            if (behind < bestBehind) { bestBehind = behind; best = m.c; }
+        }
+        if (best) scProg = (best.trackProgress || 0) + bestBehind;
+    }
+    for (let i = 0; i < n; i++) {
+        const m = mem[i];
+        const c = m.c;
+        if (!c) continue;
+        // the member it is queued behind: the next one up the road - but not
+        // a car it is lapping, which is moving over for it
+        let ahead = null, gap = 0;
+        for (let st = 1; st < n; st++) {
+            const o = mem[(i - st + n) % n];
+            const g = (((o.s - m.s) % L) + L) % L;
+            if (o.c && (c.trackProgress || 0) >= (o.c.trackProgress || 0) + L * 0.55) continue;
+            ahead = o; gap = g; break;
+        }
+        let cap = SC_CHASE;
+        if (ahead && gap < SC_HOLD_ZONE) {
+            const aheadFwd = ahead.c ? scForward(ahead.c) : sc.v;
+            cap = Math.min(cap, Math.max(0, aheadFwd + SC_CLOSE_K * Math.max(0, gap - SC_WALL)));
+        }
+        // being lapped with the lapper close: let him through
+        if (c.blueFlag && c.blueFlagWhy === 'lap' && c.blueFlagFrom && !c.blueFlagFrom.pitPhase)
+            cap = Math.min(cap, Math.max(30, scForward(c.blueFlagFrom) * 0.6));
+        for (const zs of zones) {
+            const d = (((zs - m.s) % L) + L) % L;          // road to the wreck
+            if (d < 420 || d > L - 60) cap = Math.min(cap, VSC_SPEED);
+        }
+        if (scProg !== null && (c.trackProgress || 0) > scProg + 30)
+            cap = Math.min(cap, Math.max(30, sc.v * 0.7));
+        c.scCap = cap;
+        const t = trackDirAt(c);
+        if (!t) continue;
+        const fwd = c.velocity.x * t.x + c.velocity.y * t.y;
+        if (fwd > cap) {
+            c.velocity.x -= t.x * (fwd - cap);
+            c.velocity.y -= t.y * (fwd - cap);
+        }
+        if (ahead && gap < SC_WALL) {
+            const back = Math.min(VSC_PUSH_MAX, SC_WALL - gap);
+            c.x -= t.x * back;
+            c.y -= t.y * back;
+        }
+    }
+}
+
+// The strip at the head of the column, which the VSC also uses.
+function renderScBanner(state) {
+    const tag = document.getElementById('vsc-tag');
+    const sub = document.getElementById('vsc-sub');
+    const count = document.getElementById('vsc-count');
+    if (!tag || !sub) return;
+    if (count) count.style.display = 'none';
+    vscBanner.classList.remove('sc-out', 'sc-in', 'sc-green');
+    if (state === 'green') {
+        tag.innerText = 'GREEN';
+        sub.innerText = 'GREEN FLAG — RACING';
+        vscBanner.classList.add('sc-green');
+    } else {
+        tag.innerText = 'SC';
+        sub.innerText = state === 'in' ? 'SAFETY CAR IN THIS LAP'
+                      : state === 'restart' ? 'RESTART — NO OVERTAKING UNTIL THE LINE'
+                      : 'SAFETY CAR — NO OVERTAKING';
+        vscBanner.classList.add(state === 'out' ? 'sc-out' : 'sc-in');
+    }
+    if (!skipMode) vscBanner.style.display = 'flex';
+}
+
+// The car itself: a saloon, not an open-wheeler, so it never reads as a
+// rival - silver, a dark glasshouse, and a light bar that flashes amber
+// while it is leading the field and goes dark once it is coming in.
+function drawSafetyCar(ctx) {
+    const sc = safetyCar;
+    if (!sc || sc.phase === 'gone' || !(sc.alpha > 0.01)) return;
+    const flash = sc.phase === 'out' && Math.floor(Date.now() / 160) % 2 === 0;
+    ctx.save();
+    ctx.globalAlpha = sc.alpha;
+    ctx.translate(sc.x, sc.y);
+    ctx.rotate(sc.heading);
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.30)';
+    ctx.beginPath(); ctx.roundRect(-14, -6.5, 30, 15, 4); ctx.fill();
+    // body
+    ctx.fillStyle = '#cfd8dc';
+    ctx.strokeStyle = '#263238';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.roundRect(-15, -7.5, 30, 15, 4); ctx.fill(); ctx.stroke();
+    // bonnet stripe and the glasshouse
+    ctx.fillStyle = '#ffb300';
+    ctx.fillRect(4, -1.6, 10, 3.2);
+    ctx.fillStyle = '#37474f';
+    ctx.beginPath(); ctx.roundRect(-8, -5.6, 12, 11.2, 2.5); ctx.fill();
+    // the light bar across the roof
+    const on = sc.phase === 'out';
+    ctx.fillStyle = on ? (flash ? '#ffea00' : '#ff6f00') : '#5d4037';
+    ctx.fillRect(-3.4, -6.4, 3, 5.6);
+    ctx.fillStyle = on ? (flash ? '#ff6f00' : '#ffea00') : '#5d4037';
+    ctx.fillRect(-3.4, 0.8, 3, 5.6);
+    if (on) {
+        ctx.fillStyle = flash ? 'rgba(255,214,0,0.28)' : 'rgba(255,111,0,0.22)';
+        ctx.beginPath(); ctx.arc(-2, 0, 15, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    // the label
+    ctx.save();
+    ctx.globalAlpha = sc.alpha;
+    ctx.font = 'bold 10px Arial';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillStyle = sc.phase === 'out' ? '#ffd600' : '#cfd8dc';
+    ctx.strokeText('SAFETY CAR', sc.x, sc.y - 20);
+    ctx.fillText('SAFETY CAR', sc.x, sc.y - 20);
+    ctx.restore();
 }
 
 function drawCranes(ctx) {
@@ -12551,8 +13836,12 @@ function drawLights(ctx) {
 }
 
 function drawRain(ctx) {
-    if (!isRaining) return;
-    ctx.fillStyle = 'rgba(100, 120, 150, 0.1)';
+    // A race whose weather moves draws the rain that is FALLING (rainNow),
+    // which is not the same thing as the road being wet: a drying track has
+    // no rain on it. Everything else draws it as it always has.
+    const amount = wxPlan ? rainNow : (isRaining ? 1 : 0);
+    if (!(amount > 0.02)) return;
+    ctx.fillStyle = 'rgba(100, 120, 150, ' + (0.1 * Math.min(1, 0.4 + amount)).toFixed(3) + ')';
     ctx.fillRect(0, 0, WORLD_W, WORLD_H);
     
     // Fast rain streaks. World units, not canvas.width: the backing store is
@@ -12561,7 +13850,8 @@ function drawRain(ctx) {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    for (let i = 0; i < 50; i++) {
+    const streaks = Math.round(50 * amount);
+    for (let i = 0; i < streaks; i++) {
         const x = Math.random() * WORLD_W;
         const y = Math.random() * WORLD_H;
         ctx.moveTo(x, y);
@@ -12867,6 +14157,7 @@ function gameLoop(timestamp) {
         _impactsThisFrame = 0;
 
         drawTrackFrame(ctx);           // leaves the context in world space
+        if (track.puddlesLive) track.drawPuddles(ctx, true);
         // Same layering as the race render below: whoever is on the lower
         // road goes down first, then the deck or the tunnel roof, then
         // whoever is on top of it. The grid is nowhere near the crossing on
@@ -12882,6 +14173,7 @@ function gameLoop(timestamp) {
             cars.forEach(car => car.draw(ctx));
         }
         drawCranes(ctx);
+        drawSafetyCar(ctx);
 
         applyScreenTransform(ctx);     // rain, lights and minimap are window furniture
         drawRain(ctx); // Draw rain during countdown
@@ -12997,6 +14289,9 @@ function gameLoop(timestamp) {
         // Draw Track - the pre-rendered layer, one visible-slice drawImage.
         // The context comes back in WORLD space.
         drawTrackFrame(ctx);
+        // ...and the puddles of a race whose weather moves, which fill and
+        // empty with it and so cannot live in the bake
+        if (track.puddlesLive) track.drawPuddles(ctx, true);
         
         // --- Draw Skid Marks ---
         for (let i = globalSkidMarks.length - 1; i >= 0; i--) {
@@ -13048,6 +14343,7 @@ function gameLoop(timestamp) {
 
         // Recovery vehicles, on top of everything on track.
         drawCranes(ctx);
+        drawSafetyCar(ctx);
 
         // --- Draw Particles ---
         for (let i = globalParticles.length - 1; i >= 0; i--) {

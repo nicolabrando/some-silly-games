@@ -643,6 +643,14 @@ button:hover {
 
 #vsc-sub { font-size: 10px; letter-spacing: 0.5px; text-align: center; }
 #vsc-count { font-size: 23px; font-variant-numeric: tabular-nums; min-width: 46px; text-align: center; }
+/* the same strip for the safety car - deeper amber while it leads the field,
+   paler once it is coming in - and green for a moment at the restart */
+#vsc-banner.sc-out { background: rgba(255, 160, 0, 0.97); border-right-color: #6d4100;
+                     border-bottom-color: #6d4100; }
+#vsc-banner.sc-in { background: rgba(255, 224, 102, 0.92); }
+#vsc-banner.sc-green { background: rgba(46, 160, 67, 0.96); color: #04140a;
+                       border-right-color: #145a25; border-bottom-color: #145a25; }
+#vsc-banner.sc-green #vsc-tag { background: #04140a; color: #69f0ae; }
 
 /* --- two-player: one card per seat, stacked at the foot ------------------ */
 #hud2 {
@@ -1912,6 +1920,9 @@ td.ex-actions { white-space: nowrap; text-align: right; padding-left: 4px; }
 .tw-wet { border-color: #2196f3; color: #64b5f6;
           background: rgba(33, 150, 243, 0.12); }
 .tw-wet .tw-note { color: #bbdefb; }
+/* the race forecast, when the weather is going to move */
+.tw-fc { display: block; margin-top: 6px; font-size: 13px; font-weight: 700;
+         opacity: 1; color: #ffe082; letter-spacing: 0.3px; }
 
 /* the season seed: a name you can type back in to run the same calendar */
 .seed-row { display: flex; gap: 6px; align-items: stretch; }
@@ -1928,6 +1939,7 @@ td.ex-actions { white-space: nowrap; text-align: right; padding-left: 4px; }
 .gp-wx-dry { color: #ffd54f; border-color: #ffb300; }
 .gp-wx-wet { color: #64b5f6; border-color: #2196f3;
              background: rgba(33, 150, 243, 0.14); }
+.gp-fc { font-size: 13px; font-weight: 700; color: #ffe082; margin-left: 8px; }
 .ex-rec-foot { font-size: 10px; opacity: 0.5; margin-top: 6px; line-height: 1.5; }
 .ex-rec-gap { font-size: 11px; opacity: 0.62; margin-top: 7px; line-height: 1.5; }
 /* what a lap on each compound is worth, here */
@@ -2315,6 +2327,16 @@ button.menu-danger {
     letter-spacing: 0.6px;
     color: #ffd54f;
     margin-bottom: 6px;
+}
+/* the weather, when it is moving: the other half of the call */
+.pp-wx {
+    font-size: 12px;
+    color: #bbdefb;
+    background: rgba(33, 150, 243, 0.14);
+    border-left: 3px solid #2196f3;
+    padding: 4px 8px;
+    margin: 0 0 8px;
+    border-radius: 3px;
 }
 #pit-panel .pp-row {
     display: flex;
