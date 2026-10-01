@@ -508,6 +508,28 @@ let SLIDE_WEAR = 30;
 //  arithmetic said it would - and that was the problem. Camber gives
 //  something back; a gradient only ever takes.
 const RELIEF_BANK = 200;
+// ...AND NONE OF IT AT A CRAWL. In this model a tyre makes sideways force only
+// by sliding: 3.5 px/s^2 for every px/s of slip. So it cannot simply HOLD a car
+// on a slope the way a real tyre's grip does - to stand up to 190 px/s^2 of
+// camber it has to be sliding down it at 55 px/s. At racing speed that is
+// invisible: the camber is spent turning the car, which is what it is there
+// for. At a VSC's 90 px/s it is not. The corner asks for 35 of the 190, the
+// rest pulls the car down the bank, and the field on Cascade slid into the
+// inside barrier and sat against it - measured, four and five cars at a time
+// under 40 px/s for up to six and a half seconds, the whole queue held up
+// behind them. Nicola saw it under the VSC and under the safety car.
+//
+// So below BANK_FULL_SPEED the camber fades, to nothing at BANK_ZERO_SPEED -
+// the tyre's static grip, which this model does not have, standing in for it.
+// Above it nothing changes, and racing happens above it: a clean lap of
+// Cascade at racing pace never asks for less than all of it (27 of them, dry,
+// damp and soaked, identical to the bit with and without this), and in a race
+// the green-flag frames below 160 on a banked corner are the ones that were
+// going wrong - a spin, a shunt, a queue at a crawl. With the fade, the
+// slow-and-stuck episodes went from ten in eight races to none, and the
+// wrecks on Cascade from 36 to 23.
+const BANK_FULL_SPEED = 160;
+const BANK_ZERO_SPEED = 70;
 // Quanto l'acqua ferma puo' abbassare il tetto d'imbardata: e' un PAVIMENTO
 // sul fattore della pozzanghera. 0 = l'acqua lo abbassa quanto vuole (com'era
 // prima del 08/26), 1 = non lo abbassa affatto. Vedi la nota al tetto in
@@ -1946,8 +1968,12 @@ class Car {
         this.bankNow = 0;
         if (relief && (relief.bx || relief.by) && !onTheGrid) {
             this.bankNow = relief.bank || 0;
-            this.velocity.x += relief.bx * RELIEF_BANK * dt;
-            this.velocity.y += relief.by * RELIEF_BANK * dt;
+            // all of it at racing speed, fading out below it (BANK_FULL_SPEED)
+            const vBank = Math.hypot(this.velocity.x, this.velocity.y);
+            const hold = vBank >= BANK_FULL_SPEED ? 1
+                : Math.max(0, (vBank - BANK_ZERO_SPEED) / (BANK_FULL_SPEED - BANK_ZERO_SPEED));
+            this.velocity.x += relief.bx * RELIEF_BANK * hold * dt;
+            this.velocity.y += relief.by * RELIEF_BANK * hold * dt;
         }
 
 

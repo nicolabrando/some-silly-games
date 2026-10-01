@@ -11492,6 +11492,7 @@ function updatePhysics(dt) {
                 };
                 if (c.pitPlan && c.pitPlan.stopLap === c.lap) {
                     c.wantPit = true;
+                    c._optionalStop = false;
                     const meant = c.pitPlan.tyre || pitSuggestTyre(c);
                     // the weather has a say in WHICH tyre, if it is moving
                     c.pitNextTyre = wxPlan ? wxPickTyre(c, meant) : meant;
@@ -11502,6 +11503,7 @@ function updatePhysics(dt) {
                         ? null : (c.pitPlan.next || null);
                 } else if (pitMustStopNow(c, lapsLeft)) {
                     c.wantPit = true;
+                    c._optionalStop = false;
                     c.pitNextTyre = pitSuggestTyre(c);
                     c._pitPlanNext = planNext();
                     if (typeof RaceLog !== 'undefined')
@@ -11524,10 +11526,14 @@ function updatePhysics(dt) {
                 // The safety car is the same bargain, and a better one: the field
                 // is queued behind it, so the stop costs the ground the queue
                 // covers while you are in the box and nothing else.
-                } else if ((vscActive || scActive) && (c.pitPlan && c.pitPlan.stopLap
+                } else if ((vscActive || scActive) && c._optionalVeto !== c.lap &&
+                           (c.pitPlan && c.pitPlan.stopLap
                                             ? c.tyreWear > 0.45 + vscPitBias(c)
                                             : c.tyreWear > 0.80 + vscPitBias(c) * 0.5)) {
                     c.wantPit = true;
+                    // a stop taken EARLY because it is cheap: the one kind the
+                    // box may turn away (see ONE BOX, below)
+                    c._optionalStop = true;
                     const meant = (c.pitPlan && c.pitPlan.tyre) || pitSuggestTyre(c);
                     c.pitNextTyre = wxPlan ? wxPickTyre(c, meant) : meant;
                     c._pitPlanNext = (wxPlan && wxClassOf(c.pitNextTyre) !== wxClassOf(meant))
@@ -11542,6 +11548,7 @@ function updatePhysics(dt) {
                 // car runs on wear and weather.
                 } else if (wxPlan && wxWantsStop(c, lapsLeft)) {
                     c.wantPit = true;
+                    c._optionalStop = false;
                     c.pitNextTyre = wxTyreForClass(c, c._wxTo);
                     c._pitPlanNext = null;
                     if (typeof RaceLog !== 'undefined')
@@ -11564,14 +11571,23 @@ function updatePhysics(dt) {
             // going north works exactly like one that arrives going east.
             const toLine = pitLineLen() - (c.lapS || 0);
             const winFrom = pitSpotFor(track).back + PIT_PICKUP_LEAD;
-            // ONE BOX, TWO CARS AT MOST. A field queued nose to tail behind
-            // the safety car arrives at the box together, and every car whose
-            // stop fell due in that lap went in at once: seven of them parked
-            // on the same spot, measured. An AI car that finds two already in
-            // the box stays out and comes in next time round, as a real crew
-            // would turn it away; a human's call is never refused.
-            const boxFull = !c.isPlayer && scActive &&
+            // ONE BOX: AN EARLY STOP IS NOT TAKEN INTO A FULL ONE. A field
+            // queued nose to tail behind the safety car arrives at the box
+            // together, and with every cheap early stop going in as well there
+            // were seven cars parked on the same spot. A stop taken early
+            // because it is cheap (_optionalStop) is dropped when two cars are
+            // already in the box - the car simply stays out on a set that was
+            // going to last anyway. A stop the car NEEDS is never turned away:
+            // the first version turned those away too, and on Monza, where
+            // "next time round" is thirty-five seconds later, the sets died on
+            // the way round and the crawling cars held the queue up behind them.
+            const boxFull = !c.isPlayer && c._optionalStop &&
                 cars.filter(o => o.pitPhase === 'approach' || o.pitPhase === 'stopped').length >= 2;
+            if (boxFull && c.wantPit && !c.pitPhase && toLine > winFrom && toLine < winFrom + PIT_PICKUP_WIDE) {
+                c.wantPit = false;
+                c._optionalStop = false;
+                c._optionalVeto = c.lap;        // and not asked again this lap
+            }
             if (c.wantPit && !c.pitPhase && c.halfwayMarkerCrossed && !boxFull &&
                 (c.isPlayer || (TOTAL_LAPS - c.lap) >= 1.3) &&
                 Math.hypot(c.velocity.x, c.velocity.y) > 30 &&
