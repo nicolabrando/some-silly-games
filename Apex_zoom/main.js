@@ -4171,8 +4171,8 @@ function radioSafetyCar(state) {
         if (pitModeOn && !me.wantPit && !me.pitPhase && (me.tyreWear || 0) > 0.3 && pitRaceLeft(me) > 2.2)
             radioSay(radioLine('scBox'), 2);
     } else if (state === 'in') {
-        const q = safetyCar ? scQueue() : [];
-        radioSay(radioLine(q.length && q[0].c === me ? 'scInLead' : 'scIn'), 3);
+        const h = safetyCar ? scHeadOf(scQueue()) : null;
+        radioSay(radioLine(h && h.c === me ? 'scInLead' : 'scIn'), 3);
     } else if (state === 'green') {
         radioSay(radioLine('scGreen'), 3);
     }
@@ -11334,6 +11334,11 @@ function blueFlagReason(c, other, lapLen, human) {
     // so is recomputing progress from the current waypoint, which wraps early.
     // Genuinely more than half a lap up the road, then.
     let why = (po >= pc + lapLen * 0.55) ? 'lap' : null;
+    // BEHIND THE SAFETY CAR NOBODY IS LAPPED: nobody passes anybody, so there
+    // is nobody to move over for - except a car that cannot keep the queue's
+    // pace (scSlow), which everybody goes round and which is told so.
+    const scQueued = typeof scActive !== 'undefined' && scActive && !c.scSlow;
+    if (why && scQueued) return null;
     if (!why) {
         // A CRIPPLED CAR GETS OUT OF THE WAY, whatever lap it is on. A car on
         // a dead set is usually not being lapped - it is being caught, on the
@@ -11343,6 +11348,12 @@ function blueFlagReason(c, other, lapLen, human) {
         // braking zone, where 120 against 250 is normal racing. And ONLY an
         // AI one - see the note above.
         if (human || !isCrippled(c)) return null;
+        // ...and behind the safety car, only one that cannot keep the queue's
+        // pace (scSlow). A car that is damaged but keeping up holds its place
+        // like anybody else: the cars arriving behind it are closing up on
+        // the queue, not racing it, and moving over for them is how it lost
+        // places it was owed.
+        if (scQueued) return null;
         const mySpeed = Math.hypot(c.velocity.x, c.velocity.y);
         const oSpeed = Math.hypot(other.velocity.x, other.velocity.y);
         if (oSpeed < mySpeed + 60) return null;   // not actually catching me
@@ -11791,8 +11802,8 @@ function updatePhysics(dt) {
     // --- Wrecks, Virtual Safety Car, safety car and recovery ---------------
     updateRecovery(dt);
     updateSafetyCar(dt);
-    applyVscHold();
-    applySafetyCarHold();
+    applyVscHold(dt);
+    applySafetyCarHold(dt);
 
     updateBlueFlags(dt);
     radioWatch();
@@ -12007,11 +12018,136 @@ function driverCode(car) {
 // Cutting everyone's power equally is not enough to freeze the order, because
 // a car with a run, a tow, or fresher tyres still closes and goes by. So each
 // car meets an invisible wall that travels with the one in front: inside the
-// hold distance it simply cannot go quicker than the car ahead, and the last
-// stretch is a hard stop it cannot cross at all.
+// hold distance it may not go quicker than the car ahead, and right up
+// against it, it has to give a little back.
 const VSC_HOLD_GAP = 62;      // px of track progress where the wall starts
-const VSC_WALL_GAP = 30;      // px it can never get closer than
-const VSC_PUSH_MAX = 1.2;     // px/frame the wall gives back: a nudge, not a jump
+const VSC_WALL_GAP = 30;      // px: closer than this, it drops back
+
+// ---------------------------------------------------------------------------
+//  HOLDING A CAR BACK WITHOUT TOUCHING IT
+//
+//  Both neutralisations keep the order by telling each car how fast it may go
+//  behind the one in front. The first versions ENFORCED that in two ways no
+//  car could have done for itself:
+//
+//    * the speed was cut to the limit in a single frame - a car doing 290
+//      behind one doing 60 was doing 60 a sixtieth of a second later
+//      (measured: up to 233 px/s taken off in one frame);
+//    * a car closer than the minimum gap was MOVED backwards, 1.2px a frame.
+//      That is 72 px/s, and behind anything slower than that the car travelled
+//      backwards on the screen. Under the safety car the minimum was 44px and
+//      a pack races at 16-40, so the moment it came out most of the field was
+//      being shoved: measured over 16 safety cars, 6.7% of all car-frames in
+//      the first two seconds were cars going BACKWARDS along the road, the
+//      longest for 84px - and for the rest of the period one car-frame in nine
+//      was a shove, the queue creeping up and being knocked back, because the
+//      lap position the gap was read from moves in 8px steps and kept
+//      stepping over the line. (The VSC did the same thing a third as often.)
+//
+//  Nicola saw exactly that: "macchine andare improvvisamente in retromarcia,
+//  come se fossero spinte indietro".
+//
+//  So a hold is now only ever a BRAKE. It takes forward speed off a car, along
+//  the road, at no more than HOLD_BRAKE - about what the cars' own brakes
+//  manage at speed - and it never moves anything. A car that is too close is
+//  given a limit a little UNDER the speed of the car in front and drops back
+//  by itself, at HOLD_OPEN_MAX at the most; a car that is too fast is slowed,
+//  not stopped dead. And the lap position the gaps are read from is continuous
+//  (holdS), so a limit that depends on a gap moves smoothly.
+// ---------------------------------------------------------------------------
+const HOLD_BRAKE = 320;       // px/s^2 the hold may take off a car
+const HOLD_OPEN_K = 1.0;      // 1/s: too close, a car drops back this fast per px it is short...
+const HOLD_OPEN_MAX = 25;     // px/s: ...and never faster than this
+
+// The node of the lap a car is at - on the arm it is on, where a circuit forks
+// (the same choice car.js makes when it reads lapS).
+function holdNodeOf(c) {
+    if (!track || typeof track.getRacingLine !== 'function' || c._nodeIdx === undefined) return null;
+    let line = track.getRacingLine('standard');
+    if (track.forkAlt && c.forkSide && typeof track.altRacingLine === 'function')
+        line = track.altRacingLine() || line;
+    return (line && line.nodes[c._nodeIdx]) || null;
+}
+// Where a car is round the lap, CONTINUOUSLY. car.lapS is the arc length of
+// the nearest node of the line, so it moves in steps of a node (8px); this
+// adds how far along the road from that node the car actually is.
+function holdS(c, lapLen) {
+    const n = holdNodeOf(c);
+    let s = c.lapS || 0;
+    if (n && isFinite(n.tx)) {
+        const off = (c.x - n.cx) * n.tx + (c.y - n.cy) * n.ty;
+        s += Math.max(-12, Math.min(12, off));
+    }
+    return lapLen ? ((s % lapLen) + lapLen) % lapLen : s;
+}
+// HOW FAST A CAR IS GETTING ROUND THE LAP, which is not its speed.
+//
+// A gap is measured along the centre line, and a car on the inside of a
+// corner covers more centre line per pixel than one on the outside of it: on a
+// 150px corner the two edges of the road are 40% apart. So "no faster than
+// the car in front" has to be said in LAP DISTANCE per second, or a car on the
+// inside line goes past one on the outside line at the same speed - which,
+// once the hold stopped shoving cars back into their places, is exactly what
+// began to happen, and why the head of the queue kept driving into the back
+// of the safety car round every bend (its speed was being counted along the
+// centre line while it drove the racing line).
+//
+// `k` is what one px/s of this car's speed is worth in lap distance: 1 on a
+// straight, 1/(1 - curvature x offset) in a corner. `rate` is the car's speed
+// along the road times that.
+function holdKappa(line) {
+    if (line._kappaDone) return;
+    const N = line.count, nodes = line.nodes, ds = line.ds || 8;
+    for (let i = 0; i < N; i++) {
+        const a = nodes[(i - 1 + N) % N], b = nodes[(i + 1) % N];
+        const cross = a.tx * b.ty - a.ty * b.tx;
+        nodes[i].kappa = Math.asin(Math.max(-1, Math.min(1, cross))) / (2 * ds);
+    }
+    line._kappaDone = true;
+}
+function holdRate(c) {
+    const n = holdNodeOf(c);
+    if (!n || !isFinite(n.tx)) return { rate: Math.hypot(c.velocity.x, c.velocity.y), k: 1 };
+    if (n.kappa === undefined) {
+        let line = track.getRacingLine('standard');
+        if (track.forkAlt && c.forkSide && typeof track.altRacingLine === 'function')
+            line = track.altRacingLine() || line;
+        holdKappa(line);
+    }
+    const u = (c.x - n.cx) * n.nx + (c.y - n.cy) * n.ny;
+    const k = 1 / Math.max(0.6, Math.min(1.6, 1 - (n.kappa || 0) * u));
+    return { rate: (c.velocity.x * n.tx + c.velocity.y * n.ty) * k, k: k };
+}
+// Slow a car towards `cap`, along the road (`t`), the way a brake would:
+// HOLD_BRAKE, and never past the limit.
+//
+// `dist`, when given, is how far the car is from the one it is held behind,
+// centre to centre. Two cars touch at 22px, and a pack racing nose to tail is
+// already at 24-30 when the boards come out: there the ordinary brake is a
+// few px short, and with nothing else the car behind taps the one in front
+// (measured: a 15 to 58 damage touch in the first second of one
+// neutralisation in fifteen; the old instant cut never touched anybody, which
+// was the one thing it did well). So when the two are close the brake is
+// whatever it takes to shed the excess speed in the room that is left -
+// v^2 / 2d, an emergency stop by a car about to hit something - up to
+// HOLD_PANIC times the ordinary one. Still never a jump: at its most that is
+// 27 px/s in a frame, against the 233 the old hold could take, and only from
+// a car that is a few px from contact.
+const HOLD_NEAR = 70;         // px: closer than this to the car in front, it may brake harder
+const HOLD_TOUCH = 24;        // px: where the two would be touching
+const HOLD_PANIC = 5;         // times HOLD_BRAKE, at the most
+function holdBrake(c, t, cap, dt, dist) {
+    const fwd = c.velocity.x * t.x + c.velocity.y * t.y;
+    if (!(fwd > cap)) return;
+    const over = fwd - cap;
+    let a = HOLD_BRAKE;
+    if (dist !== undefined && dist < HOLD_NEAR)
+        a = Math.min(HOLD_BRAKE * HOLD_PANIC,
+                     Math.max(a, over * over / (2 * Math.max(2, dist - HOLD_TOUCH))));
+    const take = Math.min(over, a * (dt || 1 / 60));
+    c.velocity.x -= t.x * take;
+    c.velocity.y -= t.y * take;
+}
 
 // Forward speed a car needs before it leaves a slipstream behind it.
 const DRAFT_MIN_SPEED = 15;   // stopped or crawling: no wake at all
@@ -12043,8 +12179,14 @@ function trackDirAt(c) {
     return null;
 }
 
-function applyVscHold() {
-    if (!vscActive) { vscOrder = null; return; }
+function applyVscHold(dt) {
+    if (!vscActive) {
+        // (vscOrder set means it was out a frame ago: nobody is held any more)
+        if (vscOrder) for (const c of cars) c.vscHoldCap = undefined;
+        vscOrder = null;
+        return;
+    }
+    for (const c of cars) c.vscHoldCap = undefined;
     // A car in the pit sequence is not in the queue. It is stationary by
     // definition, and the hold works by capping each car at the speed of the
     // one ahead: leave it in and the whole field inherits its zero and parks
@@ -12074,13 +12216,17 @@ function applyVscHold() {
     // On lap position the pairs are the cars that are actually nose to tail.
     const lapLen = (track && typeof track.getRacingLine === 'function')
         ? track.getRacingLine('standard').length : 1e9;
-    const held = running.slice().sort((a, b) => (b.lapS || 0) - (a.lapS || 0));
+    const held = running.map(c => {
+        const r = holdRate(c);
+        return { c: c, s: holdS(c, lapLen), rate: r.rate, k: r.k };
+    }).sort((a, b) => b.s - a.s);
 
     for (let i = 0; i < held.length; i++) {
         // wraps: the last car on the lap is chasing the first one round
-        const ahead = held[(i - 1 + held.length) % held.length], c = held[i];
+        const am = held[(i - 1 + held.length) % held.length], m = held[i];
+        const ahead = am.c, c = m.c;
         if (ahead === c) continue;
-        let gap = (ahead.lapS || 0) - (c.lapS || 0);
+        let gap = am.s - m.s;
         if (gap < 0) gap += lapLen;
         if (gap >= VSC_HOLD_GAP) continue;
 
@@ -12092,28 +12238,22 @@ function applyVscHold() {
         const t = trackDirAt(c);
         if (!t) continue;
 
-        const fwd = c.velocity.x * t.x + c.velocity.y * t.y;
-        const ta = trackDirAt(ahead) || t;
-        const aheadFwd = ahead.velocity.x * ta.x + ahead.velocity.y * ta.y;
+        // (round the lap, not along the ground: see holdRate)
+        const aheadRate = Math.max(0, am.rate);
 
-        // Inside the wall it may not out-run the car ahead; right up against
-        // it, it has to give a little back.
-        const squeeze = gap <= VSC_WALL_GAP ? 0.92 : 1.0;
-        const cap = Math.max(0, aheadFwd * squeeze);
-        if (fwd > cap) {
-            c.velocity.x -= t.x * (fwd - cap);
-            c.velocity.y -= t.y * (fwd - cap);
-        }
-
-        // Still inside the wall: ease it back off the car in front. A nudge,
-        // capped per frame - the gap is restored over a few tenths instead of
-        // in one jump, which is the difference between a car being held up
-        // and a car appearing somewhere else.
-        if (gap < VSC_WALL_GAP) {
-            const back = Math.min(VSC_PUSH_MAX, VSC_WALL_GAP - gap);
-            c.x -= t.x * back;
-            c.y -= t.y * back;
-        }
+        // Inside the hold distance it may not out-run the car ahead; right up
+        // against it, it has to give some back - a limit UNDER the other
+        // car's pace, by more the closer it is, so the gap reopens by itself.
+        // A brake, not a wall: see HOLDING A CAR BACK WITHOUT TOUCHING IT.
+        let capRate = aheadRate;
+        if (gap < VSC_WALL_GAP)
+            capRate = Math.max(0, aheadRate * 0.92 -
+                                  Math.min(HOLD_OPEN_MAX, HOLD_OPEN_K * (VSC_WALL_GAP - gap)));
+        const cap = capRate / m.k;
+        // told to the car as well, so the AI aims at it instead of running
+        // into it - and does not take being held for being stuck (ai.js)
+        c.vscHoldCap = cap;
+        holdBrake(c, t, cap, dt, Math.hypot(ahead.x - c.x, ahead.y - c.y));
     }
 }
 
@@ -12373,17 +12513,40 @@ function renderVscCountdown(leftMs) {
 //  laps comes in at the end of that lap whatever else is going on.
 //
 //  THE QUEUE is the VSC's hold, generalised (applySafetyCarHold): every car
-//  is held behind whatever is in front of it on the road, car or safety car -
-//  but softly, the allowed closing speed falling with the gap, because cars
-//  arrive at this queue from racing speed and the VSC's instant cap would be
-//  a wall at 150 px/s. Nobody may do more than SC_CHASE anywhere while it is
-//  out; the safety car itself runs slower than that, so the gaps close.
+//  is held behind whatever is in front of it on the road, car or safety car.
+//  The speed it may do falls with the gap - the car in front's, plus
+//  SC_CLOSE_K for every px it still has to close - and a car that is too
+//  close gets a little LESS than the car in front and drops back. Nothing is
+//  ever moved and nothing is stopped dead: the limit is reached with a brake
+//  (see HOLDING A CAR BACK WITHOUT TOUCHING IT, by the VSC). Nobody may do
+//  more than SC_CHASE anywhere while it is out; the safety car itself runs
+//  slower than that, so the gaps close.
 //
-//  LAPPED CARS DROP BACK. A car is not held behind one it is LAPPING (more
-//  than half a lap of race between them - the blue-flag rule): the lapped
-//  car has its blue flag, is slowed to let it by, and the queue sorts itself
-//  so the restart is between the cars racing for position, not between them
-//  and a backmarker.
+//  A CAR THAT CANNOT KEEP UP MAY BE PASSED. A car on a finished set crawls at
+//  a quarter of the queue's pace; held behind it for the whole period, half
+//  the field never reached the queue at all. So a car that is in trouble
+//  (isCrippled) AND for a second has not managed even the safety car's own
+//  pace with the road open in front of it is marked (car.scSlow): nobody is
+//  held behind it, the AI is allowed its move on it, and the safety car does
+//  not wait for it. Both halves matter - a damaged car that is keeping up
+//  keeps its place, and so does a healthy one that is merely taking its time.
+//  (A car that is all but stopped for SC_STOPPED_S is the same thing whatever
+//  state it is in: see CAN IT KEEP UP, in applySafetyCarHold.)
+//
+//  NOBODY PASSES ANYBODY, A BACKMARKER INCLUDED. The first version let a
+//  car through on one it was lapping - the lapped car was shown its blue
+//  flag and slowed to a share of the lapper's speed, so that the queue
+//  sorted itself into race order for the restart. It read as overtaking
+//  under the safety car, which the banner says there is none of, and it fed
+//  on itself: the lapper slowed behind the car that was slowing for him,
+//  which slowed that car's limit again, until the two were crawling side by
+//  side in the middle of a queue doing 180 - and the next car along drove
+//  into them (the one kind of contact that still turned up in the middle of
+//  a safety car period). The VSC never allowed it. Now neither does this: a
+//  lapped car keeps its place on the road like everybody else, no blue flag
+//  is shown while the safety car is out (blueFlagReason), and at the green
+//  the flags come back and the backmarker moves over, as it would on any
+//  other lap.
 //
 //  THE CLASSIFICATION IS NOT FROZEN, unlike the VSC's (vscOrder). The VSC
 //  has to freeze it because its hold is a speed limit that a car with a run
@@ -12402,16 +12565,23 @@ const SC_CORNER_IN = 0.80;
 const SC_ACCEL = 90;            // px/s^2
 const SC_DECEL = 130;           // px/s^2: it joins at the leader's speed and eases down
 const SC_PULL = 160;            // px: the queue's head further back than this, it waits
-const SC_HOLD_ZONE = 170;       // px: inside this a car is held to the one in front
-const SC_WALL = 44;             // px: and never closer than this
+const SC_WAIT_MIN = 70;         // px/s: ...at no less than this
+const SC_WAIT_K = 0.3;          // px/s it gives up per px the head is further back than that
+const SC_GAP = 46;              // px: the gap the queue settles at, car to car
 const SC_CLOSE_K = 1.5;         // 1/s: how fast a gap in the queue may close
 const SC_CHASE = 300;           // px/s: the most anybody may do while it is out
+const SC_ZONE_BEFORE = 420;     // px of road before a wreck still on the ground: double yellows
+const SC_ZONE_AFTER = 60;       // ...and after it
+const SC_ZONE_A = 200;          // px/s^2: the braking curve down to the zone's speed
+const SC_JOIN_S = 1.4;          // s it takes to pull out onto the line
+const SC_JOIN_LAT = 40;         // px from the line it pulls out from
 const SC_MIN_OUT = 7;           // s it is out at the least
 const SC_MAX_OUT_LAPS = 1.15;   // ...and at the most, in laps of racing time, before it comes in anyway
 const SC_PIT_IN = 380;          // px before the line where it leaves the road
 const SC_CALL_MIN = 300;        // px: "in this lap" needs this much road to the pit entry
 const SC_LEAVE_S = 1.2;         // s to pull off and be gone
 const SC_TRAIN_GAP = 120;       // px: closer than this to the car in front is "in the queue"
+const SC_STOPPED_S = 2.5;       // s under half the queue's pace before a car, healthy or not, may be passed
 let scBannerUntil = 0;          // the green flag strip, for a moment after the restart
 
 function scLine() { return track.getRacingLine('standard'); }
@@ -12429,6 +12599,12 @@ function scPoseAt(s) {
     while (dh < -Math.PI) dh += 2 * Math.PI;
     return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f,
              heading: (a.heading || 0) + dh * f, nx: a.nx || 0, ny: a.ny || 0, node: a };
+}
+// How much lap (centre-line distance) one px of the racing line is worth at s.
+function scArcPerPx(s) {
+    const a = scPoseAt(s), b = scPoseAt(s + 8);
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    return d > 1 ? Math.max(0.6, Math.min(1.6, 8 / d)) : 1;
 }
 // A car's speed along the circuit (not along its nose: see trackDirAt).
 function scForward(c) {
@@ -12462,11 +12638,19 @@ function scQueue() {
         .map(c => ({ c: c, behind: (((sc.s - (c.lapS || 0)) % L) + L) % L }))
         .sort((a, b) => a.behind - b.behind);
 }
+// The car the safety car is leading: the nearest one behind it that can keep
+// up - a car crawling on a dead set is passed by the queue, not waited for
+// (see A CAR THAT CANNOT KEEP UP MAY BE PASSED).
+function scHeadOf(q) {
+    for (const m of q) if (!m.c.scSlow) return m;
+    return q.length ? q[0] : null;
+}
 // Has the queue formed: most of the field in one line behind it, each car
 // close to the one in front? (The rest are a lap away on the other side of
 // it, or crawling, and a safety car cannot wait for them for ever: see
 // SC_MAX_OUT_LAPS.)
 function scQueueFormed(q) {
+    q = q.filter(m => !m.c.scSlow);          // the ones it is not waiting for
     if (!q.length) return true;
     let n = 0, prev = 0;
     for (const m of q) {
@@ -12482,6 +12666,7 @@ function scQueueFormed(q) {
 function scTrainTail(q) {
     let prev = 0, tail = 0, n = 0;
     for (const m of q) {
+        if (m.c.scSlow) continue;
         if (m.behind - prev > SC_TRAIN_GAP + (n === 0 ? SC_PULL : 0)) break;
         prev = m.behind; tail = m.behind; n++;
     }
@@ -12526,8 +12711,16 @@ function deploySafetyCar(why) {
     if (!lead) return false;
     const s0 = ((lead.lapS || 0) + SC_SPAWN_AHEAD) % L;
     const p = scPoseAt(s0);
+    // IT PULLS OUT, it does not appear: from the edge of the road, on the side
+    // the racing line is not using, onto the line over SC_JOIN_S - the
+    // mirror of the way it leaves at the pit entry.
+    const side = (p.node.alpha || 0) > 0 ? -1 : 1;
     safetyCar = { phase: 'out', s: s0, v: Math.max(80, Math.min(260, scForward(lead))), t: 0,
-                  x: p.x, y: p.y, heading: p.heading, alpha: 0, lat: 0, leaveT: 0,
+                  x: p.x + p.nx * SC_JOIN_LAT * side, y: p.y + p.ny * SC_JOIN_LAT * side,
+                  heading: p.heading, alpha: 0, lat: SC_JOIN_LAT * side, leaveT: 0,
+                  joinT: 0, joinSide: side, rate: 0,
+                  // its own odometer, in the cars' terms: where it is in the RACE
+                  prog: (lead.trackProgress || 0) + SC_SPAWN_AHEAD,
                   pitSide: 1, head: null, headLap: null, restartT: 0, lead: lead };
     scActive = true;
     // a VSC already out gives way to it
@@ -12548,7 +12741,8 @@ function endSafetyCar(silent) {
     const was = scActive || !!safetyCar;
     scActive = false;
     safetyCar = null;
-    if (typeof cars !== 'undefined' && cars) for (const c of cars) c.scCap = undefined;
+    if (typeof cars !== 'undefined' && cars)
+        for (const c of cars) { c.scCap = undefined; c.scSlow = false; c._scLagT = 0; c._scStopT = 0; }
     if (!was) return;
     if (silent) {
         if (!vscActive) showVscBanner(false);
@@ -12584,37 +12778,63 @@ function updateSafetyCar(dt) {
     const L = scLine().length;
     sc.t += dt;
     const q = scQueue();
-    const head = q.length ? q[0] : null;
+    const head = scHeadOf(q);
 
     // ---- how fast ---------------------------------------------------------
     if (sc.phase === 'out' || sc.phase === 'in') {
         let want = scTargetSpeed(sc.s, sc.phase === 'in');
         // never running away from the queue: with its head further back than
-        // SC_PULL it goes SLOWER than the head does, by more the further back
-        // the head is - so the gap closes. (Matching the head's speed, as the
-        // first version did, holds a gap rather than closing it: measured,
-        // the leader sat 430px behind the safety car for a whole lap.)
+        // SC_PULL it goes no faster than the head does, less a little for
+        // every px the head still has to make up - so the gap closes.
+        // (Matching the head's speed, as the first version did, holds a gap
+        // rather than closing it: measured, the leader sat 430px behind the
+        // safety car for a whole lap.) But it WAITS AT A PACE, it does not
+        // park: the second version took 0.9 px/s off per px and had a floor
+        // of 30, so with the leader 320px back in a hairpin it stood on the
+        // brakes to a crawl the moment it came out, and the whole queue
+        // arrived at a near-standstill and had to set off again. Anything
+        // healthy closes on SC_WAIT_MIN at over 200 px/s; it needs no more
+        // help than that.
         if (head && head.behind > SC_PULL && head.behind < L * 0.5)
-            want = Math.min(want, Math.max(30, scForward(head.c) - 0.9 * (head.behind - SC_PULL)));
+            want = Math.min(want, Math.max(SC_WAIT_MIN,
+                            scForward(head.c) - SC_WAIT_K * (head.behind - SC_PULL)));
         const a = want > sc.v ? SC_ACCEL : SC_DECEL;
         sc.v += Math.max(-a * dt, Math.min(a * dt, want - sc.v));
     }
     const pitAt = L - SC_PIT_IN;
     const toPitBefore = ((pitAt - sc.s) % L + L) % L;
-    sc.s = (sc.s + sc.v * dt) % L;
+    // sc.v is its speed OVER THE GROUND, like any other car's. Its place on
+    // the lap is counted along the centre line and it drives the racing line,
+    // so the lap distance it covers in a frame is that speed times what a px
+    // of the line is worth here (scArcPerPx) - more than 1 on the inside of a
+    // corner. It used to be advanced at sc.v along the centre line, which
+    // made it up to a third SLOWER over the ground than the number the queue
+    // was matching itself to.
+    sc.rate = sc.v * scArcPerPx(sc.s);
+    sc.s = (sc.s + sc.rate * dt) % L;
+    sc.prog += sc.rate * dt;
     const toPitNow = ((pitAt - sc.s) % L + L) % L;
+    const latWas = sc.lat;
     if (sc.phase === 'leaving') {
         sc.leaveT += dt;
         const k = Math.min(1, sc.leaveT / SC_LEAVE_S);
-        sc.lat = k * 46 * sc.pitSide;              // across towards the pit side...
+        // across towards the pit side (from wherever it was)...
+        sc.lat = sc.leaveFrom + (46 * sc.pitSide - sc.leaveFrom) * k;
         sc.alpha = Math.max(0, 1 - k);             // ...and gone
     } else if (sc.phase !== 'gone') {
         sc.alpha = Math.min(1, sc.alpha + dt / 0.6);
+        // pulling out onto the line
+        if (sc.joinT < SC_JOIN_S) {
+            sc.joinT += dt;
+            const k = Math.min(1, sc.joinT / SC_JOIN_S), e = k * k * (3 - 2 * k);
+            sc.lat = (1 - e) * SC_JOIN_LAT * sc.joinSide;
+        } else sc.lat = 0;
     }
     const pose = scPoseAt(sc.s);
     sc.x = pose.x + pose.nx * sc.lat;
     sc.y = pose.y + pose.ny * sc.lat;
-    sc.heading = pose.heading;
+    // nose a little across the road while it is moving across it
+    sc.heading = pose.heading + Math.atan2((sc.lat - latWas) / Math.max(1e-3, dt), Math.max(60, sc.v));
 
     // ---- in this lap ------------------------------------------------------
     if (sc.phase === 'out') {
@@ -12649,6 +12869,7 @@ function updateSafetyCar(dt) {
             // has the race in his hands until the line
             sc.phase = 'leaving';
             sc.leaveT = 0;
+            sc.leaveFrom = sc.lat || 0;
             const spot = pitSpotFor(track);
             const ppose = scPoseAt(pitAt);
             sc.pitSide = ((spot.x - ppose.x) * ppose.nx + (spot.y - ppose.y) * ppose.ny) >= 0 ? 1 : -1;
@@ -12669,8 +12890,10 @@ function updateSafetyCar(dt) {
 // THE QUEUE. Run after the physics, like the VSC's hold, on the cars' actual
 // velocities - and it leaves each car a `scCap`, the speed it may do, which
 // car.js turns into a throttle limit for the human and ai.js into a target
-// for the AI, so the hard clamp here is the backstop and not the brakes.
-function applySafetyCarHold() {
+// for the AI. What is left for this function to enforce is a brake
+// (holdBrake) - never a wall, never a shove: see HOLDING A CAR BACK WITHOUT
+// TOUCHING IT.
+function applySafetyCarHold(dt) {
     if (!scActive) return;
     const sc = safetyCar;
     const L = scLine().length;
@@ -12678,9 +12901,11 @@ function applySafetyCarHold() {
     const mem = [];
     for (const c of cars) {
         if (c.finished || c.isBroken || c.pitPhase) { c.scCap = undefined; continue; }
-        mem.push({ c: c, s: c.lapS || 0 });
+        const r = holdRate(c);
+        mem.push({ c: c, s: holdS(c, L), x: c.x, y: c.y, rate: r.rate, k: r.k });
     }
-    if (onRoad) mem.push({ c: null, s: sc.s });
+    if (onRoad) mem.push({ c: null, s: ((sc.s % L) + L) % L, x: sc.x, y: sc.y,
+                           rate: sc.rate || sc.v, k: 1 });
     mem.sort((a, b) => b.s - a.s);
     const n = mem.length;
     // THE WRECK ITSELF. Until the crane has it off the ground it is debris in
@@ -12689,68 +12914,90 @@ function applySafetyCarHold() {
     // cars still closing up on the queue are at racing speed, and the first
     // version put three more of them into the wreck in as many seconds. So
     // the road leading up to a wreck still on the ground is a slow zone at
-    // the VSC's speed - double yellows - until it is lifted.
+    // the VSC's speed - double yellows - until it is lifted, with a braking
+    // curve down to it rather than a line across the road.
     const zones = [];
     for (const r of recoveries) {
         if (r.car && !r.car.recovered && !((r.car.liftAmount || 0) > 0.05)) zones.push(r.car.lapS || 0);
-    }
-    // NOBODY ON THE LEAD LAP GETS AWAY IN FRONT OF IT. Where the safety car is
-    // in RACE terms: the progress of the car right behind it plus the road
-    // between them. A car ahead of that, and not a lap down - one that got out
-    // of the pits in front of it, say, which the pit exit now prevents - may
-    // not run off at its own pace while the queue crawls: it is slowed until
-    // the safety car has it. A lapped car up the road is a different thing:
-    // it is on its way round to the back of the queue, as in a real race.
-    let scProg = null;
-    if (onRoad) {
-        let best = null, bestBehind = Infinity;
-        for (const m of mem) {
-            if (!m.c) continue;
-            const behind = (((sc.s - m.s) % L) + L) % L;
-            if (behind < bestBehind) { bestBehind = behind; best = m.c; }
-        }
-        if (best) scProg = (best.trackProgress || 0) + bestBehind;
     }
     for (let i = 0; i < n; i++) {
         const m = mem[i];
         const c = m.c;
         if (!c) continue;
-        // the member it is queued behind: the next one up the road - but not
-        // a car it is lapping, which is moving over for it
+        // the member it is queued behind: the next one up the road, whatever
+        // lap that one is on - but not a car that cannot keep up, which
+        // anybody may pass
         let ahead = null, gap = 0;
         for (let st = 1; st < n; st++) {
             const o = mem[(i - st + n) % n];
-            const g = (((o.s - m.s) % L) + L) % L;
-            if (o.c && (c.trackProgress || 0) >= (o.c.trackProgress || 0) + L * 0.55) continue;
-            ahead = o; gap = g; break;
+            if (o.c && o.c.scSlow) continue;
+            ahead = o; gap = (((o.s - m.s) % L) + L) % L; break;
         }
         let cap = SC_CHASE;
-        if (ahead && gap < SC_HOLD_ZONE) {
-            const aheadFwd = ahead.c ? scForward(ahead.c) : sc.v;
-            cap = Math.min(cap, Math.max(0, aheadFwd + SC_CLOSE_K * Math.max(0, gap - SC_WALL)));
+        let near;                       // how close the one in front is, when the queue is what holds it
+        if (ahead) {
+            // (the pace round the LAP of the one in front, not its speed over
+            // the ground: see holdRate)
+            const aheadRate = Math.max(0, ahead.rate);
+            // ...and the gap along the road, and as the crow flies too when
+            // the two are nose to tail: round a hairpin 46px of road is half
+            // that across the corner, and the safety car has no body to stop
+            // the car behind it driving up its boot.
+            let g = gap;
+            if (gap < 110) g = Math.min(g, Math.hypot(ahead.x - m.x, ahead.y - m.y));
+            const e = g - SC_GAP;
+            const capRate = e >= 0
+                ? aheadRate + SC_CLOSE_K * e
+                : Math.max(0, aheadRate - Math.min(HOLD_OPEN_MAX, HOLD_OPEN_K * -e));
+            cap = Math.min(cap, capRate / m.k);
+            if (ahead.c && gap < 110) near = Math.hypot(ahead.x - m.x, ahead.y - m.y);
         }
-        // being lapped with the lapper close: let him through
-        if (c.blueFlag && c.blueFlagWhy === 'lap' && c.blueFlagFrom && !c.blueFlagFrom.pitPhase)
-            cap = Math.min(cap, Math.max(30, scForward(c.blueFlagFrom) * 0.6));
         for (const zs of zones) {
             const d = (((zs - m.s) % L) + L) % L;          // road to the wreck
-            if (d < 420 || d > L - 60) cap = Math.min(cap, VSC_SPEED);
+            if (d < SC_ZONE_BEFORE || d > L - SC_ZONE_AFTER) cap = Math.min(cap, VSC_SPEED);
+            else if (d < SC_ZONE_BEFORE + 260)
+                cap = Math.min(cap, Math.sqrt(VSC_SPEED * VSC_SPEED + 2 * SC_ZONE_A * (d - SC_ZONE_BEFORE)));
         }
-        if (scProg !== null && (c.trackProgress || 0) > scProg + 30)
+        // NOBODY ON THE LEAD LAP GETS AWAY IN FRONT OF IT. The safety car keeps
+        // its own odometer (sc.prog: it came out SC_SPAWN_AHEAD in front of
+        // the leader and has counted its road since), so "ahead of it in the
+        // race" is a comparison of two numbers. A car that is - one released
+        // from the box in front of it, which the closed pit exit mostly
+        // prevents - may not run off at its own pace while the queue crawls:
+        // it is slowed until the safety car has it. A LAPPED car up the road
+        // reads a lap less and is left alone: it is on its way round to the
+        // back of the queue. (This used to be worked out from whichever car
+        // was nearest behind the safety car, which is the right number only
+        // while that car is on the lead lap.)
+        if (onRoad && (c.trackProgress || 0) > sc.prog + 30)
             cap = Math.min(cap, Math.max(30, sc.v * 0.7));
         c.scCap = cap;
+        // CAN IT KEEP UP? In trouble, and not managing four fifths of what the
+        // safety car itself would do here although the hold would let it: a
+        // second of that and it is a car the queue goes round (scSlow), until
+        // it has kept up again for as long.
+        //
+        // ...and a car that is all but STOPPED, whatever state it is in: not
+        // half that pace, for two and a half seconds. With nobody allowed
+        // past a backmarker any more, a healthy car standing in the road - a
+        // spin, a stall, a player who has put the pad down - was a cork: the
+        // field stopped behind it and stayed there (measured with the
+        // player's car parked on the grid: a third of the field stationary
+        // for the whole period, and one race that never reached the flag).
+        // Half the pace is a long way from anything a person keeping station
+        // would do, so nobody loses a place for lifting past the wreck.
+        const fwdNow = m.rate / m.k;
+        const pace = Math.min(cap, scTargetSpeed(m.s, false));
+        const lagging = isCrippled(c) && fwdNow < 0.8 * pace;
+        const stopped = fwdNow < 0.5 * pace;
+        const tick = dt || 1 / 60;
+        c._scLagT = Math.max(0, Math.min(2, (c._scLagT || 0) + (lagging ? tick : -tick)));
+        c._scStopT = Math.max(0, Math.min(5, (c._scStopT || 0) + (stopped ? tick : -tick)));
+        if (c._scLagT >= 1 || c._scStopT >= SC_STOPPED_S) c.scSlow = true;
+        else if (c._scLagT <= 0 && c._scStopT <= 0) c.scSlow = false;
         const t = trackDirAt(c);
         if (!t) continue;
-        const fwd = c.velocity.x * t.x + c.velocity.y * t.y;
-        if (fwd > cap) {
-            c.velocity.x -= t.x * (fwd - cap);
-            c.velocity.y -= t.y * (fwd - cap);
-        }
-        if (ahead && gap < SC_WALL) {
-            const back = Math.min(VSC_PUSH_MAX, SC_WALL - gap);
-            c.x -= t.x * back;
-            c.y -= t.y * back;
-        }
+        holdBrake(c, t, cap, dt, near);
     }
 }
 

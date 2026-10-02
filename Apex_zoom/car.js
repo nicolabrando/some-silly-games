@@ -1671,7 +1671,11 @@ class Car {
         if (this.scCap !== undefined && this.scCap < 1e6) {
             const vNow = Math.hypot(this.velocity.x, this.velocity.y);
             vscLimit = Math.min(vscLimit, Math.max(0, Math.min(1, (this.scCap - vNow) / 10)));
-            if (vNow > this.scCap + 8) forwardForce -= this.brakingPower * 0.35;
+            // FORWARD speed over the limit, not speed: this used to read the
+            // magnitude, so a car rolling BACKWARDS faster than its limit was
+            // given more reverse to slow it down.
+            const fwdNow = this.velocity.x * Math.cos(this.angle) + this.velocity.y * Math.sin(this.angle);
+            if (fwdNow > this.scCap + 8) forwardForce -= this.brakingPower * 0.35;
         }
 
         if (thr > 0) {

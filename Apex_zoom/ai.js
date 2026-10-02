@@ -465,6 +465,17 @@ const AI_START_CAUTION = 4.5;  // seconds of extra caution after the lights
 // matches the speed of the car in front and the race finishes in grid order.
 // Two things fix that - being allowed to actually outpace a car you are
 // alongside, and building up to a committed attempt when you are held up.
+const AI_FAST_CURVE_V = 240;   // px/s: a curve the line takes at this or more is a FAST one
+const AI_FAST_USE = 0.5;       // share of the steering rate a curve may use before moving out of it is off
+const AI_FAST_LOOK = 180;      // px of road ahead that is looked at for one
+const AI_FAST_TOW = 0.3;       // strength of tow from which a fast curve is taken at no more than its limit
+const AI_WRECK_LOOK = 230;     // px of road ahead in which a wreck on the ground is seen
+const AI_WRECK_CLEAR = 31;     // px to one side of it we go by (two cars touch at 22)
+const AI_WRECK_TIGHT = 25;     // ...or this, where there is no room for that
+const AI_WRECK_TOUCH = 26;     // px, centre to centre: nearer than this is as good as touching it
+const AI_WRECK_STOP = 10;      // px short of that we can stop, if there is no way round
+const AI_WRECK_CREEP = 22;     // px/s: the walking pace a wreck is steered round at from close behind it
+const AI_WRECK_CROSS = 90;     // px: nearer than this there is no crossing in front of it
 const AI_CLEAR_SIDE = 26;      // px of lateral separation = on a different line
 const AI_OVERLAP_SIDE = 14;    // px below which we are squarely in their gearbox
 const AI_ALONGSIDE_GAIN = 0.40;// speed advantage allowed when nearly clear
@@ -630,7 +641,10 @@ class AI {
     nodePos(line, i, extraOffset) {
         const n = line.nodes[i];
         let off = n.alpha * this.p.lineBlend + extraOffset;
-        const lim = line.maxOffset;
+        // (aimLim: a car keeping to the far side of a wreck from OUTSIDE the
+        // usual limits is not aimed back inside them, across it - see
+        // updateTraffic)
+        const lim = Math.max(line.maxOffset, this.aimLim || 0);
         if (off > lim) off = lim;
         if (off < -lim) off = -lim;
         return { x: n.cx + off * n.nx, y: n.cy + off * n.ny };
@@ -907,8 +921,30 @@ class AI {
             // however much the road is leaning.
             const bank = nd.bank || 0;
             const vGrip = Math.sqrt(Math.max(60, latLimit * tyreG + AI_RELIEF_BANK * bank) * R);
-            const cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
-                                Math.max(this.p.cornerFactor, AI_ATTACK_CORNER_CAP));
+            let cf = Math.min(this.p.cornerFactor * (1 + AI_ATTACK_CORNER * atk),
+                              Math.max(this.p.cornerFactor, AI_ATTACK_CORNER_CAP));
+            // IN A TOW, A FAST CURVE IS TAKEN AT ITS HONEST LIMIT. At the top
+            // levels cornerFactor asks for a little MORE than the steering
+            // allows (1.14 of a 0.90 safety is 1.03 of it): in a slow corner
+            // the car scrubs the excess off over road that is there to run
+            // wide on, and that is where the lap time comes from. In a curve
+            // taken flat at 300 there is neither. It never came up for a car
+            // on its own, which reaches a curve like that short of the limit
+            // anyway - Cascade's long left at 290-305 against the 345 it
+            // allows, because that is all the engine has given it by then.
+            // In a tow it arrived at 325-340, was told that was fine, and
+            // could not hold the road (see thinOutside for what happened
+            // next, and the numbers). So with a tow, in a curve the steering
+            // limits to AI_FAST_CURVE_V or more, the factor comes back to 1:
+            // not at all at 240, all of it from 300 up. Clean air - and with
+            // it the lap times, qualifying and the difficulty ladder - is
+            // untouched; a car following another through a fast curve gives
+            // a little away there, as it does in dirty air anywhere.
+            if (cf > 1 && vSteer > AI_FAST_CURVE_V && car.draftStrength > 0) {
+                const tow = Math.min(1, car.draftStrength / AI_FAST_TOW);
+                const fast = Math.min(1, (vSteer - AI_FAST_CURVE_V) / 60);
+                cf -= (cf - 1) * tow * fast;
+            }
             // The tabulated ceiling has to move with the hook too, or it clamps
             // the gain straight back off again.
             const tabF = tyreF * tyreHookAt(car.tyre, vSteer);
@@ -931,8 +967,10 @@ class AI {
         // distacchi invece di congelarli.
         if (vscF < 1 && typeof VSC_SPEED !== 'undefined') vTop = VSC_SPEED;
         // ...and behind the safety car, the speed the queue allows this car
-        // (main.js, applySafetyCarHold): aimed at, not run into.
+        // (main.js, applySafetyCarHold): aimed at, not run into. The VSC's
+        // hold says the same about the car just in front (applyVscHold).
         if (car.scCap !== undefined && car.scCap < vTop) vTop = car.scCap;
+        if (car.vscHoldCap !== undefined && car.vscHoldCap < vTop) vTop = car.vscHoldCap;
         if (car.draftStrength > 0) vTop *= 1 + 0.17 * car.draftStrength;
         if (onGrass) vTop = Math.min(vTop, 150);
         else if (onKerb) vTop *= 0.95;
@@ -1125,17 +1163,61 @@ class AI {
             }
         }
 
+        // A CAR BEING HELD IS NOT A CAR THAT IS STUCK. Behind the safety car,
+        // or inside the VSC's hold, main.js can leave a car almost no speed to
+        // use - waiting behind one that has stopped, or dropping back off the
+        // car in front (holdCap: the speed it may do, when it is being held).
+        // Two rules below then did exactly the wrong thing with it:
+        //   * "never sit still": full throttle under 18 px/s, straight into
+        //     the limit the car was being held at;
+        //   * stuck detection: throttle on and under 22 px/s for 1.1 seconds
+        //     means jammed against a barrier, so select REVERSE for 0.75s.
+        // So a car held to a crawl waited a second and then drove backwards
+        // down the road - up to 98px of it, measured, again and again while
+        // the hold lasted. That is the "improvvisamente in retromarcia" Nicola
+        // saw when the safety car came out, and it had been there under the
+        // VSC all along.
+        const holdCap = car.scCap !== undefined ? car.scCap : car.vscHoldCap;
+        const heldSlow = holdCap !== undefined && holdCap < 30;
+        // WAITING IS NOT STUCK, either. A car that has stopped behind a wreck
+        // it has no room to go round (updateTraffic: wreckWait) is waiting for
+        // the crane, which is two seconds away at the most: no creeping into
+        // the wreck, and no selecting reverse because it has not moved.
+        const waiting = !!this.wreckWait;
+        // (and rolling round one at walking pace is not being stuck either)
+        const creeping = !!this.wreckCreep;
+
         // Never let a car sit still (or start reversing) on the racing line:
         // below ~18 px/s "down" would engage reverse instead of the brakes.
         if (speed < 18) {
             car.inputs.down = false;
-            car.inputs.up = true;
+            // ...but no throttle into a hold it is already at, or into a wreck
+            car.inputs.up = !waiting && !(heldSlow && speed >= holdCap - 1);
+            // Waiting for the crane, it STOPS: the pedal eased off as the car
+            // slows, so that it comes to rest instead of rolling the last
+            // twenty px into the wreck at walking pace (the brake being
+            // reverse down here is why it is otherwise left alone).
+            if (waiting && forwardSpeed > 1) {
+                car.inputs.brake = Math.min(1, forwardSpeed / 40);
+                car.inputs.down = true;
+            }
+        } else if (forwardSpeed < 18) {
+            // ...and that is about the speed along the car's own NOSE, which
+            // is the only one the brake pedal acts on. `speed` is the whole
+            // of it, sideways included: a car asked to stop (a hold of zero,
+            // behind a car that has stopped) while still carrying 25 px/s of
+            // slide across the road read "25, target 0, brake", went through
+            // zero along its nose with the pedal still down, and the pedal
+            // then being reverse, drove backwards - faster every frame, since
+            // going backwards is also a speed above the target. Measured: this
+            // was most of the cars seen reversing when a safety car came out.
+            car.inputs.down = false;
         }
 
         // ================================================================
         //  6. STUCK DETECTION
         // ================================================================
-        if (car.inputs.up && speed < 22) {
+        if (car.inputs.up && speed < 22 && !heldSlow && !waiting && !creeping) {
             this.stuckTimer += dt;
             if (this.stuckTimer > 1.1) {
                 this.reverseTimer = 0.75;
@@ -1144,6 +1226,105 @@ class AI {
         } else {
             this.stuckTimer = Math.max(-1, this.stuckTimer - dt * 1.5);
         }
+    }
+
+    // -------------------------------------------------------------------
+    //  A FAST CURVE NEAR THE STEERING LIMIT, in the next AI_FAST_LOOK px:
+    //  which side its OUTSIDE is (+1 / -1 along the normal), or 0.
+    //
+    //  The car turns at a rate that falls with speed (car.js: maxSteer x
+    //  (1 - v/500)), and a curve uses v/R of it just to be followed. In a
+    //  slow corner what is left over is plenty, and a car that has drifted
+    //  wide is back in a length or two. In a FAST curve - one the line takes
+    //  flat, at 300 - most of it is spoken for: Cascade's long left after the
+    //  banking (R 520) uses two thirds, and what is left turns the car back
+    //  at about 16 degrees a second. Going OUT there is free - it only takes
+    //  steering less - and coming back is not possible inside the road.
+    //
+    //  Nothing told the AI. In clean air it never mattered: a car alone holds
+    //  the line through there, 290-305 px/s lap after lap. In a pack two
+    //  things were different. It arrived 30 px/s faster, in a tow, and was
+    //  told that was fine (see IN A TOW, A FAST CURVE IS TAKEN AT ITS HONEST
+    //  LIMIT, in the speed profile). And it pulled out to pass on the
+    //  outside, where the room was - and so did the car behind it, and the
+    //  one behind that - and the whole file went straight on into the
+    //  barrier and stopped, in the braking zone of the next corner, with the
+    //  rest of the field arriving. Measured at Cascade, 14 races with the
+    //  safety car always out: 52 wrecks, 22 of them in those 400px of road;
+    //  13 in the first 12 s of a race and 9 within 8 s of a restart - and
+    //  every one of those brought the safety car straight back out.
+    //
+    //  So: where a curve the line takes at AI_FAST_CURVE_V or more would use
+    //  more than AI_FAST_USE of the steering this car has at the speed it is
+    //  doing, its tactical offset may not move any further towards the
+    //  outside (updateTraffic). It may hold what it has, or come in. A corner
+    //  the car brakes for is not this - there the pass down the outside of
+    //  the braking zone is a move, and it is left alone.
+    //
+    //  The two together, same 14 races twice over: 8 and 9 wrecks in that
+    //  stretch instead of 22, 2-4 in the first 12 s instead of 13, 1-5 after
+    //  a restart instead of 9, and 15-18 safety cars instead of 28. Either
+    //  one alone did little (17 and 18). Over all 34 circuits, 174 races
+    //  each way: wrecks 343 against 373, passes under green level.
+    // -------------------------------------------------------------------
+    thinOutside(line, i, speed) {
+        if (!(speed > AI_FAST_CURVE_V)) return 0;
+        const car = this.car, nodes = line.nodes, N = line.count;
+        const auth = aiSteerOf(car) * (car.tyreSteer || car.tyrePerf || 1) * Math.max(0.10, 1 - speed / 500);
+        const K = Math.ceil(AI_FAST_LOOK / line.ds);
+        for (let o = 0; o <= K; o++) {
+            const nd = nodes[(i + o) % N];
+            if (!(nd.vCorner >= AI_FAST_CURVE_V) || !(nd.radius > 0)) continue;
+            if (speed / nd.radius <= AI_FAST_USE * auth) continue;
+            const n4 = nodes[(i + o + 4) % N];
+            const inside = Math.sign((n4.tx - nd.tx) * nd.nx + (n4.ty - nd.ty) * nd.ny);
+            if (inside) return -inside;
+        }
+        return 0;
+    }
+
+    // -------------------------------------------------------------------
+    //  The wrecks still on the ground in the next AI_WRECK_LOOK px of our
+    //  line, each placed across the road where it lies: null, or the nearest
+    //  one ({dist, lat, lineLat, off} - road to it, where it is from the
+    //  centre line, where our line is there, and so how far it is from our
+    //  line) with `all`, the ones in the same stretch of road as it, which
+    //  have to be gone round together.
+    // -------------------------------------------------------------------
+    wreckAhead(track, line, i, latCar) {
+        if (typeof recoveries === 'undefined' || !recoveries || !recoveries.length) return null;
+        const car = this.car, nodes = line.nodes, N = line.count, ds = line.ds;
+        const here = nodes[i];
+        const K = Math.ceil(AI_WRECK_LOOK / ds);
+        const reach = (track.trackWidth || 60) + 34;      // further from the line than this: not on our road
+        const mine = (car.x - here.cx) * here.tx + (car.y - here.cy) * here.ty;
+        const found = [];
+        for (const r of recoveries) {
+            const w = r.car;
+            if (!w || w.recovered || (w.liftAmount || 0) > 0.05) continue;     // off the ground: gone
+            if (track.sameLevel && !track.sameLevel(car, w)) continue;
+            const dx0 = w.x - car.x, dy0 = w.y - car.y;
+            if (dx0 * dx0 + dy0 * dy0 > (AI_WRECK_LOOK + 60) * (AI_WRECK_LOOK + 60)) continue;
+            let bo = -1, bd = Infinity;
+            for (let o = -4; o <= K; o++) {
+                const nd = nodes[(i + o + N) % N];
+                const d2 = (w.x - nd.cx) * (w.x - nd.cx) + (w.y - nd.cy) * (w.y - nd.cy);
+                if (d2 < bd) { bd = d2; bo = o; }
+            }
+            if (bd > reach * reach) continue;
+            const nd = nodes[(i + bo + N) % N];
+            const along = (w.x - nd.cx) * nd.tx + (w.y - nd.cy) * nd.ty;
+            const dist = bo * ds + along - mine;
+            if (dist < -36 || dist > AI_WRECK_LOOK) continue;                  // behind us, or not yet
+            const lat = (w.x - nd.cx) * nd.nx + (w.y - nd.cy) * nd.ny;
+            const lineLat = (nd.alpha || 0) * this.p.lineBlend;
+            found.push({ dist: dist, lat: lat, lineLat: lineLat, off: lat - lineLat });
+        }
+        if (!found.length) return null;
+        found.sort((a, b) => a.dist - b.dist);
+        const first = found[0];
+        first.all = found.filter(f => f.dist - first.dist < 70);
+        return first;
     }
 
     // -------------------------------------------------------------------
@@ -1160,6 +1341,8 @@ class AI {
     updateTraffic(track, line, i, speed, headX, headY, latCar, dt) {
         this.followSpeed = Infinity;
         this.blueFlagLift = 1;
+        this.wreckWait = false;     // stopped behind a wreck on the ground, waiting for the crane
+        this.wreckCreep = false;    // ...or rolling round one at walking pace
 
         const car = this.car;
         const lim = line.maxOffset;
@@ -1292,15 +1475,16 @@ class AI {
                         // alongside speed rights below. A stopped car is
                         // still swerved round: obstacles override the rule.
                         const bail = !obstacle && slalomAhead() && yieldsTo(fwd, other);
-                        // BEHIND THE SAFETY CAR NOBODY PASSES - except a car
-                        // being lapped, which is moving over (see
-                        // applySafetyCarHold). So no move is started on a car
-                        // that is rolling along in the queue: without this the
-                        // AI pulled out to attack every car that slowed for a
-                        // corner and ran the queue two abreast. A car stopped
-                        // in the road is still gone round.
+                        // BEHIND THE SAFETY CAR NOBODY PASSES, a backmarker
+                        // included - except a car that cannot keep up, which
+                        // anybody may pass (scSlow: see applySafetyCarHold).
+                        // So no move is started on a car that is rolling
+                        // along in the queue: without this the AI pulled out
+                        // to attack every car that slowed for a corner and
+                        // ran the queue two abreast. A car stopped in the
+                        // road is still gone round.
                         const queued = (typeof scActive !== 'undefined' && scActive) &&
-                                       !(other.blueFlag && other.blueFlagFrom === car) &&
+                                       !other.scSlow &&
                                        theirFwd0 > 25;
 
                         // Choose a side - but only if a move is actually on.
@@ -1633,6 +1817,129 @@ class AI {
             }
         }
 
+        // ---- NO MOVE TO THE OUTSIDE OF A FAST CURVE -----------------------
+        // (see thinOutside: where there is no steering left to come back with)
+        const thinOut = this.thinOutside(line, i, speed);
+        if (thinOut && (desired - this.lateralOffset) * thinOut > 0) desired = this.lateralOffset;
+
+        // ---- A WRECK STILL ON THE GROUND IS IN THE ROAD ------------------
+        // Broken cars are skipped in the loop above - from when a car vanished
+        // the moment it broke - and since a wreck became debris that you can
+        // hit (main.js: it stops being there only once the crane has it off
+        // the ground) the AI has been the one driver who could not see it.
+        // Measured over 61 neutralisations, the old build and this one alike:
+        // in one of every two, a car slowed for the yellows and then drove
+        // into the wreck anyway, at up to 88 px/s with the throttle open, and
+        // sat pressed against it for as long as a second and a half until the
+        // crane took it away.
+        //
+        // The loop above is not the place for it. That works in the frame of
+        // the road WHERE WE ARE, which is right for a car a length away and
+        // moving with us, and wrong for something standing still a hundred px
+        // round a bend: tried first, the wreck drifted in and out of "our
+        // path" as the road turned, and the cars dodged late or not at all.
+        // So a wreck is looked for along the line itself, as far as
+        // AI_WRECK_LOOK ahead, and placed across the road where IT is. What
+        // we do about it:
+        //   * pass it AI_WRECK_CLEAR to one side - the side nearer where we
+        //     already are, if the road has that side;
+        //   * while we are not yet that far to one side of it, be able to
+        //     stop short of it: the speed the brakes can shed in the road
+        //     that is left;
+        //   * with no way round at all (two wrecks side by side on a narrow
+        //     road), stop and wait for the crane - see WAITING IS NOT STUCK.
+        const wk = this.wreckAhead(track, line, i, latCar);
+        let wreckTgt = null;
+        if (!wk) this._wkCur = undefined;
+        // (how far from the centre line a car may be put to get round one)
+        const edge = Math.max(lim, (track.trackWidth || 0) - 8);
+        if (wk) {
+            const C = AI_WRECK_CLEAR;
+            // Everything here is an OFFSET FROM THE LINE - the wrecks' (where
+            // each one lies), ours as it actually is (which after a shunt can
+            // be a long way from where we are meant to be), and ours as
+            // planned - because that is what the car holds on its way there.
+            const cur = latCar - lineLat;
+            const plan = desired + this.personalBias;
+            // In the way: it is where we mean to be - or it is BETWEEN where
+            // we are and where we mean to be, with no road left to cross in
+            // front of it. (That second half is the car that came out of the
+            // same accident on the far side of the wreck and steered straight
+            // back to the line through it.)
+            const across = (w, to) => (cur - w.off) * (to - w.off) < 0 && w.dist < AI_WRECK_CROSS;
+            let blocked = false, wayRound = true;
+            for (const w of wk.all)
+                if (Math.abs(plan - w.off) < C || across(w, plan)) { blocked = true; break; }
+            if (blocked) {
+                // the nearest place across the road that is clear of every
+                // wreck in this stretch: beside one of them, or simply where
+                // we are. For this the whole of the road is road - out to a
+                // car's width from its edge, not the margin the line keeps -
+                // and so is anywhere no further out than we already are. And
+                // if there is no room to go by at arm's length, a tight squeeze
+                // (AI_WRECK_TIGHT) is still a way by: a car caught between a
+                // wreck and the edge used to find neither, and stood there.
+                const loR = Math.min(-edge - wk.lineLat, cur), hiR = Math.max(edge - wk.lineLat, cur);
+                let best = null, bestD = Infinity;
+                for (const CC of [C, AI_WRECK_TIGHT]) {
+                    const cands = [cur];
+                    for (const w of wk.all) { cands.push(w.off + CC); cands.push(w.off - CC); }
+                    for (const cand of cands) {
+                        if (cand > hiR || cand < loR) continue;
+                        let ok = true;
+                        for (const o of wk.all)
+                            if (Math.abs(cand - o.off) < CC - 0.5 || across(o, cand)) { ok = false; break; }
+                        if (!ok) continue;
+                        const d = Math.abs(cand - cur);
+                        if (d < bestD) { bestD = d; best = cand; }
+                    }
+                    if (best !== null) break;
+                }
+                // (nowhere: at the least, not towards it)
+                wreckTgt = (best !== null ? best : cur) - this.personalBias;
+                wayRound = best !== null;
+            }
+            // Not clear of one of them yet: no faster than can still stop
+            // short of it. "Short of it" is where the two would be touching -
+            // a wreck dead ahead is stopped for a car and a half away, one we
+            // overlap by a few px across the road much closer - and one we
+            // are already level with is not stopped for at all: from there,
+            // going on is what gets us away from it.
+            //
+            // "Clear of it" is asked of where the car will BE across the road
+            // when it gets there, not only of where it is: one drifting
+            // towards a wreck it is still clear of is stopped for it too.
+            const drift = this._wkCur === undefined ? 0 : (cur - this._wkCur) / Math.max(1e-3, dt);
+            this._wkCur = cur;
+            for (const w of wk.all) {
+                if (w.dist <= 0) continue;
+                const then = cur + Math.max(-60, Math.min(60, drift * Math.min(1, w.dist / Math.max(40, speed))));
+                const sep = (cur - w.off) * (then - w.off) <= 0 ? 0
+                          : Math.min(Math.abs(cur - w.off), Math.abs(then - w.off));
+                if (sep >= AI_WRECK_TOUCH) continue;
+                const touchAt = Math.sqrt(AI_WRECK_TOUCH * AI_WRECK_TOUCH - sep * sep);
+                const aStop = (150 + 0.55 * speed) * this.p.brakeConfidence;
+                let vStop = Math.sqrt(2 * aStop * Math.max(0, w.dist - touchAt - AI_WRECK_STOP));
+                // ...but with a way round it and a little road still in hand,
+                // it does not sit there: it keeps rolling at walking pace and
+                // steers round. (Stopped dead, a car cannot change where it
+                // is across the road at all, and the first version left three
+                // of them parked nose to tail behind a wreck with the whole
+                // road free either side of it, waiting for the crane.) A car
+                // that has ended up within a couple of px of one does wait:
+                // rolling on from there is rubbing along it, which was tried -
+                // a car against a wreck in one neutralisation of three,
+                // instead of one in fifteen. The crane is two seconds away at
+                // the most.
+                if (wayRound && vStop < AI_WRECK_CREEP && w.dist > touchAt + 3) {
+                    vStop = AI_WRECK_CREEP;
+                    this.wreckCreep = true;
+                }
+                if (vStop < this.followSpeed) this.followSpeed = vStop;
+                if (vStop < 18) this.wreckWait = true;
+            }
+        }
+
         // Niente da scansare: la gru non tocca terra (vedi LA GRU in main.js).
         // The offset is measured from the RACING LINE, but the limit belongs to
         // the TRACK, so it has to be clamped in centre-line terms. It used to be
@@ -1646,6 +1953,17 @@ class AI {
         const hi = lim - lineLat, lo = -lim - lineLat;
         if (desired > hi) desired = hi;
         if (desired < lo) desired = lo;
+        // (round a wreck: the edge of the road rather than the line's margin -
+        // and a car the accident left outside even that is not steered back
+        // in across the wreck to satisfy it)
+        this.aimLim = 0;
+        if (wreckTgt !== null) {
+            const off = latCar - lineLat - this.personalBias;
+            desired = Math.max(Math.min(-edge - lineLat, off), Math.min(Math.max(edge - lineLat, off), wreckTgt));
+            hasTarget = true;
+            // ...and neither is the point it steers at (nodePos)
+            if (desired > hi || desired < lo) this.aimLim = Math.abs(wk.lineLat + desired + this.personalBias) + 2;
+        }
 
         // Rate-limited lateral movement -> smooth, believable weaving
         // (faster when we are actually rubbing against someone).
