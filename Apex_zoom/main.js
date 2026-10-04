@@ -7768,6 +7768,29 @@ function exHash(s) {
     return h.toString(36);
 }
 
+// ...AND THE LINE THE LAPS WERE DRIVEN ON, WHEN THAT HAS BEEN MADE AGAIN.
+// A record is the AI's lap, and the AI drives the circuit's racing line. When
+// ONE circuit's shipped line is regenerated - Silverstone, zoom100: the first
+// one folded round the hairpin and the field parked there - its records are
+// times on a line that no longer exists, the same way they would be on a
+// redrawn road. The entry in lines.js carries a revision `r` then, and it goes
+// into the stamp of THAT circuit's row only: every other circuit stamps
+// exactly as it always did, so a line made again costs one circuit's laps and
+// not the whole book (see the note above exPhysHash on why that matters).
+//
+// Not inside exGeomHash: that one also stamps YOUR laps, the ghosts and the
+// chassis table, and those are facts about the road, not about the line the
+// AI takes on it. A lap you set at Silverstone is still your lap.
+function exRowStamp(key) {
+    const g = exGeomHash(key);
+    try {
+        if (typeof RACING_LINES === 'undefined' || !RACING_LINES ||
+            typeof RACING_LINE_VERSION === 'undefined') return g;
+        const e = RACING_LINES['v' + RACING_LINE_VERSION + ':' + g];
+        return (e && e.r) ? g + '.r' + e.r : g;
+    } catch (err) { return g; }
+}
+
 function exFingerprint() {
     // The GEOMETRY belongs in here too, and it was missing. A record book is
     // lap times, and a lap time is a fact about a shape: the afternoon the
@@ -9196,7 +9219,7 @@ function exSaveRecords() {
         for (const k of Object.keys(exRecords)) {
             const r = exRecords[k];
             if (r.done >= r.total && (r.dry || r.wet))
-                out[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre, g: exGeomHash(k) };
+                out[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre, g: exRowStamp(k) };
         }
         window.localStorage.setItem(EX_STORE_KEY,
             JSON.stringify({ v: exPhysHash(), tracks: out }));
@@ -9212,7 +9235,7 @@ function exLoadRecords() {
         for (const k of Object.keys(box.tracks || {})) {
             if (SEASON_POOL.indexOf(k) === -1) continue;    // circuito non piu' nel gioco
             const r = box.tracks[k];
-            if (!r || r.g !== exGeomHash(k)) continue;      // quel tracciato e' cambiato
+            if (!r || r.g !== exRowStamp(k)) continue;      // quel tracciato e' cambiato, o la sua linea
             exRecords[k] = { dry: r.dry, wet: r.wet, byTyre: r.byTyre || {},
                              done: 1, total: 1 };
             n++;

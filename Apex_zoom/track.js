@@ -86,6 +86,11 @@ function inLapWindow(s, win, lapLen) {
 // candidates are allowed to use; the judge picks between them per circuit.
 const RACING_LINE_VERSION = 2;
 const RACING_LINE_MARGINS = [20, 17, 14];
+// A line has to go FORWARDS (see _unfoldAlpha): the least a step of it may
+// advance along the road, as a share of the centre line's own step, and how
+// far either side of a stretch that falls short the repair reaches.
+const RACING_LINE_ADV_MIN = 0.30;
+const RACING_LINE_FIX_REACH = 12;      // nodes
 
 class SegmentedTrack {
     constructor() {
@@ -1923,7 +1928,12 @@ class SegmentedTrack {
         // the three relaxation depths the old selection chose between
         for (const sweeps of [600, 1000, 1800]) {
             const maxOff = Math.max(3, W - 20);
-            const alpha = this._relaxAlpha(base, sweeps, maxOff);
+            // (unfolded before it is measured: a relaxation hugs the inside
+            // of every corner, and round a hairpin tighter than the road is
+            // wide that is a fold - which the proxy would time as a short cut
+            // and the optimiser would then start from. See A LINE HAS TO GO
+            // FORWARDS.)
+            const alpha = this._unfoldAlpha(base, this._relaxAlpha(base, sweeps, maxOff), maxOff);
             cands.push({ name: 'relax' + sweeps, alpha: alpha, maxOff: maxOff,
                          proxy: this._proxyTime(base, alpha) });
             if (budgeted && spent() > BUDGET) break;
@@ -2073,10 +2083,109 @@ class SegmentedTrack {
         return this._finishLine(base, this._relaxAlpha(base, sweeps, maxOff), maxOff);
     }
 
+    // =====================================================================
+    //  A LINE HAS TO GO FORWARDS
+    //
+    //  A line is the centre of the road plus an offset along the normal, node
+    //  by node. On the INSIDE of a corner that only works while the offset is
+    //  smaller than the corner's own radius: past that, the offset curve
+    //  folds. Its points bunch up into a knot, then run BACKWARDS round the
+    //  inside post, and everything read off them is nonsense - a heading that
+    //  points back up the road, a radius of nothing, a corner speed of 25.
+    //
+    //  Silverstone's hairpin (2500px into the lap, centre radius 46 on a road
+    //  58 wide either side) is the one place in the game tight enough, and
+    //  the line it shipped with sat 42px to the inside all the way round it:
+    //  nine nodes that should span 64px of road covered 16, the last three of
+    //  them inside half a pixel of each other, two steps going backwards, the
+    //  heading at one of them 160 degrees off. Nicola: "a Silverstone diverse
+    //  auto rimangono bloccate in un punto facendo un leggero avanti/
+    //  indietro". They braked to the 25 the line asked for, read the node
+    //  that pointed backwards, decided they were facing the wrong way and
+    //  began a three-point turn; then the next node, then again. Measured: 52
+    //  and 58 times in two 8-lap races a car sat there for four seconds or
+    //  more, some of them for the rest of the race - at every difficulty.
+    //
+    //  It had been there since Silverstone shipped. What hid it was a bug: up
+    //  to zoom98 an AI braking below 18 px/s was in reverse gear (ai.js), so a
+    //  car that met the knot backed a long way out of it and came through
+    //  with speed on the second try - a hiccup of 4 to 8 seconds, 11 and 30 of
+    //  them in the same two races. zoom99 took the reverse gear away, for the
+    //  safety car's sake, and the hiccup became a car park.
+    //
+    //  How it got there: the optimiser's clock is the sum of path length over
+    //  speed, and a knot has no length. Crawling round the inside post costs
+    //  it nothing, so once a line was in the fold every move OUT of it added
+    //  road at 25 px/s and was refused - and the line was baked by the proxy
+    //  alone, with no lap driven on it (THE LINE, above: the judge).
+    //
+    //  So a line is not allowed to fold, wherever it comes from - shipped,
+    //  remembered, relaxed or optimised. Every step of it must ADVANCE along
+    //  the road by at least RACING_LINE_ADV_MIN of the centre line's own step
+    //  (the tightest hairpins of the other 33 circuits manage 0.36 to 0.40,
+    //  so this changes none of them, to the last bit). A stretch that does
+    //  not is brought back to the middle of the road and blended into the
+    //  line either side. That is the safety net - a line that is merely
+    //  valid. The optimiser is what makes it a good one: it now refuses a
+    //  move that would fold the line (_lineModel) and is started from an
+    //  unfolded one, so it is no longer shut in the fold, and Silverstone's
+    //  shipped line (lines.js) is the one it found from there, with a lap
+    //  driven on every candidate.
+    // =====================================================================
+    _unfoldAlpha(base, alpha, maxOff) {
+        const N = base.count, ds = base.ds, nodes = base.nodes;
+        // the road's direction over each step, and what a px of offset at
+        // either end of the step does to its advance
+        const adv = (a, i) => {
+            const j = (i + 1) % N, p = nodes[i], q = nodes[j];
+            let tx = p.tx + q.tx, ty = p.ty + q.ty;
+            const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+            return ((q.cx + a[j] * q.nx - p.cx - a[i] * p.nx) * tx +
+                    (q.cy + a[j] * q.ny - p.cy - a[i] * p.ny) * ty) / ds;
+        };
+        // 1. anything wrong? (almost always not: the offsets go back untouched)
+        let bad = [];
+        for (let i = 0; i < N; i++) if (adv(alpha, i) < RACING_LINE_ADV_MIN) bad.push(i);
+        if (!bad.length) return alpha;
+
+        // 2. where it folds, the line is brought back to the MIDDLE OF THE
+        //    ROAD - the one path through a corner that is certain to be there,
+        //    at the radius the road itself was drawn with - and blended into
+        //    what was fine over RACING_LINE_FIX_REACH nodes either side, so
+        //    the repair puts no step in the line. (Two other repairs were
+        //    tried first: moving only the folded steps outwards until they
+        //    advanced, and that plus a relaxation. Both gave a line that went
+        //    forwards round a corner of radius 13 - valid, and a crawl at 28
+        //    px/s, which is under the speed at which the AI decides it is
+        //    stuck and selects reverse.)
+        const keep = new Float64Array(N).fill(1);        // share of the offset that stays
+        let a = alpha;
+        for (let round = 0; round < 6 && bad.length; round++) {
+            for (const i of bad) {
+                for (let o = -RACING_LINE_FIX_REACH - 2; o <= RACING_LINE_FIX_REACH + 3; o++) {
+                    // all of it gone from two nodes before the bad step to two
+                    // after its far end, then a raised cosine back to the line
+                    const d = o < -2 ? -2 - o : (o > 3 ? o - 3 : 0);
+                    const k = d === 0 ? 0 : 0.5 * (1 - Math.cos(Math.PI * d / RACING_LINE_FIX_REACH));
+                    const idx = (i + o + N * 4) % N;
+                    if (k < keep[idx]) keep[idx] = k;
+                }
+            }
+            a = new Float64Array(N);
+            for (let i = 0; i < N; i++) a[i] = alpha[i] * keep[i];
+            // ...and look again: a step beside the fold can be folded too
+            bad = [];
+            for (let i = 0; i < N; i++) if (adv(a, i) < RACING_LINE_ADV_MIN) bad.push(i);
+        }
+        return a;
+    }
+
     // From offsets to a line the AI can drive: positions, heading, the two
     // radii and the steering-limited corner speed.
     _finishLine(base, alpha, maxOff) {
         const N = base.count, ds = base.ds;
+        // (never a folded one: see A LINE HAS TO GO FORWARDS)
+        alpha = this._unfoldAlpha(base, alpha, maxOff);
         const nodes = base.nodes.map(n => Object.assign({}, n));
         for (let i = 0; i < N; i++) {
             nodes[i].alpha = alpha[i];
@@ -2172,6 +2281,21 @@ class SegmentedTrack {
         const tpx = new Float64Array(N), tpy = new Float64Array(N), tL = new Float64Array(N), tR = new Float64Array(N), tK = new Float64Array(N), tB = new Float64Array(N), tvmax = new Float64Array(N);
         const v = new Float64Array(N);
         const segLen = (X, Y, i) => { const j = (i + 1) % N; const dx = X[j] - X[i], dy = Y[j] - Y[i]; return Math.sqrt(dx * dx + dy * dy); };
+        // the road's own direction over each step, for the one thing a move
+        // may never do: fold the line (A LINE HAS TO GO FORWARDS). A step that
+        // does not advance at least RACING_LINE_ADV_MIN of the centre line's
+        // is a knot, and a knot has no length - so on this clock, which is
+        // length over speed, it is a short cut. That is how Silverstone's
+        // hairpin came to be taken at 25 px/s round the inside post.
+        const stx = new Float64Array(N), sty = new Float64Array(N);
+        for (let i = 0; i < N; i++) {
+            const j = (i + 1) % N;
+            let ux = nodes[i].tx + nodes[j].tx, uy = nodes[i].ty + nodes[j].ty;
+            const ul = Math.hypot(ux, uy) || 1;
+            stx[i] = ux / ul; sty[i] = uy / ul;
+        }
+        const advMin = RACING_LINE_ADV_MIN * ds;
+        const folds = (X, Y, i) => { const j = (i + 1) % N; return (X[j] - X[i]) * stx[i] + (Y[j] - Y[i]) * sty[i] < advMin; };
         let sgn = 1;
         const radiusAt = (X, Y, i) => {
             const A = (i - k + N) % N, C = (i + k) % N;
@@ -2234,6 +2358,8 @@ class SegmentedTrack {
         const optimize = (alpha0) => {
             const alpha = new Float64Array(N), talpha = new Float64Array(N);
             for (let i = 0; i < N; i++) alpha[i] = Math.max(-maxOff, Math.min(maxOff, alpha0[i]));
+            // (started from a line that goes forwards; every move below keeps it one)
+            alpha.set(this._unfoldAlpha(base, alpha, maxOff));
             let T = fullState(alpha);
             tpx.set(px); tpy.set(py); tL.set(L); tR.set(Rn); tK.set(Kn); tB.set(Bn); tvmax.set(vmax); talpha.set(alpha);
             const scales = opts.scales || [24, 16, 10, 6, 4, 2];
@@ -2281,7 +2407,14 @@ class SegmentedTrack {
                                     tpx[idx] = cx[idx] + na * nx[idx]; tpy[idx] = cy[idx] + na * ny[idx];
                                 }
                                 if (!changed) continue;
-                                for (let j = -h; j <= h - 1; j++) { const idx = (i0 + j + N) % N; tL[idx] = segLen(tpx, tpy, idx); }
+                                let folded = false;
+                                for (let j = -h; j <= h - 1; j++) { const idx = (i0 + j + N) % N; tL[idx] = segLen(tpx, tpy, idx); if (folds(tpx, tpy, idx)) folded = true; }
+                                if (folded) {
+                                    // not a line: put the trial back and try the next move
+                                    for (let j = -h + 1; j <= h - 1; j++) { const idx = (i0 + j + N) % N; talpha[idx] = alpha[idx]; tpx[idx] = px[idx]; tpy[idx] = py[idx]; }
+                                    for (let j = -h; j <= h - 1; j++) { const idx = (i0 + j + N) % N; tL[idx] = L[idx]; }
+                                    continue;
+                                }
                                 for (let j = -h + 1 - k; j <= h - 1 + k; j++) { const idx = (i0 + j + N) % N; tR[idx] = radiusAt(tpx, tpy, idx); tK[idx] = sgn / tR[idx]; tB[idx] = slipOf(steadyV(tR[idx]), tR[idx], sgn); }
                                 const ww = wid(h);
                                 for (let j = -ww; j <= ww; j++) { const idx = (i0 + j + N) % N; tvmax[idx] = vmaxAt(tR, tK, tB, idx); }
