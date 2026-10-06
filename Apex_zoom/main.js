@@ -5659,6 +5659,105 @@ function buildField() {
     return field;
 }
 
+// ===========================================================================
+//  THE SANDBOX A SIMULATED LAP IS DRIVEN IN
+//
+//  A simulated lap has no world of its own. car.js and ai.js read the page's
+//  globals directly - who else is on the road, whether it is raining, how a
+//  tyre wears - so "alone, on this weather, in qualifying trim" is something
+//  that has to be SET before the lap and put back after it. Two functions
+//  used to do that, each with its own hand-kept list, and the lists had fallen
+//  behind the game.
+//
+//  Nicola, zoom100: "C'e' qualcosa che non va nei record di Silverstone. Mi
+//  da': Dry - Sergio Perez 60.933, Wet - Alain Prost 52.267". A dry record
+//  nine seconds slower than the wet one.
+//
+//  What was missing from the lists, found by listing every name car.js and
+//  ai.js read that they do not declare (ten and fifteen of them), and what
+//  each one did to a lap that should never have seen it:
+//
+//    pitRoadWear    the WEAR LAW of the last race. With pit stops a set is a
+//                   length of road, and it stays that way in the menus. At
+//                   Silverstone a soft is then worth a lap and a half; a
+//                   qualifying run is three; the set was finished half way
+//                   round the flying lap. Twenty drivers, two runs each: 61.1
+//                   to 64.2 s against 49.5. That is his 60.933 - zoom100 had
+//                   made Silverstone's rows run again (its line had changed)
+//                   and he opened The Circuits after a race. Silverstone is
+//                   where it could not be missed: the same row was 1 to 4%
+//                   slow at Suzuka, Spa, Monza, Bivio and Marathon. And it
+//                   was not only the book - a single race with pit stops set
+//                   pitRoadWear BEFORE it simulated its own qualifying, so at
+//                   Silverstone a driver who chose the soft qualified in 62 to
+//                   77 s - against the note in pitRoadWearAhead that says
+//                   qualifying never runs on the race's law, for exactly this
+//                   reason.
+//    wetLevel       damp or soaked, from the last wet session: a "wet" record
+//                   set after a damp race was a damp one (at Silverstone the
+//                   full wet 1.4 s slower, the intermediate 0.4 s quicker).
+//    recoveries     the wrecks on the ground in the race being driven. The
+//                   book goes on building in the background, and its driver
+//                   went round a wreck that was not in his world: +4% at Kart.
+//    scActive       the safety car's rules, likewise (nothing, alone on the
+//                   road; pinned so that it stays nothing).
+//    gameState      'countdown' switches the banking off (nobody is pushed
+//                   about on the grid): a lap of Cascade simulated while the
+//                   lights were on was a lap of a flat circuit, 4.8% slower.
+//    AI.seasonRival the season's rival has 2% more car - in every lap
+//                   simulated after a championship round, the record book's
+//                   included, and it is worth 0.9% of a lap.
+//
+//  So there is ONE list now, here, and both kinds of simulated lap go through
+//  it. Two kinds, because they do not ask the same question:
+//
+//    a SESSION's lap   the field's qualifying, driven or simulated: THIS
+//                      session's weather, and its rival, because that is who
+//                      is on the grid - but always qualifying's wear law.
+//    a REFERENCE lap   the record book, the drivers' wet comparison, the
+//                      circuit card, the line judge: the same lap whatever
+//                      was driven before it. A wet one is a SOAKED one, and
+//                      nobody has more car than his chassis gives him.
+//
+//  If the physics starts reading a new global, it goes in this list - and
+//  tools/test_simbox.js is the test that says so.
+// ===========================================================================
+function simEnter(qTrack, raining, reference) {
+    const was = {
+        cars: cars, skid: globalSkidMarks, part: globalParticles,
+        rain: isRaining, laps: TOTAL_LAPS, vsc: vscPowerFactor,
+        wet: trackWet, sc: safetyCar,
+        road: pitRoadWear, wrecks: recoveries, scOn: scActive, state: gameState,
+        level: wetLevel, rival: AI.seasonRival,
+        leader: qTrack.leaderFinished, time: qTrack.currentRaceTime
+    };
+    cars = [];                      // alone (the caller puts its one car in)
+    globalSkidMarks = [];
+    globalParticles = [];
+    isRaining = !!raining;          // a simulated lap runs on `raining`...
+    trackWet = null;                // ...not on the weather of the race in progress
+    TOTAL_LAPS = 9999;
+    vscPowerFactor = 1;
+    safetyCar = null;
+    scActive = false;
+    recoveries = [];                // no wrecks from another world
+    pitRoadWear = false;            // qualifying's wear law: a set is a share of the run
+    gameState = 'playing';          // the lights are out: the banking is on
+    if (reference) {
+        wetLevel = raining ? 'soaked' : null;
+        AI.seasonRival = null;
+    }
+    qTrack.leaderFinished = false;
+    return function simLeave() {
+        cars = was.cars; globalSkidMarks = was.skid; globalParticles = was.part;
+        isRaining = was.rain; TOTAL_LAPS = was.laps; vscPowerFactor = was.vsc;
+        trackWet = was.wet; safetyCar = was.sc;
+        pitRoadWear = was.road; recoveries = was.wrecks; scActive = was.scOn;
+        gameState = was.state; wetLevel = was.level; AI.seasonRival = was.rival;
+        qTrack.leaderFinished = was.leader; qTrack.currentRaceTime = was.time;
+    };
+}
+
 // ---------------------------------------------------------------------------
 // One AI qualifying lap, simulated headlessly with the real physics.
 //
@@ -5669,8 +5768,10 @@ function buildField() {
 // returned is an honest flying lap in milliseconds - directly comparable with
 // whatever the player sets in their own session.
 //
-// Every global the physics touches is saved and restored, so this can be
-// called mid-session without disturbing the race the player is driving.
+// Every global the physics touches is set for the lap and put back after it
+// (THE SANDBOX, above) - also if the lap throws - so this can be called
+// mid-session without disturbing the race the player is driving, and without
+// that race reaching into the lap.
 // ---------------------------------------------------------------------------
 // `out`, when given, comes back with what the lap was actually run on -
 // currently the compound, which the driver picks for themselves and which the
@@ -5678,71 +5779,60 @@ function buildField() {
 // it. It is an out-parameter rather than a changed return value because four
 // other callers (the record book, the line judge, the track stats) want the
 // lap time and nothing else.
-function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, raining, chassis, out) {
-    const sCars = cars, sSkid = globalSkidMarks, sPart = globalParticles;
-    const sRain = isRaining, sLaps = TOTAL_LAPS, sVsc = vscPowerFactor;
-    // the road's live wetness too: a simulated lap runs on `raining`, not on
-    // whatever the weather of the race in progress happens to be doing
-    const sWet = trackWet; trackWet = null;
-    const sSc = safetyCar; safetyCar = null;
-    const sLeader = qTrack.leaderFinished, sTime = qTrack.currentRaceTime;
-
+// `reference`: true for a lap that is a MEASUREMENT rather than part of a
+// session - reference weather, no rival. See THE SANDBOX.
+function simulateQualifyingLap(qTrack, driverName, difficulty, skillVariation, raining, chassis, out, reference) {
+    // (the line first: finding one can itself drive laps - the judge - and
+    // those have to come and go before this lap's sandbox is entered)
     const line = qTrack.getRacingLine();
-    let si = 0, md = Infinity;
-    line.nodes.forEach((n, i) => {
-        const d = Math.hypot(n.cx - qTrack.startX, n.cy - qTrack.startY);
-        if (d < md) { md = d; si = i; }
-    });
-    const n0 = line.nodes[si];
+    const simLeave = simEnter(qTrack, raining, reference);
+    try {
+        let si = 0, md = Infinity;
+        line.nodes.forEach((n, i) => {
+            const d = Math.hypot(n.cx - qTrack.startX, n.cy - qTrack.startY);
+            if (d < md) { md = d; si = i; }
+        });
+        const n0 = line.nodes[si];
 
-    const car = new Car(n0.cx, n0.cy, 'red', false);
-    car.driverName = driverName;
-    // Qualifying is run in the car the driver will race, or the grid would be
-    // set by a car nobody is driving.
-    car.setChassis(chassis || CHASSIS_DEFAULT, rivalEdgeFor(driverName));
-    car.angle = n0.heading;
-    car.maxHealth = 1e9;          // a qualifying lap is not a damage test
-    car.health = car.maxHealth;
-    car.nextWaypoint = 0;
-    car._lapPixels = line.length;
-    car._tyreRaceLaps = QUALI_LAPS;
-    car.tyre = TYRES[AI.chooseTyre(driverName, QUALI_LAPS, raining, qTrack)] ||
-               TYRES.medium;
-    car.tyreWear = 0;
-    if (out) out.tyre = car.tyre.key;
-    // Standing start, exactly like the player's session: lap 1 is the warm-up
-    // lap and is thrown away, laps 2 and 3 are the flying laps.
-    car.velocity = { x: 0, y: 0 };
+        const car = new Car(n0.cx, n0.cy, 'red', false);
+        car.driverName = driverName;
+        // Qualifying is run in the car the driver will race, or the grid would be
+        // set by a car nobody is driving.
+        car.setChassis(chassis || CHASSIS_DEFAULT, rivalEdgeFor(driverName));
+        car.angle = n0.heading;
+        car.maxHealth = 1e9;          // a qualifying lap is not a damage test
+        car.health = car.maxHealth;
+        car.nextWaypoint = 0;
+        car._lapPixels = line.length;
+        car._tyreRaceLaps = QUALI_LAPS;
+        car.tyre = TYRES[AI.chooseTyre(driverName, QUALI_LAPS, raining, qTrack)] ||
+                   TYRES.medium;
+        car.tyreWear = 0;
+        if (out) out.tyre = car.tyre.key;
+        // Standing start, exactly like the player's session: lap 1 is the warm-up
+        // lap and is thrown away, laps 2 and 3 are the flying laps.
+        car.velocity = { x: 0, y: 0 };
 
-    cars = [car];
-    globalSkidMarks = [];
-    globalParticles = [];
-    isRaining = !!raining;
-    TOTAL_LAPS = 9999;
-    vscPowerFactor = 1;
-    qTrack.leaderFinished = false;
+        cars = [car];
 
-    const ai = new AI(car, difficulty, skillVariation);
-    ai.startRace();
+        const ai = new AI(car, difficulty, skillVariation);
+        ai.startRace();
 
-    // Car only records a lap time from its second crossing onward, so running
-    // to lap 3 yields exactly two timed flying laps and bestLapTime is the
-    // better of them - the same thing the player's session measures.
-    const dt = 1 / 60;
-    let t = 0;
-    while (t < 240 && car.lap < QUALI_LAPS) {
-        t += dt;
-        qTrack.currentRaceTime = t * 1000;
-        ai.update(qTrack, dt);
-        car.update(dt, qTrack);
+        // Car only records a lap time from its second crossing onward, so running
+        // to lap 3 yields exactly two timed flying laps and bestLapTime is the
+        // better of them - the same thing the player's session measures.
+        const dt = 1 / 60;
+        let t = 0;
+        while (t < 240 && car.lap < QUALI_LAPS) {
+            t += dt;
+            qTrack.currentRaceTime = t * 1000;
+            ai.update(qTrack, dt);
+            car.update(dt, qTrack);
+        }
+        return car.bestLapTime;   // null if the lap was never completed
+    } finally {
+        simLeave();
     }
-
-    cars = sCars; globalSkidMarks = sSkid; globalParticles = sPart;
-    isRaining = sRain; TOTAL_LAPS = sLaps; vscPowerFactor = sVsc;
-    trackWet = sWet; safetyCar = sSc;
-    qTrack.leaderFinished = sLeader; qTrack.currentRaceTime = sTime;
-
-    return car.bestLapTime;   // null if the lap was never completed
 }
 
 // The line judge. track.js asks for this when it has to choose between
@@ -5765,7 +5855,7 @@ function judgeRacingLine(qTrack) {
     try {
         let best = null;
         for (let r = 0; r < Math.max(1, RACING_LINE_JUDGE_REPS); r++) {
-            const lap = simulateQualifyingLap(qTrack, 'Line judge', 'impossible', 1.1, false, CHASSIS_DEFAULT);
+            const lap = simulateQualifyingLap(qTrack, 'Line judge', 'impossible', 1.1, false, CHASSIS_DEFAULT, null, true);
             if (lap && isFinite(lap) && (best === null || lap < best)) best = lap;
         }
         return best;
@@ -7067,58 +7157,48 @@ function countCorners(track) {
 }
 
 // One clean-air flying lap with a hard-difficulty AI, recording top speed.
-// Same sandbox trick as simulateQualifyingLap: every global the physics
-// touches is saved and restored.
+// A REFERENCE lap, in the same sandbox as simulateQualifyingLap's (THE SANDBOX
+// A SIMULATED LAP IS DRIVEN IN): the circuit card says what the circuit is,
+// not what the last race was run on.
 function measureTrackStats(qTrack, raining) {
-    const sCars = cars, sSkid = globalSkidMarks, sPart = globalParticles;
-    const sRain = isRaining, sLaps = TOTAL_LAPS, sVsc = vscPowerFactor;
-    // the road's live wetness too: a simulated lap runs on `raining`, not on
-    // whatever the weather of the race in progress happens to be doing
-    const sWet = trackWet; trackWet = null;
-    const sSc = safetyCar; safetyCar = null;
-    const sLeader = qTrack.leaderFinished, sTime = qTrack.currentRaceTime;
-
     const line = qTrack.getRacingLine();
-    let si = 0, md = Infinity;
-    line.nodes.forEach((n, i) => {
-        const d = Math.hypot(n.cx - qTrack.startX, n.cy - qTrack.startY);
-        if (d < md) { md = d; si = i; }
-    });
-    const n0 = line.nodes[si];
-    const car = new Car(n0.cx, n0.cy, 'red', false);
-    car.driverName = 'probe';
-    car.angle = n0.heading;
-    car.maxHealth = 1e9; car.health = car.maxHealth;
-    car.nextWaypoint = 0;
-    car._lapPixels = line.length;
-    car._tyreRaceLaps = 5;
-    car.tyre = TYRES.medium; car.tyreWear = 0;
-    const v0 = Math.min(n0.vCorner || 200, 200);
-    car.velocity = { x: Math.cos(n0.heading) * v0, y: Math.sin(n0.heading) * v0 };
+    const simLeave = simEnter(qTrack, raining, true);
+    try {
+        let si = 0, md = Infinity;
+        line.nodes.forEach((n, i) => {
+            const d = Math.hypot(n.cx - qTrack.startX, n.cy - qTrack.startY);
+            if (d < md) { md = d; si = i; }
+        });
+        const n0 = line.nodes[si];
+        const car = new Car(n0.cx, n0.cy, 'red', false);
+        car.driverName = 'probe';
+        car.angle = n0.heading;
+        car.maxHealth = 1e9; car.health = car.maxHealth;
+        car.nextWaypoint = 0;
+        car._lapPixels = line.length;
+        car._tyreRaceLaps = 5;
+        car.tyre = TYRES.medium; car.tyreWear = 0;
+        const v0 = Math.min(n0.vCorner || 200, 200);
+        car.velocity = { x: Math.cos(n0.heading) * v0, y: Math.sin(n0.heading) * v0 };
 
-    cars = [car]; globalSkidMarks = []; globalParticles = [];
-    isRaining = !!raining; TOTAL_LAPS = 9999; vscPowerFactor = 1;
-    qTrack.leaderFinished = false;
+        cars = [car];
 
-    const ai = new AI(car, 'hard', 1);
-    ai.startRace();
-    const dt = 1 / 60;
-    let t = 0, vmax = 0;
-    while (t < 180 && car.lap < 2) {
-        t += dt;
-        qTrack.currentRaceTime = t * 1000;
-        ai.update(qTrack, dt);
-        car.update(dt, qTrack);
-        const sp = Math.hypot(car.velocity.x, car.velocity.y);
-        if (sp > vmax) vmax = sp;
+        const ai = new AI(car, 'hard', 1);
+        ai.startRace();
+        const dt = 1 / 60;
+        let t = 0, vmax = 0;
+        while (t < 180 && car.lap < 2) {
+            t += dt;
+            qTrack.currentRaceTime = t * 1000;
+            ai.update(qTrack, dt);
+            car.update(dt, qTrack);
+            const sp = Math.hypot(car.velocity.x, car.velocity.y);
+            if (sp > vmax) vmax = sp;
+        }
+        return { lap: car.bestLapTime, vmax: vmax };
+    } finally {
+        simLeave();
     }
-    const lap = car.bestLapTime;
-
-    cars = sCars; globalSkidMarks = sSkid; globalParticles = sPart;
-    isRaining = sRain; TOTAL_LAPS = sLaps; vscPowerFactor = sVsc;
-    trackWet = sWet; safetyCar = sSc;
-    qTrack.leaderFinished = sLeader; qTrack.currentRaceTime = sTime;
-    return { lap: lap, vmax: vmax };
 }
 
 // Which chassis is quickest around each circuit - MEASURED, not inferred:
@@ -7483,7 +7563,7 @@ function exMeasureWet(done) {
             // compound because this is a comparison between drivers rather
             // than a record attempt
             const ms = exPinnedTyre('medium', () =>
-                simulateQualifyingLap(tracks[j.tk], j.name, 'alien', 1.1, j.wet, 'ridge'));
+                simulateQualifyingLap(tracks[j.tk], j.name, 'alien', 1.1, j.wet, 'ridge', null, true));
             exWet.done++;
             if (ms) {
                 const r = exWet.by[j.name] = exWet.by[j.name] || {};
@@ -7709,6 +7789,16 @@ function exDrawTrack(canvas, track) {
 //  not that driver's pace.
 const EX_RUNS = 2;
 const EX_ORDER_DRIVER = 'Ayrton Senna';
+// THE TERMS A RECORD LAP IS DRIVEN ON are part of what a record is, and until
+// zoom101 they were partly whatever the session before had left behind: the
+// last race's tyre wear law, its damp or soaked road, its rival (THE SANDBOX A
+// SIMULATED LAP IS DRIVEN IN). A row built after a race with pit stops was a
+// different measurement from one built on a fresh page, and nothing in a
+// stored book says which rows were which - Silverstone's dry record came out
+// at 60.933 that way, nine seconds slower than its wet one. So this number is
+// in the book's fingerprint: bump it whenever the sandbox changes what a
+// reference lap IS, and every stored time is run again on the new terms.
+const EX_LAP_TERMS = 2;
 const exRecords = {};   // key -> { dry, wet, byTyre: {}, done, total }
 const exBuild = { jobs: null, i: 0, done: 0, total: 0, running: false, t0: 0 };
 
@@ -7738,7 +7828,9 @@ function exPhysHash() {
                   'line' + (typeof RACING_LINE_VERSION !== 'undefined' ? RACING_LINE_VERSION : 1),
                   // the yaw ceiling is physics: a lap driven under it is not
                   // the same lap (see the note in car.js update())
-                  'yaw' + (typeof YAW_CAP !== 'undefined' ? YAW_CAP : 0)];
+                  'yaw' + (typeof YAW_CAP !== 'undefined' ? YAW_CAP : 0),
+                  // ...and so are the terms the lap was driven on (EX_LAP_TERMS)
+                  'terms' + EX_LAP_TERMS];
     return exHash(bits.join('|'));
 }
 
@@ -9280,12 +9372,39 @@ function exStartBuild() {
     exStep();
 }
 
+// THE CARD YOU OPENED IS BUILT FIRST. A whole book is over four thousand laps
+// and a few minutes, in calendar order - and the circuit somebody is LOOKING
+// at should not have to wait its turn for them: Silverstone is last in the
+// calendar and its 128 laps are the longest in the game. Whatever is left of
+// that circuit's laps moves to the front of the queue. Nothing is run twice
+// and nothing is dropped; the queue is the same laps in another order.
+function exBuildFirst(key) {
+    if (!exBuild.running || !exBuild.jobs) return;
+    const rest = exBuild.jobs.slice(exBuild.i);
+    const mine = rest.filter(j => j.key === key);
+    if (!mine.length) return;
+    exBuild.jobs = exBuild.jobs.slice(0, exBuild.i)
+        .concat(mine, rest.filter(j => j.key !== key));
+}
+
 // Time-sliced so the page stays alive: this is over a thousand qualifying laps
 // and it runs while you read the cards, not instead of it. 12 ms rather than
 // the 45 the lazy version used - it is background work now, so it should give
 // way to the interface rather than compete with it.
 function exStep() {
     if (!exBuild.running) return;
+    // NOT WHILE SOMEBODY IS DRIVING. A slice of this is 12 ms at the least and
+    // one whole simulated run at the most - three laps of Silverstone, a tenth
+    // of a second and more - and it used to carry straight on into a race
+    // started while the book was still building, a slice between every frame.
+    // It waits for the flag now and picks up where it was. (Unless the book
+    // is what is on screen: whoever is reading it is not driving, whatever
+    // gameState says.)
+    const reading = document.getElementById('explore-tracks').style.display === 'block';
+    if (!reading && (gameState === 'countdown' || gameState === 'playing')) {
+        setTimeout(exStep, 500);
+        return;
+    }
     const t0 = performance.now();
     const tracks = {};
     while (exBuild.i < exBuild.jobs.length && performance.now() - t0 < 12) {
@@ -9294,7 +9413,7 @@ function exStep() {
             const t = makeTrack(j.key); t.getRacingLine(); return t;
         })());
         const ms = exPinnedTyre(j.tyre, () =>
-            simulateQualifyingLap(qt, j.name, 'alien', 1.1, j.wet, 'ridge'));
+            simulateQualifyingLap(qt, j.name, 'alien', 1.1, j.wet, 'ridge', null, true));
         const rec = exRecords[j.key];
         rec.done++; exBuild.done++;
         if (!ms) continue;
@@ -9407,6 +9526,7 @@ function exOpenTrack(key) {
     const detail = document.getElementById('ex-track-detail');
     if (!detail) return;
     exOpenKey = key;
+    exBuildFirst(key);          // its records next, not when the calendar gets to it
     grid.style.display = 'none';
     detail.style.display = 'block';
 
