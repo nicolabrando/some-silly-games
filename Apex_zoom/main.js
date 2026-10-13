@@ -1290,6 +1290,11 @@ window.addEventListener('keydown', (e) => {
         /^[1-9]$/.test(k) && pitPickIndex(parseInt(k, 10))) {
         e.preventDefault(); return;
     }
+    // ...and R, with the panel open, asks the crew to mend the damage too
+    if (typeof pitPanelSeat !== 'undefined' && pitPanelSeat && k === 'r' &&
+        typeof pitToggleRepair === 'function' && pitToggleRepair()) {
+        e.preventDefault(); return;
+    }
     if (k === 'b' && typeof playerCar !== 'undefined' && playerCar) {
         pitToggleBox(playerCar, 1); e.preventDefault(); return;
     }
@@ -2346,6 +2351,27 @@ function noAiHandicapWanted() {
 //  planned lap, or at 97% wear if the plan has gone wrong.
 // ---------------------------------------------------------------------------
 const PIT_TIME = 2.2;          // seconds stationary, once the tyre is chosen
+// REPAIRS, IN THE SAME STOP. Damage can be put right while the tyres go on:
+// the stop runs longer in proportion to what has to be mended - a car at
+// half health waits PIT_REPAIR_FULL / 2 more seconds - and the car leaves
+// whole. A human chooses it at the box (R on the panel, alongside the
+// compound); an AI takes it when the damage has begun to cost pace, which
+// car.js says is below 60% - with a little in hand, because the next touch
+// decides whether it finishes. Nicola asked for it: the alternative was a
+// race limped home at 70%, or a stop that mended nothing.
+const PIT_REPAIR_FULL = 8.0;   // seconds for a full rebuild, on top of the tyres
+const AI_REPAIR_BELOW = 0.7;   // health fraction under which the AI mends the car
+function pitRepairSeconds(car) {
+    // qualifying runs with a bottomless health bar: nothing to mend
+    if (!car || !(car.maxHealth > 0) || car.maxHealth > 1e6) return 0;
+    const dmg = Math.max(0, Math.min(1, 1 - car.health / car.maxHealth));
+    return dmg < 0.005 ? 0 : PIT_REPAIR_FULL * dmg;
+}
+// Nominal time stationary for the stop a car is about to make: tyres, plus
+// the repair if it has been called for.
+function pitStopSeconds(car) {
+    return PIT_TIME + (car && car.pitRepair ? pitRepairSeconds(car) : 0);
+}
 const PIT_BOX_BACK = 70;       // box centre, px before the start line
 const PIT_LANE_IN = 16;
 // The window a car is collected in, in ROAD LEFT TO THE LINE. It has to be
@@ -3074,6 +3100,14 @@ const RADIO_LINES = {
         '{tyre} fitted. Release, release!',
         'Go, go! {tyre} on.',
         'Clean stop, {tyre} on. Go!'
+    ],
+    // ...and the same release when the crew mended the car as well
+    repairedOn: [
+        '{tyre} on and the car is straight again. Go go go.',
+        'Damage fixed, {tyre} fitted. Release, release!',
+        'Car is as new, {tyre} on. Go!',
+        'All repaired. {tyre} on, go go go.',
+        'That is the damage sorted and fresh {tyre}. Go!'
     ],
     vsc: [
         'Virtual safety car. Virtual safety car. Slow down and hold the gap.',
@@ -4450,6 +4484,7 @@ function pitToggleBox(car, seat, fromPause) {
     if ((isPaused && !fromPause) || pitPanelSeat) return;
     car.wantPit = !car.wantPit;
     car.pitNextTyre = null;             // chosen at the box, not here
+    car.pitRepair = false;              // ...and so is the repair
     if (car.isPlayer && !skipMode)
         radioSay(radioLine(car.wantPit ? 'boxConfirm' : 'stayOut'), 2);
     if (typeof RaceLog !== 'undefined')
@@ -4509,13 +4544,27 @@ function pitPickIndex(n) {
     const order = pitFitOrder();
     if (n < 1 || n > order.length) return false;
     car.pitNextTyre = order[n - 1];
-    car.pitTimer = PIT_TIME;            // the clock starts when the call is made
+    if (car.pitRepair && !(pitRepairSeconds(car) > 0)) car.pitRepair = false;
+    car.pitTimer = pitStopSeconds(car); // the clock starts when the call is made
+    car._pitStop = car.pitTimer;
     pitPanelSeat = 0;
     pitPanelPause(false);
     renderPitPanel();
     if (typeof RaceLog !== 'undefined')
         RaceLog.event('PIT', `${car.driverName || car.color} takes ` +
-            `${TYRES[car.pitNextTyre].label}`);
+            `${TYRES[car.pitNextTyre].label}` +
+            (car.pitRepair ? ` and has the damage repaired (+${pitRepairSeconds(car).toFixed(1)}s)` : ''));
+    return true;
+}
+// R while the panel is open: the crew will mend the car in the same stop, or
+// not. A car with nothing to mend has nothing to toggle.
+function pitToggleRepair() {
+    if (!pitPanelSeat) return false;
+    const car = pitPanelCar();
+    if (!car || car.pitPhase !== 'stopped') return false;
+    if (!(pitRepairSeconds(car) > 0)) return false;
+    car.pitRepair = !car.pitRepair;
+    renderPitPanel();
     return true;
 }
 function renderPitPanel() {
@@ -4587,15 +4636,33 @@ function renderPitPanel() {
              ' &middot; right now: <b>' + nm[now] + '</b>' +
              (next !== now ? ' &middot; in a lap or two: <b>' + nm[next] + '</b>' : '') + '</div>';
     }
+    // THE DAMAGE, and what mending it costs: the crew can put the car right
+    // in the same stop, for seconds in proportion. Health that the race pace
+    // does not yet feel (above 60%) is still worth knowing about, because the
+    // next touch is the one that decides.
+    const dmgPct = Math.round(Math.max(0, Math.min(1, 1 - car.health / car.maxHealth)) * 100);
+    const repS = pitRepairSeconds(car);
+    const repair = repS > 0
+        ? '<div class="pp-title pp-title-rep">REPAIR</div>' +
+          '<div class="pp-row pp-rep' + (car.pitRepair ? ' pp-rep-on' : '') + '">' +
+            '<span class="pp-key">R</span>' +
+            '<span class="pp-name">' + (car.pitRepair ? 'Mending it' : 'Leave it') + '</span>' +
+            '<span class="pp-pace">' + dmgPct + '% damage</span>' +
+            '<span class="pp-laps">+' + repS.toFixed(1) + ' s' + (car.pitRepair ? ' · as new' : ' to mend') + '</span>' +
+          '</div>'
+        : '<div class="pp-title pp-title-rep">REPAIR</div>' +
+          '<div class="pp-row pp-rep pp-rep-none"><span class="pp-key">R</span>' +
+          '<span class="pp-name">No damage</span><span class="pp-laps">nothing to mend</span></div>';
     el.innerHTML =
         '<div class="pp-head">IN THE BOX' + (pitPanelSeat === 2 ? ' — Player 2' : '') +
         '<span class="pp-sub">race held &middot; ' + lapsLeft.toFixed(0) +
         ' laps to run &middot; the crew is waiting</span></div>' + wx +
         '<div class="pp-cols">' +
-          '<div class="pp-left"><div class="pp-title">FIT</div>' + rows + '</div>' +
+          '<div class="pp-left"><div class="pp-title">FIT</div>' + rows + repair + '</div>' +
           '<div class="pp-right"><div class="pp-title">THE FIELD</div>' + fieldRows + '</div>' +
         '</div>' +
-        '<div class="pp-foot">a number fits that tyre and starts the stop</div>';
+        '<div class="pp-foot">a number fits that tyre and starts the stop' +
+        (repS > 0 ? ' &middot; R mends the damage in the same stop' : '') + '</div>';
     el.style.display = 'block';
 }
 
@@ -5414,8 +5481,19 @@ function pitUpdate(car, dt) {
             car.pitPhase = 'stopped';
             // A HUMAN chooses at the box: the clock does not start until the
             // call is made, so the panel is not a stopwatch running while you
-            // think. An AI arrives having already decided.
-            car.pitTimer = (car.isPlayer && !car.pitNextTyre) ? Infinity : PIT_TIME;
+            // think. An AI arrives having already decided - the compound on
+            // the way in, and the repair here: mended when the damage has
+            // started to cost, left when a few seconds would buy nothing.
+            if (car.isPlayer && !car.pitNextTyre) {
+                car.pitTimer = Infinity;
+            } else {
+                if (!car.isPlayer) {
+                    car.pitRepair = pitRepairSeconds(car) > 0 &&
+                        car.health / car.maxHealth < AI_REPAIR_BELOW;
+                }
+                car.pitTimer = pitStopSeconds(car);
+                car._pitStop = car.pitTimer;
+            }
         }
     } else if (car.pitPhase === 'stopped') {
         car.velocity.x = 0; car.velocity.y = 0;
@@ -5441,6 +5519,13 @@ function pitUpdate(car, dt) {
         if (car.pitTimer <= 0) {
             const k = car.pitNextTyre || pitSuggestTyre(car);
             const old = car.tyre ? car.tyre.short : '?';
+            // the repair, if one was called for: the car leaves as new
+            const mended = !!car.pitRepair && car.maxHealth > 0 && car.health < car.maxHealth;
+            const mendedPct = mended ? Math.round((1 - car.health / car.maxHealth) * 100) : 0;
+            if (mended) car.health = car.maxHealth;
+            car.pitRepair = false;
+            const stopS = isFinite(car._pitStop) ? car._pitStop : PIT_TIME;
+            car._pitStop = null;
             car.tyre = TYRES[k] || TYRES.medium;
             car.tyreWear = 0;
             car._wearAtLap = null;          // the lap in progress is not a full lap of this set
@@ -5464,10 +5549,12 @@ function pitUpdate(car, dt) {
                 delete car._radioSaid.wearhalf;
             }
             if (car.isPlayer && !skipMode)
-                radioSay(radioLine('tyresOn', { tyre: car.tyre.label }), 3);
+                radioSay(radioLine(mended ? 'repairedOn' : 'tyresOn', { tyre: car.tyre.label }), 3);
             if (typeof RaceLog !== 'undefined')
                 RaceLog.event('PIT', `${car.driverName || car.color} pits — ` +
-                    `${old} to ${car.tyre.short}, ${PIT_TIME.toFixed(1)}s stationary`);
+                    `${old} to ${car.tyre.short}` +
+                    (mended ? `, ${mendedPct}% damage repaired` : '') +
+                    `, ${stopS.toFixed(1)}s stationary`);
         }
     } else if (car.pitPhase === 'exit') {
         // ...and it steers out, by the same rule and for the same reason: aimed
@@ -6003,6 +6090,7 @@ function startQualifying(forceTrackType) {
     // whatever the last race left the road at is not this session's.
     wxPlan = null; trackWet = null; wxDist = 0;
     rainNow = isRaining ? 1 : 0;
+    rainDrawn = rainNow;     // a new session starts in its own weather: no fade from the last one (Nicola: a dry race opening in the previous race's rain)
     endSafetyCar(true);
 
     let weatherIndicator = document.getElementById('weather-indicator');
@@ -10963,6 +11051,7 @@ function startGame(forceTrackType = null) {
     // as it always has.
     wxPlan = null; trackWet = null; wxDist = 0;
     rainNow = isRaining ? 1 : 0;
+    rainDrawn = rainNow;     // a new session starts in its own weather: no fade from the last one (Nicola: a dry race opening in the previous race's rain)
     const racePlan = (raceMode === 'race' || raceMode === 'championship') && pitModeOn
         ? decideWxPlan() : false;
 
@@ -10977,6 +11066,7 @@ function startGame(forceTrackType = null) {
         wxPlan = Object.assign({}, racePlan, { _seen: null });
         trackWet = wxPlan.start;
         rainNow = wxAt(wxPlan, 0).r;
+        rainDrawn = rainNow;
     }
     endSafetyCar(true);
 
@@ -14241,13 +14331,30 @@ function drawLights(ctx) {
     }
 }
 
+// How much rain is on the screen, which follows how much is falling with a
+// lag: the plan's rain can go from nothing to a downpour inside a tenth of a
+// lap, and the veil used to appear in one frame at four tenths of its full
+// strength (the tint had a floor), so a shower switched on like a light and
+// off like one. Now it builds and fades at a fixed rate - about eight
+// seconds from dry to a downpour, three to a sprinkle - and the tint starts
+// from nothing. Drawing only: the road's wetness, the tyres, the puddles
+// and the labels read rainNow and trackWet as before.
+let rainDrawn = 0;
+let rainDrawnAt = 0;
+const RAIN_FADE_PER_S = 0.12;
 function drawRain(ctx) {
     // A race whose weather moves draws the rain that is FALLING (rainNow),
     // which is not the same thing as the road being wet: a drying track has
     // no rain on it. Everything else draws it as it always has.
-    const amount = wxPlan ? rainNow : (isRaining ? 1 : 0);
-    if (!(amount > 0.02)) return;
-    ctx.fillStyle = 'rgba(100, 120, 150, ' + (0.1 * Math.min(1, 0.4 + amount)).toFixed(3) + ')';
+    const target = wxPlan ? rainNow : (isRaining ? 1 : 0);
+    const now = performance.now();
+    const dt = rainDrawnAt ? Math.min(0.1, Math.max(0, (now - rainDrawnAt) / 1000)) : 0;
+    rainDrawnAt = now;
+    const step = RAIN_FADE_PER_S * dt;
+    rainDrawn = Math.abs(target - rainDrawn) <= step ? target : rainDrawn + Math.sign(target - rainDrawn) * step;
+    const amount = rainDrawn;
+    if (!(amount > 0.005)) return;
+    ctx.fillStyle = 'rgba(100, 120, 150, ' + (0.1 * Math.min(1, 1.4 * amount)).toFixed(3) + ')';
     ctx.fillRect(0, 0, WORLD_W, WORLD_H);
     
     // Fast rain streaks. World units, not canvas.width: the backing store is

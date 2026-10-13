@@ -2362,6 +2362,16 @@ button.menu-danger {
 #pit-panel .pp-laps { flex: 1; text-align: right; }
 #pit-panel .pp-ok { color: #66bb6a; }
 #pit-panel .pp-short { color: #ffa726; }
+/* the repair: one row under the compounds, on or off with R */
+#pit-panel .pp-title-rep { margin-top: 10px; }
+#pit-panel .pp-rep .pp-name { flex: 0 0 84px; }
+#pit-panel .pp-rep .pp-pace { flex: 0 0 82px; color: #ffa726; }
+#pit-panel .pp-rep .pp-laps { color: #b0bec5; }
+#pit-panel .pp-rep-on .pp-name,
+#pit-panel .pp-rep-on .pp-laps { color: #66bb6a; }
+#pit-panel .pp-rep-on .pp-key { border-color: #66bb6a; color: #66bb6a; }
+#pit-panel .pp-rep-none { color: #7d8c7d; }
+#pit-panel .pp-rep-none .pp-key { border-color: #4c574c; color: #6c7a6c; }
 #pit-panel .pp-foot {
     margin-top: 6px;
     font-size: 11px;

@@ -124,27 +124,6 @@ class SegmentedTrack {
         // in the physics, not only in the paint.
         this.dividers = [];
         // ---------------------------------------------------------------
-        //  FENCED GROUND
-        //  A circuit may declare pieces of ground - {x, y, r} - where the
-        //  verge is fenced off at the EDGE OF THE ASPHALT instead of at the
-        //  usual wall radius, and the armco is painted along that edge.
-        //
-        //  It exists for one shape: a tongue of verge that sticks out in front
-        //  of solid ground. The wall is a fixed distance from the nearest
-        //  centre line, so where two stretches of road converge the solid
-        //  ground between them tapers away before the grass does, and what is
-        //  left is forty pixels of crossable green with a wall behind it and
-        //  nothing drawn on it. Nicola drove into that at Vallone twice and
-        //  described it exactly: a barrier where nothing can be seen.
-        //
-        //  Fencing it at the road edge makes the two agree. The armco is drawn
-        //  where the tarmac stops, which is the only line in that corner a
-        //  driver can actually see, and it is also where the car is now
-        //  stopped. Nothing about the racing surface changes - the zone only
-        //  ever applies to ground that was already off the road.
-        // ---------------------------------------------------------------
-        this.fencedZones = [];
-        // ---------------------------------------------------------------
         //  A CIRCUIT THAT FORKS
         //  `forkMain` and `forkAlt` are index ranges into this.segments: the
         //  stretch the canonical lap drives, and the stretch that is the other
@@ -281,9 +260,6 @@ class SegmentedTrack {
         for (const d of (this.dividers || [])) {
             d.x1 += ox; d.y1 += oy; d.x2 += ox; d.y2 += oy;
         }
-        // ...and any ground the circuit has declared fenced, stated in the
-        // circuit's own coordinates like everything else
-        for (const z of (this.fencedZones || [])) { z.x += ox; z.y += oy; }
         // Everything else - the racing line, the wall, the barrier, the
         // stands, the bridge - is derived from the segments on first use and
         // cached after, and this runs from the constructor, before any of
@@ -1105,38 +1081,65 @@ class SegmentedTrack {
     // about these coordinates, not about pixels.
     _barrierRuns() {
         if (this._barrierPaint) return this._barrierPaint;
-        const runs = this.getWalls(this.wallRadius(), this.barrierOffset());
+        this._barrierPaint = this.getWalls(this.wallRadius(), this.barrierOffset());
+        return this._barrierPaint;
+    }
 
-        // ...plus the fence along the edge of the asphalt inside any fenced
-        // zone, built as POLYLINE DATA and handed to the same drawing code as
-        // the rest of the armco. Not stroked onto the canvas separately: the
-        // test that asks "is anything painted where a car is stopped" reads
-        // this array, and a fence that only exists as pixels is a fence the
-        // test cannot see. It is also the level-set walker that is avoided
-        // here rather than reused - it drops its vertices exactly where two
-        // stretches of road come close together, which is the one place this
-        // fence has to be. The road edge is an offset of the centre line and
-        // needs no walker at all.
-        const off = this.trackWidth + this.barrierOffset() - 5;
-        for (const z of (this.fencedZones || [])) {
-            const wps = this.waypoints, N = wps.length;
-            for (const sign of [1, -1]) {
-                let cur = [];
-                for (let i = 0; i <= N; i++) {
-                    const a = wps[i % N], b = wps[(i + 1) % N];
-                    const dx = b.x - a.x, dy = b.y - a.y;
-                    const L = Math.hypot(dx, dy) || 1;
-                    const x = a.x + (dy / L) * off * sign;
-                    const y = a.y - (dx / L) * off * sign;
-                    const inside = (x - z.x) * (x - z.x) + (y - z.y) * (y - z.y) <= z.r * z.r;
-                    if (inside) cur.push(x, y);
-                    else { if (cur.length >= 4) runs.push(cur); cur = []; }
+    // The painted armco as something the physics can ask a distance of: its
+    // segments, binned on a coarse lattice. Built once per track instance,
+    // the first time a car leaves the verge; the runs themselves are the
+    // ones the circuit is drawn from, so this cannot disagree with the paint.
+    _paintIndex() {
+        if (this._paintIdx) return this._paintIdx;
+        const CELL = 24;
+        const segs = [], bins = new Map();
+        for (const r of this._barrierRuns()) {
+            for (let i = 2; i < r.length; i += 2) {
+                const x0 = r[i - 2], y0 = r[i - 1], x1 = r[i], y1 = r[i + 1];
+                const id = segs.length;
+                segs.push(x0, y0, x1, y1);
+                const ax = Math.floor(Math.min(x0, x1) / CELL), bx = Math.floor(Math.max(x0, x1) / CELL);
+                const ay = Math.floor(Math.min(y0, y1) / CELL), by = Math.floor(Math.max(y0, y1) / CELL);
+                for (let a = ax; a <= bx; a++) {
+                    for (let b = ay; b <= by; b++) {
+                        const k = a * 100003 + b;
+                        let list = bins.get(k);
+                        if (!list) bins.set(k, list = []);
+                        list.push(id);
+                    }
                 }
-                if (cur.length >= 4) runs.push(cur);
             }
         }
-        this._barrierPaint = runs;
-        return runs;
+        this._paintIdx = { cell: CELL, segs: segs, bins: bins };
+        return this._paintIdx;
+    }
+
+    // The nearest painted armco within `r` of a point: {dist, x, y}, or null
+    // when none is that close.
+    nearestPaint(x, y, r) {
+        const P = this._paintIndex();
+        const CELL = P.cell, segs = P.segs;
+        const span = Math.ceil(r / CELL);
+        const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
+        let best = r * r, bx = 0, by = 0, hit = false;
+        for (let a = cx - span; a <= cx + span; a++) {
+            for (let b = cy - span; b <= cy + span; b++) {
+                const list = P.bins.get(a * 100003 + b);
+                if (!list) continue;
+                for (let q = 0; q < list.length; q++) {
+                    const i = list[q];
+                    const x0 = segs[i], y0 = segs[i + 1];
+                    const dx = segs[i + 2] - x0, dy = segs[i + 3] - y0;
+                    const l2 = dx * dx + dy * dy;
+                    let t = l2 > 1e-9 ? ((x - x0) * dx + (y - y0) * dy) / l2 : 0;
+                    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                    const px = x0 + dx * t, py = y0 + dy * t;
+                    const d2 = (x - px) * (x - px) + (y - py) * (y - py);
+                    if (d2 < best) { best = d2; bx = px; by = py; hit = true; }
+                }
+            }
+        }
+        return hit ? { dist: Math.sqrt(best), x: bx, y: by } : null;
     }
 
     drawBarrier(ctx) {
@@ -1359,47 +1362,88 @@ class SegmentedTrack {
         return { dist: Math.sqrt(bd), projX: bx, projY: by, segType: 'line', seg: null };
     }
 
-    inFencedZone(x, y) {
-        const z = this.fencedZones;
-        if (!z || !z.length) return false;
-        for (const o of z)
-            if ((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y) <= o.r * o.r) return true;
-        return false;
-    }
-
+    // =====================================================================
+    //  THE ARMCO IS THE WALL
+    //  Two things used to decide where a car stops: the level set of
+    //  "distance to the nearest centre line" at wallRadius(), and - twelve
+    //  pixels further out, pushed along the normal - the painted barrier. On
+    //  a straight they are the same line seen from either side of the car.
+    //  They part company wherever the wall turns a sharp corner: at the tip
+    //  of a wedge of grass between two converging roads the pushed paint
+    //  closes 12/sin(half-angle) beyond the tip, not 12, and the last fifteen
+    //  pixels of the tip stop cars against nothing painted. Vallone's pocket
+    //  has exactly that wedge; the first answer there was a fence drawn along
+    //  the edge of the asphalt, which Nicola then asked to have taken away:
+    //  it stood out into the road, it did no damage, and the kerb at the
+    //  centre of the hairpin had become solid behind it.
+    //
+    //  So the rule is now the one a driver would write. On reachable ground
+    //  (within wallRadius) nothing happens, as ever. Beyond it the car is
+    //  stopped by the PAINT: it may go on until its body - one car radius -
+    //  touches a painted panel, and no further. Where the paint is the plain
+    //  offset of the wall, that is the same line as before to the pixel.
+    //  Where it recedes - the wedge tip - the car follows it, and its nose
+    //  lands on the panels. Where the paint was culled altogether - the dot
+    //  inside a hairpin's island, debris shorter than a panel - there is
+    //  nothing to hit, so there is nothing to hit: the ground is driveable
+    //  (slow, it is grass) rather than an invisible post. Deep ground, a
+    //  car's length past where the paint stands, stays solid whatever is
+    //  painted, so a car that was put beyond the barrier by something other
+    //  than driving - the crane, a pit sequence - is still brought back.
+    //
+    //  The bridge keeps the old strict line: at the crossing the wall is
+    //  measured against the car's own road and the parapet is drawn by the
+    //  deck, not by the armco, so the paint has nothing to say there.
+    // =====================================================================
     checkBarrierCollision(car) {
         let distData = this.getClosestPoint(car.x, car.y);
-        // Inside a fenced zone the wall is the edge of the asphalt rather than
-        // the usual radius - see fencedZones. The push is the same push; only
-        // the radius it is measured against changes, so a car leaning on this
-        // fence is treated exactly like a car leaning on any other.
-        if (this.inFencedZone(car.x, car.y) && distData.dist > this.trackWidth) {
-            const dx = car.x - distData.projX, dy = car.y - distData.projY;
-            const len = Math.hypot(dx, dy) || 1;
-            const push = len - this.trackWidth;
-            car.x -= (dx / len) * push;
-            car.y -= (dy / len) * push;
-            return;
-        }
+        let strict = false;
         if (this.hasBridge) {
             const own = this.closestOnOwnRoad(car);
             if (own && own.dist > distData.dist &&
-                own.dist < this.wallRadius() + 70) distData = own;
+                own.dist < this.wallRadius() + 70) { distData = own; strict = true; }
         }
         const currentRadius = distData.dist;
-        
+
         // Boundaries (using 12 as car collision radius). One definition, shared
         // with the wall that gets drawn - see wallRadius().
         const maxAllowed = this.wallRadius();
-        
+
         if (currentRadius > maxAllowed) {
+            const out = this.barrierOffset();
             // Push car back inside the allowed bounds
-            const dx = car.x - distData.projX;
-            const dy = car.y - distData.projY;
-            const len = Math.hypot(dx, dy);
-            
-            if (len > maxAllowed) {
-                const push = len - maxAllowed;
+            let dx = car.x - distData.projX;
+            let dy = car.y - distData.projY;
+            let len = Math.hypot(dx, dy);
+            let push = len - maxAllowed;
+            if (!strict && currentRadius < maxAllowed + 2 * out - 2) {
+                // the band beyond the wall and short of deep ground: the
+                // paint decides, see above. (Deep ground starts two pixels
+                // short of twice the offset: the thinned paint can sit half
+                // a pixel inside its nominal radius, and a sliver of free
+                // ground beyond the panels is not worth a seam.)
+                const paint = this.nearestPaint(car.x, car.y, out);
+                if (!paint) return;
+                if (currentRadius <= maxAllowed + out) {
+                    // on the road side of the panels: stand off them, square
+                    // to the paint - and never further back than the wall
+                    // itself, so a panel that stands short of the full
+                    // offset (the ridge of a thin strip) cannot bounce a car
+                    // back onto the verge. A centre sitting ON the paint, or
+                    // past it, has no direction of its own and takes the
+                    // road's.
+                    const px = car.x - paint.x, py = car.y - paint.y;
+                    const pl = Math.hypot(px, py);
+                    if (pl > 0.5 && px * dx + py * dy > 0) {
+                        dx = px; dy = py; len = pl;
+                        push = Math.min(out - pl, currentRadius - maxAllowed);
+                    }
+                }
+                // ...past the panels, or on them: back to the wall along the
+                // road's own normal, the old way
+            }
+
+            if (push > 0 && len > 0) {
                 const nx = dx / len;
                 const ny = dy / len;
                 car.x -= nx * push;
@@ -2785,12 +2829,20 @@ class SegmentedTrack {
         const wNow = live && typeof wetNow === 'function' ? wetNow() : 1;
         ctx.save();
         for (const p of this.puddles) {
-            let alpha = 1;
+            let alpha = 1, size = 1;
             if (live && p.wet !== undefined) {
-                // filling over the last 0.06 of wetness before it counts, and
-                // emptying the same way as the road dries
-                alpha = Math.max(0, Math.min(1, (wNow - (p.wet - 0.06)) / 0.06));
-                if (alpha <= 0) continue;
+                // A puddle FORMS: over the 0.30 of wetness before the road is
+                // wet enough for it to count (puddleAt), it grows from a film
+                // a third of its size to the full thing, and it drains the
+                // same way as the road dries. It used to fade in over 0.06 of
+                // wetness - in a downpour, the road wets by half a lap's
+                // worth of that in a few seconds, so a dozen of them popped
+                // up one after another at full size. The physics is as it
+                // was: a puddle counts from `wet`, which is when it is full.
+                const f = Math.max(0, Math.min(1, (wNow - (p.wet - 0.30)) / 0.30));
+                if (f <= 0) continue;
+                size = 0.34 + 0.66 * Math.pow(f, 0.6);
+                alpha = Math.min(1, 0.25 + 0.75 * f);
             }
             ctx.globalAlpha = alpha;
             const n = (p.rad && p.rad.length) || 1;
@@ -2799,7 +2851,7 @@ class SegmentedTrack {
             const pts = [];
             for (let k = 0; k < n; k++) {
                 const a = p.rot + (k / n) * Math.PI * 2;
-                const rr = p.r * (p.rad ? p.rad[k] : 1);
+                const rr = p.r * size * (p.rad ? p.rad[k] : 1);
                 pts.push([p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr]);
             }
             ctx.beginPath();
@@ -2812,7 +2864,7 @@ class SegmentedTrack {
             }
             ctx.closePath();
 
-            const g = ctx.createRadialGradient(p.x, p.y, p.r * 0.1, p.x, p.y, p.rMax || p.r);
+            const g = ctx.createRadialGradient(p.x, p.y, p.r * size * 0.1, p.x, p.y, (p.rMax || p.r) * size);
             g.addColorStop(0, 'rgba(64,104,150,0.80)');
             g.addColorStop(0.65, 'rgba(78,120,166,0.60)');
             g.addColorStop(1, 'rgba(96,140,186,0.34)');
@@ -5058,13 +5110,12 @@ class ValloneTrack extends SegmentedTrack {
         this.startX = 330;
         this.startY = 0;
 
-        // The tongue on the exit of the bottom-right corner. See fencedZones
-        // in the base constructor: where this hairpin's exit and the straight
-        // after it converge, the solid ground between them runs out before the
-        // grass does, leaving forty pixels of crossable green with a wall
-        // behind it and nothing painted on any of it. Fenced at the edge of
-        // the asphalt, which is where it looks like the road ends anyway.
-        this.fencedZones = [{ x: 300, y: 875, r: 55 }];
+        // The tongue of grass between the pocket's exit and the straight after
+        // it used to carry a fence along the edge of the asphalt, because the
+        // painted armco closes well short of the wedge's tip and cars were
+        // being stopped against nothing. The fence is gone - see THE ARMCO IS
+        // THE WALL in the base class, which makes the paint the thing a car
+        // stops on, here and everywhere else.
 
         this.waypoints = this.generateWaypoints();
     }
