@@ -1570,7 +1570,7 @@ practiceBtn.addEventListener('click', () => {
     // is 9999), so the life line says so instead of quoting a race distance.
     chooseChassisForWeekend(() => {
         chooseTyres('Practice tyres',
-            'Free running: nothing wears out here. Take the set you want to learn.',
+            'Free running: nothing wears out here. Take the set you want to learn — B calls the box to change it, or to mend the car.',
             0, () => startGame());
     });
 });
@@ -4575,6 +4575,7 @@ function renderPitPanel() {
     const order = pitFitOrder();
     const lapPx = car._lapPixels || 2500;
     const lapsLeft = Math.max(0.2, TOTAL_LAPS - car.lap);
+    const practice = raceMode === 'practice';
     const dry = !(typeof isRaining !== 'undefined' && isRaining);  // mid-race: the global is the truth
     const rows = order.map((k, i) => {
         const t = TYRES[k];
@@ -4592,8 +4593,10 @@ function renderPitPanel() {
             '<span class="pp-dot" style="background:' + t.colour + '"></span>' +
             '<span class="pp-name">' + t.label + '</span>' +
             '<span class="pp-pace">' + head + '</span>' +
-            '<span class="pp-laps ' + (ok ? 'pp-ok' : 'pp-short') + '">' +
-            n.toFixed(1) + ' laps' + (ok ? ' ✓' : '') + '</span></div>';
+            // in practice a set lasts the session: no life to count down
+            (practice ? '<span class="pp-laps pp-ok">' + (car.tyre && car.tyre.key === k ? 'on the car now' : '') + '</span>'
+                      : '<span class="pp-laps ' + (ok ? 'pp-ok' : 'pp-short') + '">' + n.toFixed(1) + ' laps' + (ok ? ' ✓' : '') + '</span>') +
+            '</div>';
     }).join('');
     // THE FIELD. Where everyone is, what they are on, and how much of it is
     // left - the half of the decision that is not about you. A rival's
@@ -4653,13 +4656,14 @@ function renderPitPanel() {
         : '<div class="pp-title pp-title-rep">REPAIR</div>' +
           '<div class="pp-row pp-rep pp-rep-none"><span class="pp-key">R</span>' +
           '<span class="pp-name">No damage</span><span class="pp-laps">nothing to mend</span></div>';
+    el.classList.toggle('pp-practice', practice);
     el.innerHTML =
         '<div class="pp-head">IN THE BOX' + (pitPanelSeat === 2 ? ' — Player 2' : '') +
-        '<span class="pp-sub">race held &middot; ' + lapsLeft.toFixed(0) +
-        ' laps to run &middot; the crew is waiting</span></div>' + wx +
+        '<span class="pp-sub">' + (practice ? 'free practice held &middot; the crew is waiting'
+                                            : 'race held &middot; ' + lapsLeft.toFixed(0) + ' laps to run &middot; the crew is waiting') + '</span></div>' + wx +
         '<div class="pp-cols">' +
           '<div class="pp-left"><div class="pp-title">FIT</div>' + rows + repair + '</div>' +
-          '<div class="pp-right"><div class="pp-title">THE FIELD</div>' + fieldRows + '</div>' +
+          (practice ? '' : '<div class="pp-right"><div class="pp-title">THE FIELD</div>' + fieldRows + '</div>') +
         '</div>' +
         '<div class="pp-foot">a number fits that tyre and starts the stop' +
         (repS > 0 ? ' &middot; R mends the damage in the same stop' : '') + '</div>';
@@ -5658,8 +5662,6 @@ function makeTrackRaw(trackType) {
         case 'dedalo':       return new DedaloTrack();
         case 'vallone':      return new ValloneTrack();
         case 'puzzle':       return new PuzzleTrack();
-        case 'fionda':       return new FiondaTrack();
-        case 'tornanti':     return new TornantiTrack();
         case 'monza':        return new MonzaTrack();
         case 'cascade':      return new CascadeTrack();
         case 'bivio':        return new BivioTrack();
@@ -7350,27 +7352,7 @@ const CHASSIS_PACE = {
     // both say what the other long ones say - lungolago 4.0, cascade 4.1,
     // riviera 5.3 - that wing you cannot use down a straight costs 5% of a lap.
     bivio: { best: 'bolt', g: '1nd1i0g', pct: { aero: 5.2, bolt: 0, ridge: 1.8, torque: 1.4 } },
-    silverstone: { best: 'bolt', g: 'h01du0', pct: { aero: 5.2, bolt: 0, ridge: 2.1, torque: 1.4 } },
-    // The engine's two circuits (zoom105), designed by measurement for the
-    // Torque - see the note above FiondaTrack in track.js. Measured with
-    // tools/measure_official.js, best of 63 rather than 21 (three runs of the
-    // protocol pooled), because the top of these two columns is decided by
-    // a tenth or two: over the three runs the Torque was first once at
-    // Fionda and level once at Tornanti, 0.3% off the rest of the time. These
-    // are the only circuits on the calendar where it is within half a per
-    // cent of the best car; nowhere is it clear of the field, and the
-    // geometry alone cannot put it there.
-    // ...and measured a second time at IMPOSSIBLE (`imp`), the level the
-    // career's field races at: there the AI sits on its maxCorner ceiling,
-    // the steering rate is partly thrown away and the engine shows - and the
-    // Torque is the quickest car on both, clear of the Ridge by 0.3 and 0.8%.
-    // Only these two rows carry it: it is the view that explains why these
-    // circuits exist, not a second table. (At Impossible the Torque tops 24
-    // of the 36 columns, which is the AI's ceiling talking, not the cars'.)
-    fionda: { best: 'ridge', g: 'wp90ty', pct: { aero: 1, bolt: 0.2, ridge: 0, torque: 0.3 },
-              imp: { best: 'torque', pct: { aero: 0.9, bolt: 0.6, ridge: 0.3, torque: 0 } } },
-    tornanti: { best: 'bolt', g: 'ybl6l9', pct: { aero: 1.7, bolt: 0, ridge: 0.1, torque: 0.3 },
-                imp: { best: 'torque', pct: { aero: 1.4, bolt: 1.2, ridge: 0.8, torque: 0 } } }
+    silverstone: { best: 'bolt', g: 'h01du0', pct: { aero: 5.2, bolt: 0, ridge: 2.1, torque: 1.4 } }
 };
 
 function chassisPaceFor(key) {
@@ -7396,8 +7378,7 @@ const TRACK_LABELS = {
     maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka',
     lungolago: 'Lungolago', riviera: 'Riviera',
     onda: 'Onda', dedalo: 'Dedalo', vallone: 'Vallone', puzzle: 'Puzzle',
-    monza: 'Monza', cascade: 'Cascade', bivio: 'Bivio', silverstone: 'Silverstone',
-    fionda: 'Fionda', tornanti: 'Tornanti'
+    monza: 'Monza', cascade: 'Cascade', bivio: 'Bivio', silverstone: 'Silverstone'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -7416,8 +7397,7 @@ const TRACK_CODES = {
     maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ',
     lungolago: 'LUN', riviera: 'RIV',
     onda: 'OND', dedalo: 'DED', vallone: 'VAL', puzzle: 'PZL',
-    monza: 'MNZ', cascade: 'CSC', bivio: 'BIV', silverstone: 'SIL',
-    fionda: 'FIO', tornanti: 'TOR'
+    monza: 'MNZ', cascade: 'CSC', bivio: 'BIV', silverstone: 'SIL'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -9677,12 +9657,13 @@ function exOpenTrack(key) {
     // tyre life, none of which a flying lap can see - and a cell that just
     // said "fastest chassis" would quietly call the fourth car pointless.
     // The strip below gives every car's margin, so a 0.1% "win" reads as
-    // the tie it is. The two circuits built for it (Fionda, Tornanti) carry
-    // the Impossible view as well, where it does top the column.
+    // the tie it is. (Measured at Impossible instead, where the AI sits on
+    // its maxCorner ceiling and the steering rate is partly thrown away, the
+    // Torque tops 24 of 36 columns - the ceiling talking, not the cars - which
+    // is why the table stays at Medium.)
     if (pace) cells.push(['Fastest over a lap',
         '<span style="color:' + CHASSIS[pace.best].accent + ';font-weight:bold;">' +
-        CHASSIS[pace.best].label + '</span>' +
-        (pace.imp ? ' <small style="color:#b0bec5;">(at Impossible: ' + CHASSIS[pace.imp.best].label + ')</small>' : '')]);
+        CHASSIS[pace.best].label + '</span>']);
 
     detail.innerHTML =
         `<div class="ex-d-head"><h2>${trackLabel(key)}</h2>` +
@@ -9704,12 +9685,7 @@ function exOpenTrack(key) {
                 `<b style="color:${CHASSIS[k].accent};">${CHASSIS[k].label}</b> ` +
                 (pace.pct[k] ? '+' + pace.pct[k].toFixed(1) + '%' : 'fastest'))
             .join(' &nbsp;&middot;&nbsp; ') +
-            `. Best of twenty-one simulated qualifying laps each, dry, soft tyre.` +
-            (pace.imp ? ` At Impossible, where the field races, ` +
-                CHASSIS_KEYS.slice().sort((x, y) => pace.imp.pct[x] - pace.imp.pct[y]).map(k =>
-                    `<b style="color:${CHASSIS[k].accent};">${CHASSIS[k].label}</b> ` +
-                    (pace.imp.pct[k] ? '+' + pace.imp.pct[k].toFixed(1) + '%' : 'fastest')).join(' &nbsp;&middot;&nbsp; ') + '.' : '') +
-            `</div>` : '') +
+            `. Best of twenty-one simulated qualifying laps each, dry, soft tyre.</div>` : '') +
         `<div class="ex-rec" id="ex-rec"></div>` +
         `</div></div>` +
         exTrackHistoryHtml(key);
@@ -11060,10 +11036,16 @@ function startGame(forceTrackType = null) {
 
     // Pit stops: a race rule, never a session one. The championship carries
     // its own setting so a resumed season keeps the rules it started under.
-    pitModeOn = !isPractice &&
+    // FREE PRACTICE HAS THE BOX OPEN ALWAYS (zoom106, Nicola): a session
+    // with no flag is where you try a compound and where you mend a car you
+    // have just put in the wall - B calls the box, the panel offers every
+    // tyre and the repair. The wear law stays practice's own (a set lasts
+    // the session), so the box there is for the compound and the damage, not
+    // for the rubber running out.
+    pitModeOn = isPractice ? true :
         (isChampionship ? !!(championshipState && championshipState.pitStops)
                         : pitStopsEnabled());
-    pitRoadWear = pitModeOn;
+    pitRoadWear = pitModeOn && !isPractice;
     pitPanelSeat = 0;              // no session inherits an open pit wall
     pitPanelPausedAt = 0;
     renderPitPanel();
@@ -15000,9 +14982,7 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      // ...and the one that splits in two
                      'bivio',
                      // ...and the real one
-                     'silverstone',
-                     // ...and the engine's two: see FiondaTrack in track.js
-                     'fionda', 'tornanti'];
+                     'silverstone'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:

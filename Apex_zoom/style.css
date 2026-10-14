@@ -2362,6 +2362,9 @@ button.menu-danger {
 #pit-panel .pp-laps { flex: 1; text-align: right; }
 #pit-panel .pp-ok { color: #66bb6a; }
 #pit-panel .pp-short { color: #ffa726; }
+/* in practice the panel is the compounds and the repair, nothing to the right */
+#pit-panel.pp-practice { min-width: 380px; }
+#pit-panel.pp-practice .pp-left { flex: 1 1 auto; }
 /* the repair: one row under the compounds, on or off with R */
 #pit-panel .pp-title-rep { margin-top: 10px; }
 #pit-panel .pp-rep .pp-name { flex: 0 0 84px; }
