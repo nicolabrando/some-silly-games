@@ -5125,6 +5125,106 @@ class ValloneTrack extends SegmentedTrack {
 
 
 // =============================================================================
+//  THE ENGINE'S TWO CIRCUITS: FIONDA and TORNANTI (zoom105).
+//
+//  Nicola asked for a small circuit and an XL one where the Torque chassis -
+//  the big engine, the loose rear - is the car to have. So they were DESIGNED
+//  BY MEASUREMENT (tools/design_track.js writes a lap as a turtle path and
+//  solves two straights to close it; tools/measure_track.js injects the
+//  candidate and asks the game's own simulator, thirty laps a chassis, which
+//  car is quickest) and the measurement says something worth writing down:
+//
+//  In this physics the steering rate binds in every corner and the four cars
+//  differ in it, so EVERY degree of turning costs the Torque about 25 ms a
+//  radian against the Ridge and twice that against the Aero, whatever the
+//  radius. What the engine buys back is the run out of a slow corner: from a
+//  hairpin exit at ~100 px/s the Torque is 4% up on the Ridge after 500 px
+//  and only level with the Bolt until ~270 px/s, past which the low-drag car
+//  pulls away. So the recipe is wide 180-degree hairpins - where the Bolt's
+//  grip and steering cost it 50 ms a corner - followed by 600-750 px of road,
+//  and nothing else: no medium corners (Aero's), no long straights (Bolt's).
+//  Short units and the Aero wins (st_80_380: +1.5% on everyone); long ones and
+//  the Bolt does (pc_60_800); the comb of 90-degree corners with 160-250 px
+//  between them that first came to mind was the worst of all for it.
+//
+//  On that recipe the four come out within half a per cent of each other, the
+//  Torque level with the best - which no other circuit on the calendar gives
+//  it (it is 0.1 to 1.9% off everywhere else). It is not clear of the field
+//  by the geometry alone, and the CHASSIS_PACE rows say what was measured.
+// =============================================================================
+//  FIONDA - the slingshot. Three wide hairpins (r 110 on a 64px road) with
+//  540 to 720 px out of each, and a box end whose own straight is 460. 4331px.
+//  The line is on the top straight with 500px of it behind for the grid.
+class FiondaTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 1360;
+        this.worldH = 860;
+        this.trackWidth = 64;
+        this.grassWidth = 84;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 220, y2: 0 },
+            { type: 'arc', cx: 220, cy: 110, r: 110, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 220, y1: 220, x2: -320, y2: 220 },
+            { type: 'arc', cx: -320, cy: 330, r: 110, start: 4.71239, end: 1.5708, ccw: true },
+            { type: 'line', x1: -320, y1: 440, x2: 220, y2: 440 },
+            { type: 'arc', cx: 220, cy: 550, r: 110, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 220, y1: 660, x2: -500, y2: 660 },
+            { type: 'arc', cx: -500, cy: 560, r: 100, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: -600, y1: 560, x2: -600, y2: 100 },
+            { type: 'arc', cx: -500, cy: 100, r: 100, start: 3.14159, end: 4.71239, ccw: false },
+            { type: 'line', x1: -500, y1: 0, x2: 0, y2: 0 }
+        ];
+
+        this.startX = 0;
+        this.startY = 0;
+
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+//  TORNANTI - the hairpins, XL. Five of them down a comb with 700px between,
+//  and the climb back up the side is one 740px straight between two 90s, so
+//  every corner on the lap is followed by a long run. 6725px. The line is on
+//  the second tooth, with 500px behind it for the grid. Mirrored: it turns
+//  left on balance, which the comb-shaped circuits before it did not.
+class TornantiTrack extends SegmentedTrack {
+    constructor() {
+        super();
+        this.worldW = 2200;
+        this.worldH = 1500;
+        this.trackWidth = 64;
+        this.grassWidth = 84;
+
+        this.segments = [
+            { type: 'line', x1: 0, y1: 0, x2: 200, y2: 0 },
+            { type: 'arc', cx: 200, cy: 90, r: 90, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 200, y1: 180, x2: -500, y2: 180 },
+            { type: 'arc', cx: -500, cy: 270, r: 90, start: 4.71239, end: 1.5708, ccw: true },
+            { type: 'line', x1: -500, y1: 360, x2: 200, y2: 360 },
+            { type: 'arc', cx: 200, cy: 450, r: 90, start: -1.5708, end: 1.5708, ccw: false },
+            { type: 'line', x1: 200, y1: 540, x2: -560, y2: 540 },
+            { type: 'arc', cx: -560, cy: 460, r: 80, start: 1.5708, end: 3.14159, ccw: false },
+            { type: 'line', x1: -640, y1: 460, x2: -640, y2: -280 },
+            { type: 'arc', cx: -560, cy: -280, r: 80, start: 3.14159, end: 4.71239, ccw: false },
+            { type: 'line', x1: -560, y1: -360, x2: 200, y2: -360 },
+            { type: 'arc', cx: 200, cy: -270, r: 90, start: 4.71239, end: 7.85398, ccw: false },
+            { type: 'line', x1: 200, y1: -180, x2: -500, y2: -180 },
+            { type: 'arc', cx: -500, cy: -90, r: 90, start: 10.99557, end: 7.85398, ccw: true },
+            { type: 'line', x1: -500, y1: 0, x2: 0, y2: 0 }
+        ];
+
+        this.startX = 0;
+        this.startY = 0;
+
+        this.mirrorVertically();
+        this.waypoints = this.generateWaypoints();
+    }
+}
+
+
+// =============================================================================
 //  PUZZLE, XL. Two leaves of the rosa camuna, and a real circuit around them.
 //
 //  The name came after the drawing: one leaf hangs OUT of the lap and the

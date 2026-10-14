@@ -5658,6 +5658,8 @@ function makeTrackRaw(trackType) {
         case 'dedalo':       return new DedaloTrack();
         case 'vallone':      return new ValloneTrack();
         case 'puzzle':       return new PuzzleTrack();
+        case 'fionda':       return new FiondaTrack();
+        case 'tornanti':     return new TornantiTrack();
         case 'monza':        return new MonzaTrack();
         case 'cascade':      return new CascadeTrack();
         case 'bivio':        return new BivioTrack();
@@ -7348,7 +7350,27 @@ const CHASSIS_PACE = {
     // both say what the other long ones say - lungolago 4.0, cascade 4.1,
     // riviera 5.3 - that wing you cannot use down a straight costs 5% of a lap.
     bivio: { best: 'bolt', g: '1nd1i0g', pct: { aero: 5.2, bolt: 0, ridge: 1.8, torque: 1.4 } },
-    silverstone: { best: 'bolt', g: 'h01du0', pct: { aero: 5.2, bolt: 0, ridge: 2.1, torque: 1.4 } }
+    silverstone: { best: 'bolt', g: 'h01du0', pct: { aero: 5.2, bolt: 0, ridge: 2.1, torque: 1.4 } },
+    // The engine's two circuits (zoom105), designed by measurement for the
+    // Torque - see the note above FiondaTrack in track.js. Measured with
+    // tools/measure_official.js, best of 63 rather than 21 (three runs of the
+    // protocol pooled), because the top of these two columns is decided by
+    // a tenth or two: over the three runs the Torque was first once at
+    // Fionda and level once at Tornanti, 0.3% off the rest of the time. These
+    // are the only circuits on the calendar where it is within half a per
+    // cent of the best car; nowhere is it clear of the field, and the
+    // geometry alone cannot put it there.
+    // ...and measured a second time at IMPOSSIBLE (`imp`), the level the
+    // career's field races at: there the AI sits on its maxCorner ceiling,
+    // the steering rate is partly thrown away and the engine shows - and the
+    // Torque is the quickest car on both, clear of the Ridge by 0.3 and 0.8%.
+    // Only these two rows carry it: it is the view that explains why these
+    // circuits exist, not a second table. (At Impossible the Torque tops 24
+    // of the 36 columns, which is the AI's ceiling talking, not the cars'.)
+    fionda: { best: 'ridge', g: 'wp90ty', pct: { aero: 1, bolt: 0.2, ridge: 0, torque: 0.3 },
+              imp: { best: 'torque', pct: { aero: 0.9, bolt: 0.6, ridge: 0.3, torque: 0 } } },
+    tornanti: { best: 'bolt', g: 'ybl6l9', pct: { aero: 1.7, bolt: 0, ridge: 0.1, torque: 0.3 },
+                imp: { best: 'torque', pct: { aero: 1.4, bolt: 1.2, ridge: 0.8, torque: 0 } } }
 };
 
 function chassisPaceFor(key) {
@@ -7374,7 +7396,8 @@ const TRACK_LABELS = {
     maratona: 'Marathon', colosso: 'Colossus', spa: 'Spa', suzuka: 'Suzuka',
     lungolago: 'Lungolago', riviera: 'Riviera',
     onda: 'Onda', dedalo: 'Dedalo', vallone: 'Vallone', puzzle: 'Puzzle',
-    monza: 'Monza', cascade: 'Cascade', bivio: 'Bivio', silverstone: 'Silverstone'
+    monza: 'Monza', cascade: 'Cascade', bivio: 'Bivio', silverstone: 'Silverstone',
+    fionda: 'Fionda', tornanti: 'Tornanti'
 };
 
 // The three-letter code, written out rather than sliced off the label, for two
@@ -7393,7 +7416,8 @@ const TRACK_CODES = {
     maratona: 'MAR', colosso: 'COL', spa: 'SPA', suzuka: 'SUZ',
     lungolago: 'LUN', riviera: 'RIV',
     onda: 'OND', dedalo: 'DED', vallone: 'VAL', puzzle: 'PZL',
-    monza: 'MNZ', cascade: 'CSC', bivio: 'BIV', silverstone: 'SIL'
+    monza: 'MNZ', cascade: 'CSC', bivio: 'BIV', silverstone: 'SIL',
+    fionda: 'FIO', tornanti: 'TOR'
 };
 
 // Every place a circuit is NAMED goes through these two. A raw key must never
@@ -9648,14 +9672,17 @@ function exOpenTrack(key) {
         ['Tightest corner', Math.round(exTightest(track)) + ' m']
     ];
     const pace = chassisPaceFor(key);
-    // "over a lap", said out loud: Torque never tops this column ANYWHERE -
-    // its pace lives in race starts, traction and tyre life, none of which a
-    // flying lap can see - and a cell that just said "fastest chassis" would
-    // quietly call the fourth car pointless. The strip below gives every
-    // car's margin, so a 0.1% "win" reads as the tie it is.
+    // "over a lap", said out loud: Torque never tops this column ANYWHERE at
+    // the table's difficulty - its pace lives in race starts, traction and
+    // tyre life, none of which a flying lap can see - and a cell that just
+    // said "fastest chassis" would quietly call the fourth car pointless.
+    // The strip below gives every car's margin, so a 0.1% "win" reads as
+    // the tie it is. The two circuits built for it (Fionda, Tornanti) carry
+    // the Impossible view as well, where it does top the column.
     if (pace) cells.push(['Fastest over a lap',
         '<span style="color:' + CHASSIS[pace.best].accent + ';font-weight:bold;">' +
-        CHASSIS[pace.best].label + '</span>']);
+        CHASSIS[pace.best].label + '</span>' +
+        (pace.imp ? ' <small style="color:#b0bec5;">(at Impossible: ' + CHASSIS[pace.imp.best].label + ')</small>' : '')]);
 
     detail.innerHTML =
         `<div class="ex-d-head"><h2>${trackLabel(key)}</h2>` +
@@ -9677,7 +9704,12 @@ function exOpenTrack(key) {
                 `<b style="color:${CHASSIS[k].accent};">${CHASSIS[k].label}</b> ` +
                 (pace.pct[k] ? '+' + pace.pct[k].toFixed(1) + '%' : 'fastest'))
             .join(' &nbsp;&middot;&nbsp; ') +
-            `. Best of twenty-one simulated qualifying laps each, dry, soft tyre.</div>` : '') +
+            `. Best of twenty-one simulated qualifying laps each, dry, soft tyre.` +
+            (pace.imp ? ` At Impossible, where the field races, ` +
+                CHASSIS_KEYS.slice().sort((x, y) => pace.imp.pct[x] - pace.imp.pct[y]).map(k =>
+                    `<b style="color:${CHASSIS[k].accent};">${CHASSIS[k].label}</b> ` +
+                    (pace.imp.pct[k] ? '+' + pace.imp.pct[k].toFixed(1) + '%' : 'fastest')).join(' &nbsp;&middot;&nbsp; ') + '.' : '') +
+            `</div>` : '') +
         `<div class="ex-rec" id="ex-rec"></div>` +
         `</div></div>` +
         exTrackHistoryHtml(key);
@@ -14968,7 +15000,9 @@ const SEASON_POOL = ['oval', 'peanut', 'f1', 'circomassimo', 'circle', 'serpent'
                      // ...and the one that splits in two
                      'bivio',
                      // ...and the real one
-                     'silverstone'];
+                     'silverstone',
+                     // ...and the engine's two: see FiondaTrack in track.js
+                     'fionda', 'tornanti'];
 const SEASON_DEFAULT = 10;
 
 // Quanto va piu' forte il rivale della stagione. Il numero non e' a occhio:
