@@ -571,6 +571,11 @@ let pitRoadWear = false;    // ...and measures a set in road rather than in
                             // pitRoadWearAhead for why.
 let pitPanelSeat = 0;       // 0 = the box panel is closed, else whose it is
 let pitPanelPausedAt = 0;   // wall-clock moment the race was held at
+// The stewards (zoom107) - see THE STEWARDS, beside the pit code. Up here for
+// the same reason as the pit globals: the menu and the tyre screen ask.
+let stewardsOn = false;     // this race has stewards watching the contact
+let stewardsQueue = [];     // verdicts waiting to be read over the radio
+let stewardsBook = [];      // every verdict of this race, for the results sheet
 // Hoisted up here with the other pit globals, and not left beside
 // chooseTyres where it was declared: pitRulesOn reads it now, and a `let`
 // in a classic script is in its temporal dead zone until its own line runs
@@ -1294,6 +1299,13 @@ window.addEventListener('keydown', (e) => {
     if (typeof pitPanelSeat !== 'undefined' && pitPanelSeat && k === 'r' &&
         typeof pitToggleRepair === 'function' && pitToggleRepair()) {
         e.preventDefault(); return;
+    }
+    // ...and P, with the panel open, serves the stewards' penalty in the
+    // same stop (THE STEWARDS). P is also the pause key, so while the panel
+    // is up it is this and only this - the pause handler stands aside.
+    if (typeof pitPanelSeat !== 'undefined' && pitPanelSeat && k === 'p') {
+        if (typeof pitTogglePenalty === 'function') pitTogglePenalty();
+        e.preventDefault(); e.stopImmediatePropagation(); return;
     }
     if (k === 'b' && typeof playerCar !== 'undefined' && playerCar) {
         pitToggleBox(playerCar, 1); e.preventDefault(); return;
@@ -2024,6 +2036,8 @@ window.addEventListener('keydown', (e) => {
     const k = e.key;
     if (k === 'p' || k === 'P' || k === 'Escape' || k === ' ' || k === 'Spacebar') {
         if (typingInAField(e)) return;
+        // the box panel owns P while it is open (the stewards' penalty)
+        if ((k === 'p' || k === 'P') && typeof pitPanelSeat !== 'undefined' && pitPanelSeat) return;
         if (gameState === 'playing' || gameState === 'countdown') {
             e.preventDefault();
             setPaused(!isPaused);
@@ -2368,9 +2382,281 @@ function pitRepairSeconds(car) {
     return dmg < 0.005 ? 0 : PIT_REPAIR_FULL * dmg;
 }
 // Nominal time stationary for the stop a car is about to make: tyres, plus
-// the repair if it has been called for.
+// the repair if it has been called for, plus a penalty if it is being served
+// here (THE STEWARDS, below): the car sits untouched for the penalty first,
+// then the crew goes to work.
 function pitStopSeconds(car) {
-    return PIT_TIME + (car && car.pitRepair ? pitRepairSeconds(car) : 0);
+    return PIT_TIME + (car && car.pitRepair ? pitRepairSeconds(car) : 0) +
+           (car && car.pitServePenalty ? (car.penaltyS || 0) : 0);
+}
+
+// ===========================================================================
+//  THE STEWARDS (zoom107, Nicola - "Appunti su Apex Career")
+//
+//  Every contact worth at least STEWARDS_MIN_DMG on the standard damage curve
+//  is looked at, and somebody is usually to blame: the car that came back onto
+//  the road from the grass into traffic, the car crawling on the racing line,
+//  the car that moved across into one alongside it, or - the oldest rule in
+//  racing - the car that ran into the back of the one in front. Five seconds,
+//  every time, added up if there is more than one. Side by side with neither
+//  car moving across is a racing incident, and nothing happens.
+//
+//  SERVING IT. At the box, before the crew touches the car: P on the pit
+//  panel arms it, and the stop runs the penalty longer. An AI serves it at
+//  whatever stop it was going to make anyway. A penalty still owed at the flag
+//  is added to the race time, exactly like a jumped start; a penalty owed by a
+//  car that never sees the flag (a DNF) cannot be paid in time at all, so it
+//  becomes the back of the grid at the next Grand Prix - carried on the
+//  season (championshipState.gridPen) and applied when that grid is built.
+//
+//  WHAT THE VERDICT READS. The physics at the moment of contact: who was on
+//  the grass just before (a run of GRASS_RUN seconds, not two wheels nudged
+//  off by the very touch being judged), who was crawling (under 90 px/s,
+//  under a third of what the racing line is worth there, under half the
+//  other car's speed - never in the first seconds after the lights, where
+//  everybody is slow), who was moving across (lateral speed toward the other
+//  car over 28 px/s and clearly more than the other's), and who was ahead
+//  along the road (the two positions projected on the road's own tangent at
+//  their racing-line nodes - all of it read in the ROAD'S frame, and from the
+//  velocities as they were BEFORE the bounce, which the collision code has
+//  already applied by the time the stewards look). A car that was itself hit
+//  hard a moment ago and is now sitting across the road is not blamed for
+//  being slow: whoever piles into it is a racing incident.
+//
+//  The threshold is on the STANDARD curve (a 255 hp car, free band 65 px/s),
+//  not on the damage actually billed: the player's gentle curve and the "no
+//  AI handicap" box move the bill, and the stewards do not care which rules a
+//  driver's bodywork is on. 15 hp is where the race log starts calling a
+//  touch a CONTACT (closing speed about 87 px/s): light rubbing stays free.
+// ===========================================================================
+const STEWARDS_MIN_DMG = 15;        // hp on the standard curve: the smallest contact that is looked at
+const STEWARDS_PENALTY_S = 5;       // seconds, each verdict
+const STEWARDS_PAIR_GAP_MS = 3000;  // one verdict per pair per shunt
+const STEWARDS_GRASS_RUN = 0.35;    // seconds on the grass before a car counts as off the road
+const STEWARDS_GRASS_MEM = 800;     // ...and for how long after it is "rejoining" (200px of road at racing speed)
+const STEWARDS_SAY_DELAY = 2000;    // ms between the contact and the radio: the stewards look first
+// the four verdicts, in the words the log, your own radio and the rival's use
+const STEWARDS_REASONS = {
+    rejoin: { log: 'rejoined the track into {o}',
+              you: 'you rejoined the track into {o}', him: 'he rejoined the track into you', short: 'rejoined the track' },
+    slow:   { log: 'too slow on the racing line in front of {o}',
+              you: 'you were too slow on the racing line in front of {o}', him: 'he was too slow on the racing line in front of you', short: 'too slow on the racing line' },
+    cut:    { log: 'cut across {o}',
+              you: 'you cut across {o}', him: 'he cut across you', short: 'cut across' },
+    rear:   { log: 'ran into the back of {o}',
+              you: 'you ran into the back of {o}', him: 'he ran into the back of you', short: 'ran into the back' }
+};
+function stewardsEnabled() {
+    const box = document.getElementById('stewards-checkbox');
+    return !!(box && box.checked);
+}
+// Will the race we are about to start have stewards? Same shape as the pit
+// question: the championship carries its own rule.
+function stewardsWanted() {
+    if (isChampionship && championshipState && championshipState.stewards !== undefined)
+        return !!championshipState.stewards;
+    return stewardsEnabled();
+}
+// The standard damage curve, as a function of closing speed (see the
+// car-to-car contact in updatePhysics for where the numbers come from).
+function stewardsImpact(closing) {
+    return closing <= 65 ? 0 : 320 * Math.pow((closing - 65) / 100, 2);
+}
+function stewardsName(car) { return (car && (car.driverName || car.color)) || '?'; }
+// Each frame: how long a car has been on the grass, and when it last counted
+// as off the road. Read by the verdict; written from the physics step.
+function stewardsTrackSurface(c, dt, nowMs) {
+    if (c.surfaceNow === 'grass') {
+        c._grassRun = (c._grassRun || 0) + dt;
+        if (c._grassRun >= STEWARDS_GRASS_RUN) c._grassAt = nowMs;
+    } else {
+        c._grassRun = 0;
+    }
+}
+// The verdict on one contact. v1 and v2 are the velocities as they were the
+// instant BEFORE the bounce (the collision code has already applied its
+// impulse by the time the stewards see the cars). Returns { guilty, victim,
+// reason } with reason one of STEWARDS_REASONS' keys, or { guilty: null,
+// reason: 'incident' }.
+function stewardsJudge(c1, c2, v1, v2, nowMs) {
+    const line = (track && typeof track.getRacingLine === 'function') ? track.getRacingLine('standard') : null;
+    const node = (c) => (line && c._nodeIdx !== undefined && line.nodes[c._nodeIdx]) || null;
+    const n1 = node(c1), n2 = node(c2);
+    // THE ROAD'S FRAME: one tangent for both cars (they are 22px apart), the
+    // mean of the two nodes' - or of the two headings, with no line to ask.
+    let tx = (n1 && isFinite(n1.tx) ? n1.tx : Math.cos(c1.angle)) + (n2 && isFinite(n2.tx) ? n2.tx : Math.cos(c2.angle));
+    let ty = (n1 && isFinite(n1.ty) ? n1.ty : Math.sin(c1.angle)) + (n2 && isFinite(n2.ty) ? n2.ty : Math.sin(c2.angle));
+    const tl = Math.hypot(tx, ty);
+    if (tl < 1e-6) { tx = Math.cos(c1.angle); ty = Math.sin(c1.angle); } else { tx /= tl; ty /= tl; }
+    const look = (c, v, o, n) => {
+        // the lateral unit, pointed at the other car
+        let px = -ty, py = tx;
+        if (px * (o.x - c.x) + py * (o.y - c.y) < 0) { px = -px; py = -py; }
+        return {
+            sp: Math.hypot(v.x, v.y),
+            lon: v.x * tx + v.y * ty,              // along the road, + forwards
+            lat: v.x * px + v.y * py,              // across it, + towards the other car
+            exp: n && isFinite(n.vCorner) ? Math.min(320, n.vCorner) : 320,
+            grass: c._grassAt !== undefined && nowMs - c._grassAt < STEWARDS_GRASS_MEM,
+            hit: c._stewHitAt !== undefined && nowMs - c._stewHitAt < 2500
+        };
+    };
+    const a = look(c1, v1, c2, n1), b = look(c2, v2, c1, n2);
+    // who is ahead along the road, and by how much: + means c1
+    const ds = (c1.x - c2.x) * tx + (c1.y - c2.y) * ty;
+    const gap = Math.abs(ds);
+    const A = ds >= 0 ? a : b, B = ds >= 0 ? b : a;          // ahead, behind
+    const aheadCar = ds >= 0 ? c1 : c2, behindCar = ds >= 0 ? c2 : c1;
+    // what the verdict was read off, kept with it: the log of a season is
+    // the only way a rule like this gets re-tuned
+    const dbg = { ds: Math.round(ds), sa: Math.round(a.sp), sb: Math.round(b.sp), oa: Math.round(a.lon), ob: Math.round(b.lon),
+                  la: Math.round(a.lat), lb: Math.round(b.lat), ea: Math.round(a.exp), eb: Math.round(b.exp),
+                  ga: a.grass ? 1 : 0, gb: b.grass ? 1 : 0, ha: a.hit ? 1 : 0, hb: b.hit ? 1 : 0 };
+    const verdict = (g, reason) => ({ guilty: g, victim: g === c1 ? c2 : c1, reason: reason, dbg: dbg });
+    const incident = { guilty: null, victim: null, reason: 'incident', dbg: dbg };
+    const started = (track.currentRaceTime || 0) >= 5000;
+    // 1. one car came back onto the road from the grass
+    if (a.grass !== b.grass) return verdict(a.grass ? c1 : c2, 'rejoin');
+    // 2. one car was crawling on the racing line - not in the first seconds
+    //    after the lights, where everybody is - or the car in front was
+    //    going BACKWARDS into the one behind (spun, and still travelling)
+    const slow = (i, j) => i.sp < 90 && i.sp < 0.35 * i.exp && i.sp < 0.45 * j.sp;
+    if (started) {
+        if (slow(a, b) && !slow(b, a)) return a.hit ? incident : verdict(c1, 'slow');
+        if (slow(b, a) && !slow(a, b)) return b.hit ? incident : verdict(c2, 'slow');
+    }
+    if (gap >= 10 && A.lon < -10 && B.lon > 0) return A.hit ? incident : verdict(aheadCar, 'slow');
+    // 3. side by side, one car moved across into the other
+    const across = (i, j) => i.lat > 28 && i.lat > 1.8 * Math.max(0, j.lat);
+    if (gap < 20) {
+        if (across(a, b) && !across(b, a)) return verdict(c1, 'cut');
+        if (across(b, a) && !across(a, b)) return verdict(c2, 'cut');
+    }
+    // 4. nose to tail, and the car behind was the one closing - or barely
+    //    alongside but arriving a great deal faster, which is the same thing
+    if (gap >= 14 && B.lon > A.lon) return verdict(behindCar, 'rear');
+    if (gap >= 4 && B.lon > A.lon + 60) return verdict(behindCar, 'rear');
+    return incident;
+}
+// A contact worth looking at has happened between c1 and c2 at `closing`
+// px/s along the normal (nx, ny) from c1 to c2, and the collision code has
+// just applied `impulse` along it (c1 minus, c2 plus) and billed the damage.
+function stewardsContact(c1, c2, closing, nx, ny, impulse) {
+    if (!stewardsOn || !c1 || !c2) return;
+    if (stewardsImpact(closing) < STEWARDS_MIN_DMG) return;
+    // the velocities as they were before the bounce
+    const j = impulse || 0;
+    const v1 = { x: c1.velocity.x + j * (nx || 0), y: c1.velocity.y + j * (ny || 0) };
+    const v2 = { x: c2.velocity.x - j * (nx || 0), y: c2.velocity.y - j * (ny || 0) };
+    const nowMs = (track && isFinite(track.currentRaceTime)) ? track.currentRaceTime : 0;
+    // one verdict per pair per shunt
+    const seen = c1._stewPair || (c1._stewPair = {});
+    if (nowMs - (seen[c2.uid] || 0) < STEWARDS_PAIR_GAP_MS) return;
+    seen[c2.uid] = nowMs;
+    (c2._stewPair || (c2._stewPair = {}))[c1.uid] = nowMs;
+    const v = stewardsJudge(c1, c2, v1, v2, nowMs);
+    // both cars were in a real shunt just now: the next car to arrive on a
+    // spun one is not that one's fault
+    c1._stewHitAt = nowMs; c2._stewHitAt = nowMs;
+    const lap = Math.max(c1.lap, c2.lap) + 1;
+    const entry = { lap: lap, t: nowMs, reason: v.reason, closing: Math.round(closing),
+                    who: v.guilty ? stewardsName(v.guilty) : null,
+                    other: v.victim ? stewardsName(v.victim) : null,
+                    pair: [stewardsName(c1), stewardsName(c2)],
+                    s: v.guilty ? STEWARDS_PENALTY_S : 0, dbg: v.dbg || null };
+    stewardsBook.push(entry);
+    if (v.guilty) {
+        const g = v.guilty;
+        g.penaltyS = (g.penaltyS || 0) + STEWARDS_PENALTY_S;
+        (g.penalties = g.penalties || []).push({ lap: lap, reason: v.reason, other: stewardsName(v.victim), s: STEWARDS_PENALTY_S });
+        if (typeof RaceLog !== 'undefined')
+            RaceLog.event('STEWARDS', `${stewardsName(g)} — ${STEWARDS_PENALTY_S} s penalty: ` +
+                STEWARDS_REASONS[v.reason].log.replace('{o}', stewardsName(v.victim)) +
+                ` (closing ${closing.toFixed(0)} px/s, ${(g.penaltyS).toFixed(0)} s owed)`);
+    } else if (typeof RaceLog !== 'undefined') {
+        RaceLog.event('STEWARDS', `${stewardsName(c1)} / ${stewardsName(c2)} — racing incident, ` +
+            `no further action (closing ${closing.toFixed(0)} px/s)`);
+    }
+    // the radio, a couple of seconds on: the stewards look before they speak
+    if (!skipMode && (c1.isPlayer || c2.isPlayer))
+        stewardsQueue.push({ at: nowMs + STEWARDS_SAY_DELAY, v: v, c1: c1, c2: c2 });
+}
+// Read out what is due. Runs from the physics step.
+function stewardsSpeak() {
+    if (!stewardsQueue.length) return;
+    const nowMs = (track && isFinite(track.currentRaceTime)) ? track.currentRaceTime : 0;
+    while (stewardsQueue.length && stewardsQueue[0].at <= nowMs) {
+        const q = stewardsQueue.shift();
+        const me = q.c1.isPlayer ? q.c1 : q.c2;
+        const other = me === q.c1 ? q.c2 : q.c1;
+        if (!me || me.finished || twoPlayer) continue;
+        const R = STEWARDS_REASONS[q.v.reason];
+        if (!q.v.guilty) {
+            if (!me.isBroken) radioSay(radioLine('penNone', { name: radioName(other) }), 3);
+        } else if (q.v.guilty === me) {
+            const what = R.you.replace('{o}', radioName(other));
+            // out of the race: the penalty cannot be served, and in a season
+            // it follows you to the next grid
+            const key = me.isBroken ? (isChampionship ? 'penYouOutSeason' : 'penYouOut')
+                                    : (pitModeOn ? 'penYou' : 'penYouNoBox');
+            radioSay(radioLine(key, { what: what, s: me.penaltyS }), 3);
+            // ...and on the screen too, radio or no radio: a verdict against
+            // you is not something to find out about from a red tag
+            stewardsBanner(what, me);
+        } else if (!me.isBroken) {
+            radioSay(radioLine('penHim', { name: radioName(other), what: R.him }), 3);
+        }
+    }
+}
+// The strip at the head of the arena, for four seconds: the verdict against
+// the player's own car, and where it gets paid.
+function stewardsBanner(what, me) {
+    if (typeof winnerAnnouncement === 'undefined' || !winnerAnnouncement || !winnerText) return;
+    if (gameState !== 'playing') return;
+    const where = me.isBroken ? (isChampionship ? 'out of the race — the back of the grid at the next round' : 'out of the race')
+                : (pitModeOn ? 'P at the box serves it · otherwise added at the flag' : 'added to the race time at the flag');
+    winnerAnnouncement.style.display = 'block';
+    winnerAnnouncement.style.backgroundColor = 'rgba(20,0,0,0.92)';
+    winnerText.style.color = '#fff';
+    winnerText.innerHTML =
+        '<div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #ff5252;">STEWARDS — ' + STEWARDS_PENALTY_S + ' SECOND PENALTY</div>' +
+        '<div style="font-size: 15px; color: #fff; margin-top: 4px;">' + what.charAt(0).toUpperCase() + what.slice(1) + '</div>' +
+        '<div style="font-size: 12px; color: #ffd54f; margin-top: 4px;">' + (me.penaltyS > STEWARDS_PENALTY_S ? me.penaltyS + ' s owed in all · ' : '') + where + '</div>';
+    clearTimeout(stewardsBanner._t);
+    stewardsBanner._t = setTimeout(() => {
+        winnerAnnouncement.style.display = 'none';
+        winnerAnnouncement.style.backgroundColor = '';
+    }, 4000);
+}
+// P while the panel is open: the penalty is served in this stop, or carried.
+function pitTogglePenalty() {
+    if (!pitPanelSeat) return false;
+    const car = pitPanelCar();
+    if (!car || car.pitPhase !== 'stopped') return false;
+    if (!(car.penaltyS > 0)) return false;
+    car.pitServePenalty = !car.pitServePenalty;
+    renderPitPanel();
+    return true;
+}
+// The grid penalties owed at THIS round of a championship: entries written
+// at an earlier round and not yet served.
+function stewardsGridDue() {
+    if (!isChampionship || !championshipState || !Array.isArray(championshipState.gridPen)) return [];
+    const now = championshipState.currentTrackIndex;
+    return championshipState.gridPen.filter(g => g && g.from < now);
+}
+function stewardsGridMatch(g, p) {
+    if (!g || !p) return false;
+    if (g.name && p.driverName) return g.name === p.driverName;
+    return !!g.color && g.color === p.color;
+}
+// A line for the Grand Prix preview and the briefing: who starts from the
+// back, and why.
+function stewardsGridText() {
+    const due = stewardsGridDue();
+    if (!due.length) return '';
+    return due.map(g => `${g.name || g.color} starts from the back — ` +
+        `${g.s || STEWARDS_PENALTY_S} s penalty never served at ${g.track ? trackLabel(g.track) : 'the last round'}`).join(' · ');
 }
 const PIT_BOX_BACK = 70;       // box centre, px before the start line
 const PIT_LANE_IN = 16;
@@ -3108,6 +3394,52 @@ const RADIO_LINES = {
         'Car is as new, {tyre} on. Go!',
         'All repaired. {tyre} on, go go go.',
         'That is the damage sorted and fresh {tyre}. Go!'
+    ],
+    // ...and when the stop also paid off the stewards (THE STEWARDS)
+    penaltyOn: [
+        'Penalty served, {tyre} on. Go go go.',
+        'That is the penalty done and {tyre} fitted. Release!',
+        '{tyre} on, penalty served, we are clear with the stewards. Go!',
+        'Time served. {tyre} on, go go go.'
+    ],
+
+    // ---- the stewards ----------------------------------------------------------
+    // {what} is the verdict in a clause: "you cut across Hamilton", "you were
+    // too slow on the racing line in front of Senna". {s} is what is owed now.
+    penYou: [
+        'Five second penalty, I am afraid. The stewards say {what}. Serve it at the box with P, or it goes on at the flag.',
+        'Stewards have given you five seconds: {what}. We can serve it at your stop, press P on the panel, or take it at the flag.',
+        'Bad news from race control. Five seconds, {what}. P at the box serves it, otherwise it is added at the end.',
+        'Five seconds from the stewards. Their words: {what}. {s} seconds owed now. P at the box to serve it.'
+    ],
+    // no box this race: it can only go on at the flag
+    penYouNoBox: [
+        'Five second penalty from the stewards, {what}. It goes on your race time at the flag.',
+        'Race control have given you five seconds: {what}. Added at the end. Make it back on the road.',
+        'Five seconds, I am afraid. The stewards say {what}. It is added at the flag, so push.'
+    ],
+    // out of the race with a penalty owed
+    penYouOut: [
+        'And the stewards have given you five seconds for the contact: {what}. Academic now.',
+        'Race control: five seconds, {what}. Not that it matters any more today.'
+    ],
+    penYouOutSeason: [
+        'The stewards have given you five seconds, {what}. You are out, so it is the back of the grid next time.',
+        'Race control: five seconds for the contact, {what}. We cannot serve it, so we start last at the next round.',
+        'Five seconds from the stewards, {what}. With the car out that becomes the back of the grid at the next Grand Prix.'
+    ],
+    // the other driver got it
+    penHim: [
+        '{name} gets five seconds: {what}.',
+        'Stewards have looked at it. Five seconds for {name}, {what}.',
+        'Race control agree with us: {what}. {name}, five second penalty.',
+        'Five seconds for {name}. {what}.'
+    ],
+    // nobody did
+    penNone: [
+        'The stewards looked at the contact with {name}. Racing incident, no further action.',
+        'Race control have no further action on the touch with {name}. Racing incident.',
+        'Stewards say racing incident with {name}. Nothing to answer for.'
     ],
     vsc: [
         'Virtual safety car. Virtual safety car. Slow down and hold the gap.',
@@ -4485,6 +4817,7 @@ function pitToggleBox(car, seat, fromPause) {
     car.wantPit = !car.wantPit;
     car.pitNextTyre = null;             // chosen at the box, not here
     car.pitRepair = false;              // ...and so is the repair
+    car.pitServePenalty = false;        // ...and whether the stewards are paid
     if (car.isPlayer && !skipMode)
         radioSay(radioLine(car.wantPit ? 'boxConfirm' : 'stayOut'), 2);
     if (typeof RaceLog !== 'undefined')
@@ -4545,15 +4878,18 @@ function pitPickIndex(n) {
     if (n < 1 || n > order.length) return false;
     car.pitNextTyre = order[n - 1];
     if (car.pitRepair && !(pitRepairSeconds(car) > 0)) car.pitRepair = false;
+    if (car.pitServePenalty && !(car.penaltyS > 0)) car.pitServePenalty = false;
     car.pitTimer = pitStopSeconds(car); // the clock starts when the call is made
     car._pitStop = car.pitTimer;
+    car._pitPenaltyS = car.pitServePenalty ? car.penaltyS : 0;   // the part of it the crew cannot hurry
     pitPanelSeat = 0;
     pitPanelPause(false);
     renderPitPanel();
     if (typeof RaceLog !== 'undefined')
         RaceLog.event('PIT', `${car.driverName || car.color} takes ` +
             `${TYRES[car.pitNextTyre].label}` +
-            (car.pitRepair ? ` and has the damage repaired (+${pitRepairSeconds(car).toFixed(1)}s)` : ''));
+            (car.pitRepair ? ` and has the damage repaired (+${pitRepairSeconds(car).toFixed(1)}s)` : '') +
+            (car.pitServePenalty ? ` and serves the ${car.penaltyS} s penalty` : ''));
     return true;
 }
 // R while the panel is open: the crew will mend the car in the same stop, or
@@ -4656,17 +4992,32 @@ function renderPitPanel() {
         : '<div class="pp-title pp-title-rep">REPAIR</div>' +
           '<div class="pp-row pp-rep pp-rep-none"><span class="pp-key">R</span>' +
           '<span class="pp-name">No damage</span><span class="pp-laps">nothing to mend</span></div>';
+    // THE STEWARDS' TIME, when any is owed: served here with P - the car sits
+    // for it before the crew starts - or carried to the flag and added there.
+    const penS = car.penaltyS || 0;
+    const penWhy = (car.penalties || []).map(p => (STEWARDS_REASONS[p.reason]
+        ? STEWARDS_REASONS[p.reason].short + ' — ' + p.other : p.reason) + ', lap ' + p.lap).join('; ');
+    const penalty = penS > 0
+        ? '<div class="pp-title pp-title-pen">PENALTY</div>' +
+          '<div class="pp-row pp-pen' + (car.pitServePenalty ? ' pp-pen-on' : '') + '">' +
+            '<span class="pp-key">P</span>' +
+            '<span class="pp-name">' + (car.pitServePenalty ? 'Serve it here' : 'Carry it') + '</span>' +
+            '<span class="pp-pace" title="' + penWhy.replace(/"/g, '&quot;') + '">' + penS + ' s owed</span>' +
+            '<span class="pp-laps">+' + penS.toFixed(1) + ' s' + (car.pitServePenalty ? ' · paid here' : ' at the flag') + '</span>' +
+          '</div>'
+        : '';
     el.classList.toggle('pp-practice', practice);
     el.innerHTML =
         '<div class="pp-head">IN THE BOX' + (pitPanelSeat === 2 ? ' — Player 2' : '') +
         '<span class="pp-sub">' + (practice ? 'free practice held &middot; the crew is waiting'
                                             : 'race held &middot; ' + lapsLeft.toFixed(0) + ' laps to run &middot; the crew is waiting') + '</span></div>' + wx +
         '<div class="pp-cols">' +
-          '<div class="pp-left"><div class="pp-title">FIT</div>' + rows + repair + '</div>' +
+          '<div class="pp-left"><div class="pp-title">FIT</div>' + rows + repair + penalty + '</div>' +
           (practice ? '' : '<div class="pp-right"><div class="pp-title">THE FIELD</div>' + fieldRows + '</div>') +
         '</div>' +
         '<div class="pp-foot">a number fits that tyre and starts the stop' +
-        (repS > 0 ? ' &middot; R mends the damage in the same stop' : '') + '</div>';
+        (repS > 0 ? ' &middot; R mends the damage in the same stop' : '') +
+        (penS > 0 ? ' &middot; P serves the penalty here' : '') + '</div>';
     el.style.display = 'block';
 }
 
@@ -5494,9 +5845,13 @@ function pitUpdate(car, dt) {
                 if (!car.isPlayer) {
                     car.pitRepair = pitRepairSeconds(car) > 0 &&
                         car.health / car.maxHealth < AI_REPAIR_BELOW;
+                    // ...and a penalty owed is paid at the stop it was going
+                    // to make anyway: the stewards' time, then the tyres
+                    car.pitServePenalty = car.penaltyS > 0;
                 }
                 car.pitTimer = pitStopSeconds(car);
                 car._pitStop = car.pitTimer;
+                car._pitPenaltyS = car.pitServePenalty ? car.penaltyS : 0;
             }
         }
     } else if (car.pitPhase === 'stopped') {
@@ -5528,6 +5883,15 @@ function pitUpdate(car, dt) {
             const mendedPct = mended ? Math.round((1 - car.health / car.maxHealth) * 100) : 0;
             if (mended) car.health = car.maxHealth;
             car.pitRepair = false;
+            // the stewards' time, if it was served in this stop: paid, and
+            // off the car - what is owed at the flag is whatever is left
+            const served = car.pitServePenalty && car.penaltyS > 0 ? car.penaltyS : 0;
+            if (served) {
+                car.penaltyServedS = (car.penaltyServedS || 0) + served;
+                car.penaltyS = 0;
+            }
+            car.pitServePenalty = false;
+            car._pitPenaltyS = 0;
             const stopS = isFinite(car._pitStop) ? car._pitStop : PIT_TIME;
             car._pitStop = null;
             car.tyre = TYRES[k] || TYRES.medium;
@@ -5553,11 +5917,12 @@ function pitUpdate(car, dt) {
                 delete car._radioSaid.wearhalf;
             }
             if (car.isPlayer && !skipMode)
-                radioSay(radioLine(mended ? 'repairedOn' : 'tyresOn', { tyre: car.tyre.label }), 3);
+                radioSay(radioLine(served ? 'penaltyOn' : (mended ? 'repairedOn' : 'tyresOn'), { tyre: car.tyre.label }), 3);
             if (typeof RaceLog !== 'undefined')
                 RaceLog.event('PIT', `${car.driverName || car.color} pits — ` +
                     `${old} to ${car.tyre.short}` +
                     (mended ? `, ${mendedPct}% damage repaired` : '') +
+                    (served ? `, ${served} s penalty served` : '') +
                     `, ${stopS.toFixed(1)}s stationary`);
         }
     } else if (car.pitPhase === 'exit') {
@@ -6130,6 +6495,8 @@ function startQualifying(forceTrackType) {
     pitRoadWear = false;
     pitPanelSeat = 0;       // and no session inherits an open pit wall
     pitPanelPausedAt = 0;
+    stewardsOn = false;     // no stewards in a session: nothing to judge
+    stewardsQueue = []; stewardsBook = [];
     if (typeof renderPitPanel === 'function') renderPitPanel();
     TOTAL_LAPS = 9999;              // the session ends on lap count, not the flag
     vscActive = false;
@@ -6251,7 +6618,17 @@ function renderTyreIndicator(car) {
         (left * 100).toFixed(0) + '%;background:' + col + ';"></span></span>' +
         '<span id="tyre-wear-pct" style="color:' + col + ';">' +
         (left * 100).toFixed(0) + '%</span>' +
-        pitStatusHtml(car);
+        pitStatusHtml(car) + penaltyStatusHtml(car);
+}
+
+// The stewards' tag beside the pit one: time owed, and where it gets paid.
+function penaltyStatusHtml(car) {
+    if (!car || !(car.penaltyS > 0)) return '';
+    const why = (car.penalties || []).map(p => (STEWARDS_REASONS[p.reason]
+        ? STEWARDS_REASONS[p.reason].short + ' — ' + p.other : p.reason) + ', lap ' + p.lap).join('; ');
+    return '<span class="pit-status pit-pen" title="' + why.replace(/"/g, '&quot;') +
+           (pitModeOn ? ' · P at the box serves it, or it is added at the flag' : ' · added at the flag') + '">' +
+           'PEN +' + car.penaltyS + 's</span>';
 }
 
 // The pit line beside the tyre: that the box is called for, or how long is
@@ -7448,7 +7825,10 @@ function showGpPreview(trackType) {
         // in is in front of you, and it is what makes running it again possible.
         (championshipState && championshipState.seed
             ? ` <span class="gp-seed" title="Type this into Season seed to run this ` +
-              `exact calendar again">season ${championshipState.seed}</span>` : '');
+              `exact calendar again">season ${championshipState.seed}</span>` : '') +
+        // the stewards' grid penalties carried into this round, if any
+        (stewardsGridText()
+            ? `<div class="gp-pen" title="A penalty owed by a car that retired cannot be served, so it is the back of the grid next time out">&#9873; ${stewardsGridText()}</div>` : '');
 
     // Mini-map: the real track, drawn scaled onto a small canvas.
     const map = document.getElementById('gp-map');
@@ -8173,6 +8553,7 @@ function resumeChampionship() {
     put('rounds-select', (championshipState.tracks || []).length);
     check('reverse-grid-checkbox', championshipState.reverseGrid);
     check('pit-checkbox', championshipState.pitStops);
+    check('stewards-checkbox', championshipState.stewards);
     check('nightmare-checkbox', championshipState.nightmare);
     check('rival-checkbox', !!championshipState.rival);
     menu.style.display = 'none';
@@ -11048,6 +11429,12 @@ function startGame(forceTrackType = null) {
     pitRoadWear = pitModeOn && !isPractice;
     pitPanelSeat = 0;              // no session inherits an open pit wall
     pitPanelPausedAt = 0;
+    // The stewards: a race rule like the box, carried by the championship.
+    // Never in free practice (nothing to penalise, nothing to serve it in)
+    // and never in a session - qualifying has no damage to judge.
+    stewardsOn = !isPractice && raceMode !== 'qualifying' && stewardsWanted();
+    stewardsQueue = [];
+    stewardsBook = [];
     renderPitPanel();
     const boxBtn = document.getElementById('btnBox');
     if (boxBtn) boxBtn.style.display = (pitModeOn && IS_MOBILE) ? 'block' : 'none';
@@ -11170,6 +11557,19 @@ function startGame(forceTrackType = null) {
         if (!recapQuali) {
             recapQuali = qualified.filter(x => isFinite(x.lap))
                 .map(x => ({ p: x.p, lap: Math.round(x.lap), tyre: x.tyre }));
+        }
+    }
+
+    // THE STEWARDS' GRID PENALTIES: a driver who retired from the last round
+    // owing time could not serve it, so starts this one from the back,
+    // whatever the session said - several of them in the order they
+    // qualified among themselves. Consumed when this race is recorded.
+    const gridDue = stewardsGridDue();
+    if (gridDue.length && !isPractice) {
+        const back = currentParticipants.filter(p => gridDue.some(g => stewardsGridMatch(g, p)));
+        if (back.length) {
+            currentParticipants = currentParticipants.filter(p => back.indexOf(p) < 0).concat(back);
+            gridSource += ' · to the back by the stewards: ' + back.map(p => p.driverName || p.color).join(', ');
         }
     }
 
@@ -11364,7 +11764,7 @@ function startGame(forceTrackType = null) {
         weather: (isRaining ? (wetLevel === 'soaked' ? 'soaked' : 'damp') : 'dry') +
                  (wxPlan ? ', forecast ' + wxForecastText(wxPlan) : ''),
         seed: isChampionship && championshipState ? championshipState.seed : null,
-        pits: isPractice ? null : (pitModeOn ? 'pit stops' : 'no stops'),
+        pits: isPractice ? null : (pitModeOn ? 'pit stops' : 'no stops') + (stewardsOn ? ', stewards' : ''),
         playerTyre: (() => {
             const p = cars.find(c => c.isPlayer);
             return p && p.tyre ? p.tyre.label : null;
@@ -11695,8 +12095,13 @@ function updatePhysics(dt) {
     // AI input - a car in the pit sequence is not being driven
     ais.forEach(ai => { if (!ai.car.pitPhase) ai.update(track, dt); });
 
-    // remember lap counts so completed laps can be logged below
-    cars.forEach(c => { c._prevLap = c.lap; c._prevBlue = c.blueFlag; });
+    // remember lap counts so completed laps can be logged below - and, for
+    // the stewards, how long each car has been on the grass
+    const stewNow = isFinite(track.currentRaceTime) ? track.currentRaceTime : 0;
+    cars.forEach(c => {
+        c._prevLap = c.lap; c._prevBlue = c.blueFlag;
+        if (stewardsOn) stewardsTrackSurface(c, dt, stewNow);
+    });
 
     // --- pit stops: arm the AI, catch the armed at the pit window ------
     if (pitModeOn) {
@@ -12054,6 +12459,7 @@ function updatePhysics(dt) {
 
     updateBlueFlags(dt);
     radioWatch();
+    stewardsSpeak();
 
     // Simple Circle Collision between cars
     for (let i = 0; i < cars.length; i++) {
@@ -12104,9 +12510,12 @@ function updatePhysics(dt) {
                 const relVy = c2.velocity.y - c1.velocity.y;
                 const velAlongNormal = relVx * nx + relVy * ny;
 
+                // (the impulse is kept: the stewards below want the velocities
+                // as they were BEFORE the bounce, and this is what undoes it)
+                let impulse = 0;
                 if (velAlongNormal < 0) {
                     const restitution = 0.5; // Bounciness
-                    const impulse = -(1 + restitution) * velAlongNormal / 2;
+                    impulse = -(1 + restitution) * velAlongNormal / 2;
                     c1.velocity.x -= impulse * nx;
                     c1.velocity.y -= impulse * ny;
                     c2.velocity.x += impulse * nx;
@@ -12170,6 +12579,10 @@ function updatePhysics(dt) {
                         };
                         const d1 = dmgOf(c1), d2 = dmgOf(c2);
                         const dmg = Math.max(d1, d2);
+                        // both cars racing BEFORE the hit: a wreck that is
+                        // still on the road is debris, not a party - but the
+                        // car that this very hit destroys is still judged
+                        const bothLive = !c1.isBroken && !c2.isBroken && !c1.finished && !c2.finished;
                         if (dmg > 0) {
                             if (d1 > 0) c1.takeDamage(d1);
                             if (d2 > 0) c2.takeDamage(d2);
@@ -12191,6 +12604,10 @@ function updatePhysics(dt) {
                                 }
                             }
                         }
+                        // ...and the stewards have a look (THE STEWARDS):
+                        // judged on the closing speed, whatever curve the
+                        // damage was billed on
+                        if (stewardsOn && bothLive) stewardsContact(c1, c2, closing, nx, ny, impulse);
                     }
                 }
             }
@@ -13605,7 +14022,9 @@ function updateHUD() {
             RaceLog.event('FINISH', `P${c.finishIndex + 1} ${c.driverName || c.color} — ` +
                 `${RaceLog.fmt(c.raceTime)} after ${c.lap} laps` +
                 (c.jumpStartPenalty
-                    ? ` (incl. ${((c.jumpPenaltyMs || 0) / 1000).toFixed(1)}s jump-start penalty)` : ''));
+                    ? ` (incl. ${((c.jumpPenaltyMs || 0) / 1000).toFixed(1)}s jump-start penalty)` : '') +
+                (c.penaltyAddedS > 0
+                    ? ` (incl. ${c.penaltyAddedS}s from the stewards, never served)` : ''));
         }
     });
 
@@ -13728,6 +14147,9 @@ function updateHUD() {
             const ch = c.chassis || CHASSIS[CHASSIS_DEFAULT];
             const chPip = `<span class="tt-ch" style="background:${ch.accent};" ` +
                 `title="${ch.label}">${ch.short}</span>`;
+            // ...and the stewards' time still owed, red, after it
+            const penPip = c.penaltyS > 0
+                ? `<span class="tt-pen" title="${c.penaltyS} s penalty from the stewards, still owed">${c.penaltyS}</span>` : '';
             // One cell per car, laid left to right along the top.
             // Spectating: the row is a button that follows that car. The row
             // only CARRIES data-idx - the listening happens once, on the
@@ -13765,7 +14187,7 @@ function updateHUD() {
                 `<div class="tt-top">` +
                 `<span class="tt-pos">${i + 1}</span>` +
                 `<span class="tt-name"${(c.isBroken && !c.finished) ? ' style="opacity:.45;"' : ''}>${name}</span>` +
-                tyrePip + wearBar + chPip +
+                tyrePip + wearBar + chPip + penPip +
                 `</div>` +
                 `<div class="tt-gap">${gap}</div>` +
                 `</div>`);
@@ -14039,6 +14461,29 @@ function updateHUD() {
             });
         }
 
+        // THE STEWARDS, AT THE FLAG. A car that retired owing time could not
+        // serve it and will not see the flag: it starts the next round of the
+        // season from the back (stewardsGridDue applies it; the entry is
+        // consumed when THAT race is recorded). The penalties this grid was
+        // built on are the ones served now.
+        cars.forEach(c => {
+            c._gridPenNext = !!(c.isBroken && !c.finished && c.penaltyS > 0);
+            if (c._gridPenNext) {
+                RaceLog.event('STEWARDS', `${c.driverName || c.color} retires owing ${c.penaltyS} s — ` +
+                    (isChampionship ? 'starts the next round from the back of the grid' : 'cannot be served'));
+            }
+        });
+        if (isChampionship) {
+            const now = championshipState.currentTrackIndex;
+            const kept = (championshipState.gridPen || []).filter(g => g && g.from >= now);
+            cars.forEach(c => {
+                if (!c._gridPenNext) return;
+                kept.push({ name: c.driverName || null, color: c.color, from: now,
+                            track: championshipState.tracks[now] || null, s: c.penaltyS });
+            });
+            championshipState.gridPen = kept;
+        }
+
         // Season record: one row per race, kept for the end-of-championship recap
         if (isChampionship) {
             championshipState.results = championshipState.results || [];
@@ -14056,7 +14501,12 @@ function updateHUD() {
                     pts: c.finished ? (f1Points[i] || 0) : 0,
                     bonus: (c._bonusEarned || 0) + (c._flEarned || 0),
                     tyre: c.tyre ? c.tyre.key : null,
-                    dnf: c.isBroken && !c.finished
+                    dnf: c.isBroken && !c.finished,
+                    // the stewards: seconds added at the flag, seconds served
+                    // at a stop, and whether a DNF carries a grid drop
+                    pen: c.penaltyAddedS || 0,
+                    served: c.penaltyServedS || 0,
+                    gridPen: !!c._gridPenNext
                 })).concat(skipMode ? skipPlayers.map(sp => ({
                     // you sat this one out: classified DNS, no points
                     color: sp.color,
@@ -14067,7 +14517,11 @@ function updateHUD() {
                 // Saturday, kept. `pole` above is one colour; this is the
                 // whole session - who was where on the grid and on what lap.
                 quali: raceQualiGrid ? raceQualiGrid.rows : null,
-                qualiFrom: raceQualiGrid ? raceQualiGrid.source : null
+                qualiFrom: raceQualiGrid ? raceQualiGrid.source : null,
+                // every verdict of the afternoon, for the season's own books
+                stewards: stewardsBook.length ? stewardsBook.map(e => ({
+                    lap: e.lap, reason: e.reason, who: e.who, other: e.other, pair: e.pair, s: e.s
+                })) : []
             });
         }
 
@@ -14138,6 +14592,21 @@ function updateHUD() {
                     const gapMs = c.raceTime - leaderRaceTime;
                     gapStr = `+${(gapMs / 1000).toFixed(3)}s`;
                 }
+            }
+
+            // THE STEWARDS, on the sheet: time added at the flag beside the
+            // race time, time served at a stop as a note, and a DNF that
+            // carries a grid drop says so where its time would be.
+            const penWhy = (c.penalties || []).map(p => (STEWARDS_REASONS[p.reason]
+                ? STEWARDS_REASONS[p.reason].short + ' — ' + p.other : p.reason) + ', lap ' + p.lap).join('; ').replace(/"/g, '&quot;');
+            if (!isDNF && c.penaltyAddedS > 0) {
+                timeStr += ` <sup class="sr-pen" title="${c.penaltyAddedS} s from the stewards, added at the flag: ${penWhy}">+${c.penaltyAddedS}s</sup>`;
+            } else if (!isDNF && c.penaltyServedS > 0) {
+                timeStr += ` <sup class="sr-pen sr-pen-ok" title="${c.penaltyServedS} s from the stewards, served at the stop: ${penWhy}">${c.penaltyServedS}s&#10003;</sup>`;
+            }
+            if (isDNF && c._gridPenNext) {
+                gapStr += ` <sup class="sr-pen" title="${c.penaltyS} s from the stewards, never served (${penWhy}): ` +
+                    (isChampionship ? 'starts the next round from the back of the grid' : 'no next round to serve it at') + `">grid</sup>`;
             }
 
             const dim = (isDNF || isLapped) ? ' style="opacity: 0.55;"' : '';
@@ -15420,6 +15889,8 @@ function startChampionship() {
         // season you started - see noAiHandicapWanted()
         noAiHandicap: noAiHandicapBox() && difficulty !== 'alien',
         pitStops: pitStopsEnabled(),
+        stewards: stewardsEnabled(),      // THE STEWARDS: fixed for the season too
+        gridPen: [],                      // ...and the grid drops they hand out
         // ...and the two that used to be read off the menu at every round -
         // see raceLaps() and reverseGridEnabled() for what that cost
         laps: lapsBox(),

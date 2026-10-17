@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex 3</title>
-    <link rel="stylesheet" href="style.css?v=zoom106">
+    <link rel="stylesheet" href="style.css?v=zoom107">
 </head>
 <body>
     <div id="game-container">
@@ -235,6 +235,16 @@
                             <input type="checkbox" id="pit-checkbox">
                             <span>Pit stops &mdash; fixed tyre life</span>
                         </label>
+                        <!-- The stewards (zoom107). Every real contact is
+                             judged - who rejoined, who was too slow, who cut
+                             across, who ran into the back - and the guilty
+                             car gets 5 s: served at the box with P, or added
+                             at the flag; a car that retires owing it starts
+                             the next round of a season from the back. -->
+                        <label class="menu-check" data-modes="race champ" title="Every real contact is judged: who rejoined the track, who was too slow, who cut across, who ran into the back. 5 s each - serve it at the box with P, or it is added at the flag. Retire owing it and you start the next round of a season from the back.">
+                            <input type="checkbox" id="stewards-checkbox">
+                            <span>Stewards &mdash; 5 s penalties for contact</span>
+                        </label>
                     </div>
 
                     <div class="menu-col">
@@ -411,7 +421,7 @@
                      means the browser can serve a cached page, and then a fix
                      delivered an hour ago simply is not there - with nothing to
                      see. Now there is something to see. -->
-                <div id="build-stamp">build zoom106 &nbsp;·&nbsp; 14 Oct 2026</div>
+                <div id="build-stamp">build zoom107 &nbsp;·&nbsp; 17 Oct 2026</div>
 
                 <details id="how-to-play">
                     <summary>How to play</summary>
@@ -1169,12 +1179,12 @@
          (Anchor selezionato, Oval in pista). Va cambiato ogni volta che
          cambia uno di questi file. Se un cambiamento non si vede lo
          stesso: ricarica forzata, Cmd+Shift+R. -->
-    <script src="racelog.js?v=zoom106"></script>
-    <script src="track.js?v=zoom106"></script>
-    <script src="lines.js?v=zoom106"></script>
-    <script src="car.js?v=zoom106"></script>
-    <script src="ai.js?v=zoom106"></script>
-    <script src="audio.js?v=zoom106"></script>
+    <script src="racelog.js?v=zoom107"></script>
+    <script src="track.js?v=zoom107"></script>
+    <script src="lines.js?v=zoom107"></script>
+    <script src="car.js?v=zoom107"></script>
+    <script src="ai.js?v=zoom107"></script>
+    <script src="audio.js?v=zoom107"></script>
     <script>
         // ---------------------------------------------------------------
         //  THE ERROR PANEL
@@ -1268,6 +1278,6 @@
             });
         })();
     </script>
-    <script src="main.js?v=zoom106"></script>
+    <script src="main.js?v=zoom107"></script>
 </body>
 </html>

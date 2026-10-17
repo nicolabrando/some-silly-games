@@ -2090,6 +2090,12 @@ class Car {
                     // seconds: see jumpPenaltySeconds() in main.js.
                     this.raceTime += this.jumpPenaltyMs || 0;
                 }
+                // ...and whatever the stewards gave that was never served at
+                // a stop goes on here the same way (THE STEWARDS, main.js).
+                if (this.penaltyS > 0) {
+                    this.raceTime += this.penaltyS * 1000;
+                    this.penaltyAddedS = this.penaltyS;
+                }
             }
         }
     }

@@ -549,6 +549,24 @@ button:hover {
     overflow: visible;
 }
 
+/* the stewards' time still owed, after the chassis: the seconds, in red. As
+   narrow as it can be read - the row is full, and it is the gap text on the
+   right that pays for every pixel here. */
+#timing-tower .tt-pen {
+    display: inline-block;
+    flex: 0 0 auto;
+    min-width: 12px;
+    height: 14px;
+    line-height: 14px;
+    padding: 0 2px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 900;
+    text-align: center;
+    color: #fff;
+    background: #c62828;
+}
+
 #timing-tower .tt-note {
     flex: 0 0 auto;
     font-size: 11px;
@@ -2300,6 +2318,33 @@ button.menu-danger {
     border-color: #ffd54f;
     color: #ffd54f;
 }
+/* the stewards' time owed (THE STEWARDS, main.js) */
+.pit-status.pit-pen {
+    border-color: #ef5350;
+    color: #ff8a80;
+    font-weight: bold;
+    font-size: 10px;
+    padding: 1px 5px;
+    white-space: nowrap;
+}
+/* ...and the same on the results sheet, as a superscript beside the time */
+.sr-pen {
+    font-size: 9px;
+    font-weight: bold;
+    margin-left: 2px;
+    vertical-align: super;
+    line-height: 0;
+    color: #ef5350;
+    cursor: help;
+}
+.sr-pen.sr-pen-ok { color: #90a4ae; font-weight: normal; }
+/* the grid drops carried into a round, on the Grand Prix preview */
+.gp-pen {
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #ff8a80;
+}
 
 /* The box panel: every compound, its real range here, and one key each -
    next to what the rest of the field is on. Centred over the circuit,
@@ -2365,6 +2410,14 @@ button.menu-danger {
 /* in practice the panel is the compounds and the repair, nothing to the right */
 #pit-panel.pp-practice { min-width: 380px; }
 #pit-panel.pp-practice .pp-left { flex: 1 1 auto; }
+/* the stewards' penalty: one row under the repair, served here with P */
+#pit-panel .pp-title-pen { margin-top: 10px; }
+#pit-panel .pp-pen .pp-name { flex: 0 0 86px; }
+#pit-panel .pp-pen .pp-pace { flex: 0 0 62px; color: #ef5350; }
+#pit-panel .pp-pen .pp-laps { color: #b0bec5; }
+#pit-panel .pp-pen-on .pp-name,
+#pit-panel .pp-pen-on .pp-laps { color: #66bb6a; }
+#pit-panel .pp-pen-on .pp-key { border-color: #66bb6a; color: #66bb6a; }
 /* the repair: one row under the compounds, on or off with R */
 #pit-panel .pp-title-rep { margin-top: 10px; }
 #pit-panel .pp-rep .pp-name { flex: 0 0 84px; }
