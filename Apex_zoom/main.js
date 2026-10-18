@@ -2642,6 +2642,9 @@ function pitTogglePenalty() {
 // at an earlier round and not yet served.
 function stewardsGridDue() {
     if (!isChampionship || !championshipState || !Array.isArray(championshipState.gridPen)) return [];
+    // stood down (a career can switch them off): nothing owed is collected
+    // while they are not sitting - it waits, in case they come back
+    if (championshipState.stewards === false) return [];
     const now = championshipState.currentTrackIndex;
     return championshipState.gridPen.filter(g => g && g.from < now);
 }
@@ -7394,8 +7397,15 @@ function qualiTyreSubtitle() {
         : 'One flying lap is all that matters here.';
 }
 
+// NOT pitRoadWearAhead(): that reads pendingTyreIsRace, which chooseTyres sets
+// AFTER its arguments have been evaluated - so this line was always computed
+// with the flag the PREVIOUS screen left behind, false after a qualifying
+// screen, and a race with the box open promised "this set has to last the
+// whole race" above three cards that each said you would stop (Nicola saw it,
+// zoom109). This is the race screen's subtitle by definition: the rule is all
+// it needs to ask.
 function raceTyreSubtitle() {
-    return pitRoadWearAhead()
+    return pitRulesOn()
         ? 'Your STARTING set — no compound lasts the race. B (P2: C) calls the box.'
         : 'This set has to last the whole race.';
 }
@@ -14475,7 +14485,9 @@ function updateHUD() {
         });
         if (isChampionship) {
             const now = championshipState.currentTrackIndex;
-            const kept = (championshipState.gridPen || []).filter(g => g && g.from >= now);
+            // what this grid was built on is served; with the stewards stood
+            // down nothing was applied, so nothing is consumed
+            const kept = (championshipState.gridPen || []).filter(g => g && (g.from >= now || championshipState.stewards === false));
             cars.forEach(c => {
                 if (!c._gridPenNext) return;
                 kept.push({ name: c.driverName || null, color: c.color, from: now,
