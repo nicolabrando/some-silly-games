@@ -85,6 +85,14 @@
 //  Alien is unchanged by construction: the same line, the same pace, no weak
 //  cars, no damage handicap.
 // -----------------------------------------------------------------------------
+// THE REACTION AT THE LIGHTS (zoom110, Nicola): a Formula 1 driver reacts in
+// about 0.2 s, and the AI used to be anything from twice as slow (easy,
+// 0.45-0.90) to twice as quick (impossible, 0.085-0.135). One human
+// distribution for every level now, rolled per driver per start: uniform
+// between 0.14 and 0.26 s, mean 0.20. The difficulty is in the lap, not in
+// the start - and a 0.09 s start was something no person on the grid could
+// ever match.
+const AI_REACTION = [0.14, 0.26];
 const AI_PROFILES = {
     easy: {
         // how hard this level leans on the throttle to rotate a slow corner
@@ -97,7 +105,7 @@ const AI_PROFILES = {
         lookBase: 58,
         lookSpeed: 0.26,
         steerTau: 0.085,        // steering low-pass (s)
-        reaction: [0.45, 0.90],
+        reaction: AI_REACTION,
         errorChance: 0.16,
         errorMag: 0.20,
         overtake: 0.45,         // willingness to move off-line to pass
@@ -122,7 +130,7 @@ const AI_PROFILES = {
         lookBase: 44,
         lookSpeed: 0.20,
         steerTau: 0.06,
-        reaction: [0.22, 0.42],
+        reaction: AI_REACTION,
         errorChance: 0.06,
         errorMag: 0.09,
         overtake: 0.92,
@@ -144,7 +152,7 @@ const AI_PROFILES = {
         lookBase: 38,
         lookSpeed: 0.17,
         steerTau: 0.04,
-        reaction: [0.11, 0.19],
+        reaction: AI_REACTION,
         errorChance: 0.008,
         errorMag: 0.04,
         overtake: 1.0,
@@ -169,7 +177,7 @@ const AI_PROFILES = {
         lookBase: 34,
         lookSpeed: 0.155,
         steerTau: 0.028,
-        reaction: [0.085, 0.135],
+        reaction: AI_REACTION,
         errorChance: 0.0,
         errorMag: 0.0,
         overtake: 1.0,
@@ -200,7 +208,7 @@ const AI_PROFILES = {
         lookBase: 34,
         lookSpeed: 0.155,
         steerTau: 0.028,
-        reaction: [0.085, 0.120],
+        reaction: AI_REACTION,
         errorChance: 0.0,
         errorMag: 0.0,
         overtake: 1.0,

@@ -14423,7 +14423,8 @@ function updateHUD() {
 
         // Quickest away from the lights. Everyone has one: a human's is the
         // moment of their first input after lights out, an AI's is the delay
-        // its driver style rolled (Prost 0.45-0.90s, Verstappen 0.085-0.135).
+        // it rolled at the lights (AI_REACTION in ai.js: 0.14-0.26 s, a human
+        // 0.20 on average, the same at every level since zoom110).
         let quickestStart = null;
         for (const c of cars) {
             if (c.reactionTime && (!quickestStart || c.reactionTime < quickestStart.reactionTime)) {
