@@ -16232,7 +16232,22 @@ function renderSeasonRecap(state, hostEl, title) {
                 if (r.pole === color) marks += '<sup class="sr-pole" title="pole position">P</sup>';
                 if (r.fastest === color) marks += '<sup class="sr-fl" title="fastest lap of the race">F</sup>';
             }
-            html += `<td class="${cls}">${txt}${marks}</td>`;
+            // THE POINTS OF THE ROUND, on hover (zoom111, Nicola): the total,
+            // and what it was made of - the finishing position, the places
+            // gained from the grid, the fastest lap. The row keeps race points
+            // and the two bonuses as one number, so the fastest-lap point is
+            // told apart by the rule that awards it (finished, top ten), and
+            // the places are what is left.
+            const race = e.pts || 0, extra = e.bonus || 0;
+            const fl = (r.fastest === color && !e.dnf && e.pos && e.pos <= FASTEST_LAP_TOP_N) ? Math.min(extra, FASTEST_LAP_POINT) : 0;
+            const places = extra - fl;
+            const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : Math.min(n % 10, 4) % 4] || 'th');
+            const why = e.dnf ? 'retired'
+                : `${race} for ${ordinal(e.pos)}` +
+                  (places > 0 ? ` + ${places} for ${places} place${places === 1 ? '' : 's'} gained` : '') +
+                  (fl > 0 ? ` + ${fl} fastest lap` : '');
+            const tip = `${race + extra} pt${race + extra === 1 ? '' : 's'} — ${why}`;
+            html += `<td class="${cls}" title="${tip}">${txt}${marks}</td>`;
         }
         html += `<td><b>${st.points[color]}</b></td></tr>`;
     }
