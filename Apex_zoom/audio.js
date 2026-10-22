@@ -1543,11 +1543,11 @@ function radioCut() {
 // bigger call replaces whatever is waiting, and anything older than seven
 // seconds is thrown away rather than said, because by then it is not true.
 let radioPump = null;
-function radioHold(text, pri) {
+function radioHold(text, pri, check) {
     if (radioNext && radioNext.pri > pri) { radioStats.dropped++; return false; }
     if (radioNext) radioStats.dropped++;          // the one it replaces
     radioStats.held++;
-    radioNext = { text: text, pri: pri, at: Date.now() };
+    radioNext = { text: text, pri: pri, at: Date.now(), check: typeof check === 'function' ? check : null };
     if (!radioPump) radioPump = setTimeout(radioDrain, 300);
     return true;
 }
@@ -1575,12 +1575,31 @@ function radioDrain() {
     }
     const n = radioNext;
     radioNext = null;
+    // IS IT STILL TRUE (zoom112). A call about the cars around you - "Senna is
+    // three tenths behind", "go and get him", "he brakes late" - was written at
+    // the line and has waited here behind another call, which is long enough
+    // for the pass to have happened either way. Nicola: "non avvertirmi di una
+    // macchina che e' ancora molto avanti o che ho gia' sorpassato". So the
+    // caller may hand over a CHECK with the call: asked again now, it answers
+    // false when the line is no longer true (dropped, like a stale one), or
+    // hands back a fresher text to say instead.
+    if (n.check) {
+        let r = true;
+        try { r = n.check(); } catch (e) { r = true; }
+        if (r === false || r === null) {
+            radioStats.dropped++;
+            radioNote('a waiting call was no longer true', 'pri ' + n.pri);
+            return;
+        }
+        if (typeof r === 'string' && r) n.text = r;
+    }
     teamRadio(n.text, n.pri, true);
 }
 
 // `text` is what the wall says. `pri` decides whether it may interrupt, and
-// whether it waits its turn or is forgotten.
-function teamRadio(text, pri, fromHold) {
+// whether it waits its turn or is forgotten. `check`, optional, is asked
+// whether the line is still true if it has to wait (see radioDrain).
+function teamRadio(text, pri, fromHold, check) {
     // OFF IS OFF, and that has to be decided before anything at all happens -
     // the caption included. Moving the caption to the top of this function put
     // it above this guard, so "Off" went quiet and kept writing on the screen.
@@ -1651,9 +1670,9 @@ function teamRadio(text, pri, fromHold) {
     // waiting calls, and radioDrain lets a big one skip the gap that follows a
     // message, so a box call follows straight on rather than a beat later.
     if (radioBusy) {
-        return fromHold ? false : radioHold(text, pri);
+        return fromHold ? false : radioHold(text, pri, check);
     } else if (now - radioLastAt < RADIO_GAP_MS && pri < 3) {
-        return fromHold ? false : radioHold(text, pri);
+        return fromHold ? false : radioHold(text, pri, check);
     }
     const u = new SpeechSynthesisUtterance(text);
     const v = pickRadioVoice();

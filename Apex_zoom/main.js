@@ -2709,10 +2709,54 @@ function pitStopsEnabled() {
 //  and he will be with you in four laps" is not. So the lines lean on the
 //  things the game knows and the screen does not say out loud.
 // ===========================================================================
-function radioSay(text, pri) {
+function radioSay(text, pri, check) {
     if (typeof teamRadio !== 'function') return;
     if (gameState !== 'playing') return;
-    teamRadio(text, pri);
+    // `check` (zoom112): asked whether the line is still true if the call has
+    // to wait behind another one - see radioStill below and audio.js
+    teamRadio(text, pri, false, check);
+}
+
+// ---------------------------------------------------------------------------
+//  THE WALL IS PUNCTUAL (zoom112)
+//
+//  A line is written at the moment the wall decides to say it, and the voice
+//  says one thing at a time, so a line can wait several seconds for its turn -
+//  long enough, in a fight, for the car it is about to be said about to have
+//  been passed, or to have dropped away. Nicola: "non avvertirmi di una
+//  macchina che e' ancora molto avanti o che ho gia' sorpassato". So every
+//  line about the cars around you travels with a CHECK, re-asked when its turn
+//  comes: the same car still directly ahead (or behind), and the gap still
+//  about what was said - within three tenths, or half of it. A line that
+//  fails its check is dropped unsaid.
+// ---------------------------------------------------------------------------
+function radioGapStill(said, now) {
+    if (said === undefined || now === undefined) return true;
+    return Math.abs(now - said) <= Math.max(0.3, 0.5 * said);
+}
+function radioStill(car, side, who, gap, maxGap) {
+    return function () {
+        if (!car || car.finished || car.isBroken) return false;
+        const o = side === 'ahead' ? radioCarAhead(car) : radioCarBehind(car);
+        if (!o || o.car !== who) return false;
+        if (maxGap !== undefined && o.gap > maxGap) return false;
+        return radioGapStill(gap, o.gap);
+    };
+}
+// ...and a line about WHERE you are: still that position
+function radioStillPos(car, pos) {
+    return function () { return !!car && !car.isBroken && racePositionOf(car) === pos; };
+}
+// ...and one about a car you have just passed, or that has just passed you:
+// still on that side of it, wherever it is in the order
+function radioStillSide(car, who, aheadOfHim) {
+    return function () {
+        if (!car || !who || car.isBroken) return false;
+        if (who.isBroken || who.finished) return aheadOfHim;      // he is gone: "passed him" still stands, "he got you" does not
+        const order = cars.slice().sort(raceCmp);
+        const mine = order.indexOf(car), his = order.indexOf(who);
+        return aheadOfHim ? mine < his : mine > his;
+    };
 }
 
 // A driver's surname, which is what a pit wall actually uses.
@@ -2833,57 +2877,89 @@ const RADIO_LINES = {
         'One more lap. Stay off the kerbs and bring it home.',
         'Final lap. Nice and tidy, nothing silly.',
         'Last time round. Bring it home for us.',
-        'Last lap. Concentrate, every corner.'
+        'Last lap. Concentrate, every corner.',
+        'Final lap. Hit your marks one more time.',
+        'Last lap. Nothing clever now, just drive it.',
+        'One to go. Finish the job.',
+        'Last lap. The whole garage is on the wall.',
+        'Final lap of the race. Breathe, and bring it home.',
+        'Last lap. Every corner like the first one.'
     ],
     lastLapWorn: [
         'Last lap. There is nothing left on these tyres. Bring it home.',
         'Final lap, and the tyres are done. Just nurse it to the flag.',
         'Last lap. The set is finished, keep it on the road.',
-        'One more lap on those tyres. Gentle with them.'
+        'One more lap on those tyres. Gentle with them.',
+        'Last lap on a dead set. Short-shift, early brakes, bring it home.',
+        'Final lap. The tyres are gone, so drive it like it is raining.',
+        'One lap to go and the rubber is finished. No heroics, just the flag.'
     ],
     lastLapLeading: [
         'Last lap. {gap} to {name}. Bring it home.',
         'Final lap, and you lead by {gap}. No mistakes now.',
         'Last lap. {name} is {gap} back. Clean and tidy.',
         'One lap to go and {gap} in hand. Bring it home.',
-        'Last lap. The lead is {gap}. Keep it out of the walls.'
+        'Last lap. The lead is {gap}. Keep it out of the walls.',
+        'Final lap. {name} is {gap} behind and he knows it is the last lap too. Cover the inside.',
+        'Last lap, leading by {gap}. Drive the corners, not the mirrors.',
+        'One to go. {gap} over {name}. This is yours to lose, so do not.',
+        'Final lap. {name}, {gap}. Hit your braking points and it is done.'
     ],
     lastLapAttack: [
         'Last lap. {name} is {gap} ahead. It is now or never.',
         'Final lap, {gap} to {name}. Give it everything.',
         'Last lap. {name} is {gap} up the road. Go and get him.',
-        'One lap left and {name} is {gap} ahead. All in.'
+        'One lap left and {name} is {gap} ahead. All in.',
+        'Last lap. {gap} to {name}. One chance, make it a clean one.',
+        'Final lap. {name} is right there, {gap}. Pressure him into a mistake.',
+        'Last lap, {name} {gap} ahead. Nothing to save the tyres for now.'
     ],
     lastLapDefend: [
         'Last lap. {name} is {gap} behind. Hold him off.',
         'Final lap. {name} is {gap} back. Defend, defend.',
         'Last lap, and {name} is {gap} behind you. Cover the inside.',
-        'One more lap. Keep {name} behind, he is {gap} back.'
+        'One more lap. Keep {name} behind, he is {gap} back.',
+        'Last lap. {name} at {gap}. Brake late and take the inside line into everything.',
+        'Final lap. {name}, {gap}. He will try once. Make him go the long way round.',
+        'One to go. {name} is {gap} behind. Position the car, do not race the mirrors.'
     ],
     fiveToGo: [
         'Five laps to go.', 'Five to go. Stay sharp.', 'Five laps remaining.',
-        'Five more laps. Keep it clean.', 'Five to go. This is where it is won.'
+        'Five more laps. Keep it clean.', 'Five to go. This is where it is won.',
+        'Five laps left. Start thinking about the end.',
+        'Five to go. Keep the rhythm, keep the tyres.',
+        'Five laps remaining. Nothing changes, just keep delivering.'
     ],
     threeToGo: [
         'Three laps to go.', 'Three to go. Concentrate.', 'Three laps remaining.',
-        'Three more laps. Nearly there.', 'Three to go. Keep the rhythm.'
+        'Three more laps. Nearly there.', 'Three to go. Keep the rhythm.',
+        'Three laps left. Everything you have, but tidy.',
+        'Three to go. The race is decided in these.',
+        'Three laps remaining. Stay in it.'
     ],
     twoToGo: [
         'Two laps to go.', 'Two to go.', 'Two laps remaining. Stay focused.',
-        'Two more laps.', 'Two to go. Bring it home.'
+        'Two more laps.', 'Two to go. Bring it home.',
+        'Two laps left. Head down.',
+        'Two to go. Keep hitting the marks.',
+        'Two laps remaining. Almost done.'
     ],
     halfDistance: [
         'Half distance. The leader is {gap} up the road.',
         'We are at half distance. {gap} to the leader.',
         'Halfway. The gap to the lead is {gap}.',
         'Half the race done. The leader is {gap} ahead.',
-        'Half distance. {name} leads, {gap} up the road.'
+        'Half distance. {name} leads, {gap} up the road.',
+        'Halfway there. {name} is leading, {gap} ahead of you.',
+        'Half the race gone. {name} has the lead by {gap} on you.'
     ],
     halfDistanceLeading: [
         'Half distance, and you are leading. {gap} to {name}.',
         'Halfway, P1, {gap} clear of {name}.',
         'Half the race gone and you lead by {gap}. Keep building it.',
-        'Half distance. Leading by {gap} from {name}. Good job.'
+        'Half distance. Leading by {gap} from {name}. Good job.',
+        'Halfway. Still leading, {gap} over {name}. Same again for the second half.',
+        'Half the race done, and the lead is {gap}. {name} is the man behind. Manage it.'
     ],
 
     // ---- tyres -----------------------------------------------------------
@@ -2893,7 +2969,10 @@ const RADIO_LINES = {
         'Box now, box now. The tyres are finished.',
         'Box this lap. You are on the canvas, come in.',
         'Box, box, box. Those tyres are done.',
-        'We need you in. Box this lap, the set is finished.'
+        'We need you in. Box this lap, the set is finished.',
+        'Box this lap. The set is dead, you are losing seconds.',
+        'Come in, come in. The tyres are gone and the crew is waiting.',
+        'Box, box. No more life in those tyres at all.'
     ],
     boxSoon: [
         'Box this lap. The tyres will not make the end.',
@@ -2901,7 +2980,10 @@ const RADIO_LINES = {
         'Box this lap, box this lap. They will not go the distance.',
         'We want you in this lap. Those tyres will not make the flag.',
         'Box, box. This set will not see the end.',
-        'Pit this lap. The tyres are nearly out.'
+        'Pit this lap. The tyres are nearly out.',
+        'Box this lap. The crew is out, the tyres are ready.',
+        'In this lap, please. The set is on its last legs.',
+        'Box this lap. The numbers say the cliff is coming.'
     ],
     planStop: [
         'These tyres will not reach the flag. We are planning a stop, keep the pace up.',
@@ -2909,7 +2991,10 @@ const RADIO_LINES = {
         'We will need one more stop. Not yet. Keep the pace up for now.',
         'The numbers say this set will not last. We will call you in, stay on it.',
         'Tyres will not go the distance. We will stop later, focus on the pace.',
-        'There is a stop coming. Keep the lap times up until we call it.'
+        'There is a stop coming. Keep the lap times up until we call it.',
+        'One more stop in this race, on the numbers. We will tell you when. Push until then.',
+        'This set is not a finishing set. We are working on the stop, keep going.',
+        'Strategy update: we stop again. Not this lap. Build the gap for it.'
     ],
     wearHalf: [
         'Half the life left on this set. Look after them.',
@@ -2917,7 +3002,10 @@ const RADIO_LINES = {
         'Fifty per cent on the tyres. Manage them through the slow corners.',
         'Half the tyre gone. Save a bit on traction.',
         'That set is at half life. Look after the rears.',
-        'Tyres at half. Smooth inputs, please.'
+        'Tyres at half. Smooth inputs, please.',
+        'Half a set left. Keep the slides to a minimum.',
+        'Fifty per cent tyre. From here they go off quicker, so be kind.',
+        'Half life on the tyres. Less wheelspin on the exits, please.'
     ],
 
     // ---- the car ---------------------------------------------------------
@@ -2926,33 +3014,47 @@ const RADIO_LINES = {
         'Heavy damage. {pct} per cent on the bodywork. No more contact, bring it home.',
         'The car is badly hurt, {pct} per cent. You are losing a lot of grip. Just get it to the flag.',
         'Serious damage, {pct} per cent left. Keep it out of trouble.',
-        'Big damage on the car, {pct} per cent. Stay off the kerbs and nurse it.'
+        'Big damage on the car, {pct} per cent. Stay off the kerbs and nurse it.',
+        'The car is hanging together at {pct} per cent. One more hit and it is over. Drive around everybody.',
+        '{pct} per cent of the bodywork left. That is not a car any more, that is a liability. Bring it home gently.',
+        'Heavy damage, {pct} per cent. Nothing to gain by fighting now. Finish.'
     ],
     damage: [
         'We can see damage. The car is at {pct} per cent and you are losing grip with it.',
         'Damage confirmed, {pct} per cent. You will feel it in the corners.',
         'You have got damage. {pct} per cent, and it is costing you grip.',
-        'The car has taken a hit. {pct} per cent left, careful in the quick stuff.'
+        'The car has taken a hit. {pct} per cent left, careful in the quick stuff.',
+        'Damage on the car, {pct} per cent. The balance will be off, adjust to it.',
+        '{pct} per cent on the bodywork. It is costing pace now, so no more contact.',
+        'We have damage, {pct} per cent. A stop would fix it if we make one.'
     ],
     knock: [
         'You have picked up a knock. Bodywork at {pct} per cent, no performance lost yet.',
         'Small knock there. {pct} per cent, nothing lost on pace.',
         'A bit of damage, {pct} per cent. The car is fine, carry on.',
         'We saw that. {pct} per cent on the bodywork, no harm to the pace.',
-        'Light contact. {pct} per cent, nothing to worry about yet.'
+        'Light contact. {pct} per cent, nothing to worry about yet.',
+        'A scrape, {pct} per cent. The car does not care, and neither should you.',
+        'Minor damage, {pct} per cent. Keep it there and it costs nothing.',
+        'That was a touch. {pct} per cent. Fine for now, do not collect any more.'
     ],
     perf: [
         'You are down to {pct} per cent of the car you started with. {why?}',
         '{pct} per cent of your starting pace now. {why?}',
         'Pace check. You have {pct} per cent of the car left. {why?}',
-        'The car is at {pct} per cent of what it was at the start. {why?}'
+        'The car is at {pct} per cent of what it was at the start. {why?}',
+        'Performance is at {pct} per cent against lights-out. {why?}',
+        'We have {pct} per cent of the car we started the race with. {why?}'
     ],
     carCheck: [
         'Car check. {pace} per cent of lights-out pace, bodywork {body} per cent, {tyres} per cent left on the tyres.',
         'Quick update. Pace {pace} per cent, bodywork {body}, tyres {tyres} per cent.',
         'Systems check. Bodywork {body} per cent, tyres {tyres} per cent left, pace at {pace}.',
         'Status. {tyres} per cent tyre left, bodywork {body}, and you are at {pace} per cent pace.',
-        'All the numbers. Tyres {tyres}, bodywork {body}, pace {pace} per cent.'
+        'All the numbers. Tyres {tyres}, bodywork {body}, pace {pace} per cent.',
+        'Car report. Tyres {tyres} per cent, body {body} per cent, overall pace {pace}.',
+        'The sheet says: {pace} per cent pace, {body} per cent bodywork, {tyres} per cent tyre.',
+        'Numbers for you. {tyres} on the tyres, {body} on the car, {pace} per cent of your pace.'
     ],
 
     // ---- the order changing ----------------------------------------------
@@ -2963,13 +3065,20 @@ const RADIO_LINES = {
         'You are leading this Grand Prix. Keep it clean.',
         'Into the lead! Head down now.',
         'Race leader. Nice work, now look after it.',
-        'The lead of the race is yours. Make it count.'
+        'The lead of the race is yours. Make it count.',
+        'Leading. Now the hard part: staying there.',
+        'P1. Nobody in front of you now, just clean air. Use it.',
+        'You lead the race. Set the pace and make them come to you.',
+        'That is the lead. Keep the tyres, keep the head, keep the place.'
     ],
     intoPodium: [
         'That is a podium position. Hang on to it.',
         'P3, that is the podium. Keep it.',
         'Into the podium places. Good job.',
-        'Podium position now. Do not let it go.'
+        'Podium position now. Do not let it go.',
+        'Third. That is a trophy, if you can hold it.',
+        'Into third. The podium is yours to keep now.',
+        'P3. Top three. Bring that home.'
     ],
     gainedPlace: [
         'Good pass. {Pos} place.',
@@ -2977,26 +3086,77 @@ const RADIO_LINES = {
         'That is another one. {Pos}.',
         'Up to {pos}. Keep it going.',
         'Lovely. {Pos} place, next car please.',
-        'Sorted. You are {pos}.'
+        'Sorted. You are {pos}.',
+        'Nice. {Pos}. On to the next one.',
+        'That is {pos}. Clean move, well done.',
+        'Up a place. {Pos} now.',
+        'Through. {Pos} place. Keep the momentum.'
     ],
     gainedPlaceOn: [
         'Good job on {name}. {Pos} now.',
         '{name} dealt with. You are {pos}.',
         'That is {name} done. {Pos} place.',
         'Nice move on {name}. Up to {pos}.',
-        'Past {name}, beautifully done. {Pos}.'
+        'Past {name}, beautifully done. {Pos}.',
+        '{name} behind you now. {Pos}. Pull away from him.',
+        'Clean pass on {name}. {Pos} place, keep going.',
+        '{name} is behind. Good. {Pos}, next one.',
+        'That was a proper move on {name}. {Pos} now.'
+    ],
+    // ...and the pit lane did it (zoom112)
+    gainedPlaceStop: [
+        '{name} stopped and came out behind you. {Pos} now.',
+        'That is {name} jumped in the pits. You are {pos}.',
+        '{name} has pitted and lost the place to you. {Pos}.',
+        'The stop worked for us: {name} is behind you now. {Pos} place.'
+    ],
+    gainedPlaceMate: [
+        'That is your team-mate, {name}. Clean, and now pull away. {Pos}.',
+        'Past {name}. Same car, and you are ahead of it. {Pos} now.',
+        '{name} is behind you. The garage saw that. {Pos}.',
+        'Your team-mate dealt with. {Pos} place. No more racing him, race the others.'
     ],
     lostPlace: [
         'We have lost a place. You are {pos} now.',
         'Lost a position. {Pos} now.',
         'Down to {pos}. Regroup and go again.',
-        'That is a place gone. {Pos}, plenty of race left.'
+        'That is a place gone. {Pos}, plenty of race left.',
+        'A place lost. {Pos}. Stay calm, get it back.',
+        'Down one. {Pos} now. Keep your head.',
+        '{Pos}. We lost one there. It is not over.'
     ],
     lostPlaceTo: [
         '{name} is through. You are {pos}.',
         '{name} got you there. {Pos} now, stay with him.',
         'He is past, {name}. {Pos}. Look for the switchback.',
-        '{name} has the place. {Pos}. Keep him honest.'
+        '{name} has the place. {Pos}. Keep him honest.',
+        '{name} is ahead now. {Pos}. Stay in his tow and come back at him.',
+        'That was {name}. {Pos} place. He is not gone yet, stay close.',
+        '{name} is by. {Pos}. Do not let him pull away.'
+    ],
+    lostPlaceStop: [
+        '{name} has come out of the pits ahead of you. {Pos} now.',
+        'We lost the place to {name} in the stops. {Pos}.',
+        '{name} jumped you through the pit lane. {Pos} place, get after him.',
+        'The pit stops put {name} ahead. {Pos} now, he is on fresh rubber, careful.'
+    ],
+    // OUT OF THE PITS (zoom112): where the stop put you
+    afterStop: [
+        'Out of the pits in {pos}. Fresh tyres, go and use them.',
+        'You rejoin {pos}. Clear road, push.',
+        'That is {pos} after the stop. Build the lap now.',
+        'Back on track in {pos}. Get the tyres in and go.'
+    ],
+    afterStopAhead: [
+        'Out of the pits in {pos}. {name} is {gap} up the road.',
+        'You rejoin {pos}, {gap} behind {name}. New tyres, go and get him.',
+        'That is {pos} after the stop, with {name} {gap} ahead.',
+        'Back out in {pos}. {name} ahead, {gap}. Your tyres are the fresher ones.'
+    ],
+    afterStopBehind: [
+        'Out of the pits in {pos}, just ahead of {name}, {gap}. Get the tyres warm quickly.',
+        'You rejoin {pos}. {name} is {gap} behind and his tyres are up to temperature. Defend for a lap.',
+        'That is {pos} after the stop. {name} right behind, {gap}. Careful on the cold tyres.'
     ],
 
     // ---- laps against laps ------------------------------------------------
@@ -3007,51 +3167,68 @@ const RADIO_LINES = {
         'Fastest lap of the race. {time}. Mega.',
         'Top of the timesheets, fastest lap. {time}.',
         'Purple lap. {time}, nobody has gone quicker.',
-        'That is the fastest lap, {time}. Lovely.'
+        'That is the fastest lap, {time}. Lovely.',
+        'Fastest lap of the race, {time}. The point is yours for now.',
+        'Purple sector, purple lap. {time}. Nobody is touching that.',
+        '{time}, and that is the fastest lap of the race. Keep that up.'
     ],
     personalBestBehind: [
         'That is your best lap so far, {time}. {name} is still {gap} quicker.',
         'Personal best, {time}. The fastest lap is {name}\'s, {gap} away.',
         'Your best yet, {time}. Still {gap} off {name}\'s fastest lap.',
         'Good lap, {time}, your best. {name} has the fastest by {gap}.',
-        'That is a personal best, {time}. {gap} to go to beat {name}.'
+        'That is a personal best, {time}. {gap} to go to beat {name}.',
+        'Best lap of your race, {time}. {name} holds the fastest, {gap} quicker.',
+        '{time}, your quickest so far. {name} is still {gap} up on the fastest lap.'
     ],
     personalBestOnly: [
         'That is your best lap so far, {time}. Keep it there.',
         'Personal best, {time}. Nice.',
-        'Your best of the race, {time}.'
+        'Your best of the race, {time}.',
+        '{time}. Your quickest lap of the race.',
+        'Best lap of your race so far, {time}. More of those.'
     ],
     lostFastest: [
         '{name} has taken the fastest lap. You are {gap} off it now.',
         'The fastest lap has gone to {name}. You are {gap} off.',
         '{name} just went quicker. The fastest lap is his by {gap}.',
         'We have lost the fastest lap to {name}, {gap}.',
-        '{name} has beaten your lap, by {gap}. Want it back?'
+        '{name} has beaten your lap, by {gap}. Want it back?',
+        'Fastest lap gone. {name}, {gap} quicker than yours.',
+        '{name} has just set the fastest lap, {gap} under yours. The point has moved.'
     ],
     trackPB: [
         'That is your best ever lap here. {time}. Fantastic.',
         'New personal record at this circuit! {time}.',
         '{time}. You have never been quicker round here.',
-        'Best lap you have ever done at this place, {time}. Superb.'
+        'Best lap you have ever done at this place, {time}. Superb.',
+        '{time}, a new record for you here. The book is updated.',
+        'That goes in the book: {time}, your fastest ever here.'
     ],
     quickerLap: [
         '{d} quicker than the last one. That is better.',
         'Up {d} on the last lap. Good.',
         'That was {d} faster. Keep that rhythm.',
         'Better, {d} quicker.',
-        'Nice, {d} found there.'
+        'Nice, {d} found there.',
+        '{d} better than the lap before. Keep finding it.',
+        'Good lap, {d} up. Same again.'
     ],
     slowerLap: [
         '{d} off the last lap. Settle in.',
         'Lost {d} on that one. Reset.',
         '{d} slower. No drama, go again.',
-        'That lap was {d} down. Breathe and go again.'
+        'That lap was {d} down. Breathe and go again.',
+        '{d} slower than the last one. Find it again.',
+        'Lost {d} there. Was that traffic, or you? Either way, go again.'
     ],
     consistent: [
         'Three laps within {d}. Metronomic.',
         'Lovely rhythm. Three laps within {d}.',
         'Consistent. Three in a row within {d}.',
-        'Three laps, all within {d}. Like a clock.'
+        'Three laps, all within {d}. Like a clock.',
+        'Three laps inside {d} of each other. That is how you win these.',
+        'Same lap three times running, within {d}. Beautiful.'
     ],
 
     // ---- the grand slam -----------------------------------------------------
@@ -3059,13 +3236,16 @@ const RADIO_LINES = {
         'Pole, every lap led and the fastest lap. You are on for the grand slam. Bring it home.',
         'The grand slam is on. Pole, every lap led, fastest lap. Just finish it.',
         'You are on for a grand slam. Keep leading every lap.',
-        'Everything is lined up. Pole, fastest lap, every lap led. Do not let it slip.'
+        'Everything is lined up. Pole, fastest lap, every lap led. Do not let it slip.',
+        'Grand slam watch. Pole, the lead at every line, the fastest lap. Keep all three.',
+        'Nobody has led a lap but you, nobody has gone quicker, and you started from pole. That is a grand slam, if you finish it.'
     ],
     chelemGone: [
         'The grand slam has gone. Race for the win.',
         'No grand slam today. Focus on the win.',
         'That is the grand slam gone. The win is what matters.',
-        'The grand slam is off. Take the victory anyway.'
+        'The grand slam is off. Take the victory anyway.',
+        'Grand slam gone. Twenty-five points are still out there, go and get them.'
     ],
 
     // ---- the cars around you -------------------------------------------------
@@ -3075,18 +3255,26 @@ const RADIO_LINES = {
         '{name}, {gap} up the road. Reel him in.',
         'You are {gap} behind {name}. Have a look at him.',
         'Gap to {name} is {gap}. Go hunting.',
-        '{name} is just {gap} ahead. He is there to be taken.'
+        '{name} is just {gap} ahead. He is there to be taken.',
+        '{name} ahead, {gap}. Stay in his tow and pick your spot.',
+        '{gap} to {name}. Get a run on him out of the slow corner.',
+        '{name} is {gap} in front. Make him look in his mirrors.',
+        'Right behind {name} now, {gap}. Patience, then commit.'
     ],
     catching: [
         'You are taking {d} a lap out of {name}. On those numbers you are with him in {n} laps.',
         '{name} is {gap} ahead, but you are {d} a lap quicker. {n} laps and you are on him.',
         'Closing on {name} by {d} a lap. You will catch him in about {n}.',
-        '{gap} to {name}, and you are {d} a lap faster. Give it {n} laps.'
+        '{gap} to {name}, and you are {d} a lap faster. Give it {n} laps.',
+        'The gap to {name} is coming down, {d} a lap. {n} laps to catch him, keep that pace.',
+        '{name} is losing {d} a lap to you. {gap} now. About {n} laps and he is yours.'
     ],
     cantCatch: [
         '{name} is {gap} ahead and we are only gaining {d} a lap. Not enough laps left, run your own race.',
         'We are quicker than {name}, but only by {d}. He is {gap} away. Bring it home.',
-        '{gap} to {name}, closing by {d} a lap. It will not be enough this time.'
+        '{gap} to {name}, closing by {d} a lap. It will not be enough this time.',
+        '{name} is {gap} up the road. {d} a lap is not going to get there. Look after the car.',
+        'Gaining on {name}, {d} a lap, but {gap} is too much for the laps left. Your race is behind you now.'
     ],
     behindClose: [
         '{name} is {gap} behind. He is right with you, cover the inside.',
@@ -3094,184 +3282,261 @@ const RADIO_LINES = {
         '{gap} to {name} behind. Watch the inside.',
         '{name} is right there, {gap}. Defend.',
         'Mirrors. {name}, {gap}.',
-        'The car behind is {name}, {gap}. Keep it tight.'
+        'The car behind is {name}, {gap}. Keep it tight.',
+        '{name} on your tail, {gap}. Position the car on the way in.',
+        '{gap} back to {name}. Do not leave him the inside.',
+        '{name} is {gap} behind. Clean exits, make him work for it.',
+        'He is with you. {name}, {gap}. Defend the braking zones.'
     ],
     behindCloseClosing: [
         '{name} is {gap} behind and still coming. Defend the inside.',
         '{name} is closing, {gap} now. Protect the inside.',
         'He is coming. {name} is {gap} back and gaining.',
-        '{name}, {gap}, and he is quicker right now. Cover him.'
+        '{name}, {gap}, and he is quicker right now. Cover him.',
+        '{name} is faster at the moment, {gap} and closing. Keep him behind on the brakes.',
+        'The gap to {name} is shrinking, {gap}. He is coming at you, be ready.'
     ],
     behindGaining: [
         '{name} is {gap} behind, and he took {d} out of you last lap.',
         'The gap to {name} is down to {gap}. He took {d} that lap.',
         '{name} is closing, {d} last lap. The gap is {gap}.',
-        '{d} gained by {name}. He is {gap} behind.'
+        '{d} gained by {name}. He is {gap} behind.',
+        '{name} found {d} on you that lap. {gap} now. Find it back.',
+        'Behind you, {name} is {d} a lap quicker right now. {gap}.'
     ],
     behindLosing: [
         'You have pulled {d} on {name}. He is {gap} behind now.',
         'Good lap, {d} on {name}. The gap is {gap}.',
         'The gap to {name} is growing, {gap}. You took {d} that lap.',
-        'You took {d} out of {name}. {gap} now.'
+        'You took {d} out of {name}. {gap} now.',
+        '{name} is dropping back, {d} that lap. {gap} behind you.',
+        '{d} on {name} that time. {gap}. Keep pulling.'
     ],
     behindHolding: [
         '{name} is holding station {gap} behind you.',
         'The gap to {name} is steady at {gap}.',
         '{name}, {gap} behind. Stable.',
-        'No change. {name} at {gap}.'
+        'No change. {name} at {gap}.',
+        '{name} is matching you, {gap} back. Nothing in it either way.',
+        'Gap behind unchanged, {name} at {gap}.'
     ],
     leadGrowing: [
         'The gap to {name} is {gap}. You took {d} out of him that lap.',
         'The lead is {gap} over {name}, and growing.',
         '{gap} lead now. {d} quicker than {name} on that lap.',
-        'You are pulling away. {gap} to {name}, plus {d} that lap.'
+        'You are pulling away. {gap} to {name}, plus {d} that lap.',
+        'Lead up to {gap}. {d} on {name} that lap. Good.',
+        '{name} is going backwards from you. {gap} now, {d} that lap.'
     ],
     leadShrinking: [
         '{name} is chipping away. The lead is {gap}, he took {d}.',
         'The lead is down to {gap}. {name} is quicker right now.',
         '{name} took {d} out of you. The lead is {gap}.',
-        'Watch it, {name} is closing. {gap} now.'
+        'Watch it, {name} is closing. {gap} now.',
+        'The lead is shrinking. {gap} to {name}, he found {d} that lap.',
+        '{name} is coming, {d} a lap. {gap} in hand. Respond, please.'
     ],
     leadSteady: [
         'The lead is steady at {gap} over {name}.',
         '{gap} to {name}. Under control.',
         'Gap to {name} holding at {gap}.',
-        'Steady. {gap} back to {name}.'
+        'Steady. {gap} back to {name}.',
+        'Lead unchanged, {gap} over {name}. Keep it there.',
+        '{name} is {gap} behind and going nowhere. Manage it.'
     ],
     leadBig: [
         'You have {gap} in hand. Bring it home, no risks.',
         'Big lead, {gap}. Look after the car now.',
         '{gap} clear. We can turn it down a little.',
-        'The lead is {gap}. Stay off the kerbs and bring it home.'
+        'The lead is {gap}. Stay off the kerbs and bring it home.',
+        '{gap} to the car behind. Nothing to race but the flag now.',
+        'Comfortable, {gap}. Keep the tyres alive and keep it tidy.'
     ],
     cleanAir: [
         'Clean air. Nobody within four seconds. Put some laps together.',
         'You are on your own out there. Focus on the lap times.',
         'Nobody close either way. Just hit your marks.',
-        'Free air ahead and behind. Good rhythm, keep it going.'
+        'Free air ahead and behind. Good rhythm, keep it going.',
+        'No traffic either side. Drive the circuit, not the race.',
+        'Clear road. Make the laps count.'
+    ],
+    // THE LEADER, NOW AND THEN (zoom112)
+    leaderGap: [
+        'Gap to the leader, {name}: {gap}.',
+        '{name} leads. You are {gap} behind him.',
+        'The front of the race is {name}, {gap} up the road.',
+        'For reference, {name} is leading, {gap} ahead of you.',
+        '{gap} to the lead. {name} is the man out front.'
+    ],
+    // THE CAR NEXT DOOR (zoom112): your team-mate, in your car
+    mateAhead: [
+        'That is your team-mate ahead, {name}, {gap}. Same car. Beat him and the whole garage sees it.',
+        '{name} is {gap} up the road, in your car. Nothing to hide behind: same machine, go and have him.',
+        'Your team-mate, {name}, {gap} ahead. The one comparison the paddock reads first.',
+        '{gap} to {name}. He has your car. Show the garage who it should be built around.'
+    ],
+    mateBehind: [
+        'Your team-mate {name} is {gap} behind, in the same car. Do not give him a thing.',
+        '{name}, {gap} back. Same car as yours. Keep it that way round.',
+        'Mirrors: {name}, your team-mate, {gap}. Beat him and the engineers start listening to you.',
+        '{name} behind you, {gap}. The garage is watching that gap. Make it grow.'
     ],
 
     // ---- what the wall knows about the others ---------------------------------
     tellBrakeBehind: [
         '{name} brakes very late. Expect him down the inside into the slow corners.',
         'Careful, {name} is a late braker. Cover the inside on the way in.',
-        '{name} will try it on the brakes. Do not leave the door open.'
+        '{name} will try it on the brakes. Do not leave the door open.',
+        '{name} goes in very deep. Take the inside before he can.'
     ],
     tellBrakeAhead: [
         '{name} brakes very late, so the brakes are not where you will get him. Get a better exit.',
         'Do not try {name} on the brakes, he goes in too deep. Get him on the exit.',
-        '{name} is late on the brakes. Your chance is the run out of the corner.'
+        '{name} is late on the brakes. Your chance is the run out of the corner.',
+        'No point out-braking {name}, nobody does. Beat him on traction.'
     ],
     tellDefendAhead: [
         '{name} is very hard to pass. He will cover the inside. Be patient and make it stick.',
         '{name} defends hard. Do not lunge, set him up.',
-        'Heads up, {name} does not give an inch. Wait for the mistake.'
+        'Heads up, {name} does not give an inch. Wait for the mistake.',
+        '{name} shuts the door every time. Fake the inside, take the outside.'
     ],
     tellSoftAhead: [
         '{name} does not defend hard. Have a go at him.',
         '{name} rarely fights back. Go for it.',
-        'If you get alongside {name}, he will usually give it up.'
+        'If you get alongside {name}, he will usually give it up.',
+        '{name} will not fight you for it. Show him the nose.'
     ],
     tellErrAhead: [
         '{name} makes mistakes under pressure. Stay close and he will give it to you.',
         'Keep the pressure on {name}. He tends to crack.',
-        '{name} gets ragged when he is chased. Stay in his mirrors.'
+        '{name} gets ragged when he is chased. Stay in his mirrors.',
+        'Fill {name}\'s mirrors. He locks up when somebody is there.'
     ],
     tellErrBehind: [
         '{name} can be wild. Leave him a bit of room.',
         'Careful with {name} behind, he makes mistakes. Do not get taken out.',
-        '{name} is a bit erratic. Give him space and he may run wide.'
+        '{name} is a bit erratic. Give him space and he may run wide.',
+        '{name} behind is the sort who lunges. Do not be where the lunge lands.'
     ],
     tellStraightAhead: [
         '{name} is quick in a straight line. Get him in the corners.',
         '{name} has the top speed. Your chance is the braking zones.',
-        'Do not try {name} on the straight. Take him in the twisty bits.'
+        'Do not try {name} on the straight. Take him in the twisty bits.',
+        '{name} will pull away on the straights. Get alongside before them, not on them.'
     ],
     tellStraightBehind: [
         '{name} is quick on the straights. Get a good exit or he will be alongside.',
         '{name} has the speed on the straights. Nail your exits.',
-        'Watch {name} on the straights. Defend into the braking zones.'
+        'Watch {name} on the straights. Defend into the braking zones.',
+        '{name} will be with you by the end of every straight. Make the braking zone yours.'
     ],
     tellCornerAhead: [
         '{name} is quick in the corners. Your chance is the straight.',
         '{name} carries a lot of speed through the turns. Get him with a better exit.',
-        'You will not get {name} mid corner. Use the straight.'
+        'You will not get {name} mid corner. Use the straight.',
+        '{name} is strong in the corners. Stay in the tow and do it on the straight.'
     ],
     tellCornerBehind: [
         '{name} is quick in the corners. Watch him on the way in.',
         '{name} carries more speed through the turns. Do not compromise your exits.',
-        'Careful in the twisty bits, {name} is quick there.'
+        'Careful in the twisty bits, {name} is quick there.',
+        '{name} will be closer at every apex. Use the straights to keep him off.'
     ],
     tellPassiveBehind: [
         '{name} rarely forces a move. Keep it clean and he will stay there.',
         '{name} does not dive. Just hit your marks.',
-        '{name} is patient, he waits for mistakes. Do not give him one.'
+        '{name} is patient, he waits for mistakes. Do not give him one.',
+        '{name} will follow you all day if you do not slip. So do not slip.'
     ],
     tellWet: [
         '{name} is very good in the wet. Expect him to be quick.',
         'Careful, {name} loves these conditions.',
-        '{name} is one of the best in the rain. Do not underestimate him.'
+        '{name} is one of the best in the rain. Do not underestimate him.',
+        'In the wet {name} is a different driver. Respect him.'
     ],
     aheadMustStop: [
         '{name} will have to stop again. His tyres will not make the end. Stay with him.',
         '{name}\'s set will not last to the flag. He has to pit.',
-        'Strategy says {name} still has a stop to make. Keep him in sight.'
+        'Strategy says {name} still has a stop to make. Keep him in sight.',
+        '{name} is on tyres that will not finish the race. Stay close and the stop does the rest.',
+        'No need to force it with {name}: he has to box again. Stay within reach.'
     ],
     behindMustStop: [
         '{name} behind still has a stop to make. Do not fight him too hard.',
         '{name}\'s tyres will not make the end. He will have to box.',
-        'Do not worry too much about {name}. He has to stop again.'
+        'Do not worry too much about {name}. He has to stop again.',
+        '{name} behind is on a set that will not finish. Let him go if he comes, the stop brings him back.',
+        'Ignore {name} behind. The numbers say he stops again.'
     ],
 
     // ---- the season ---------------------------------------------------------
     rivalAhead: [
         'That is {name} ahead, {gap}. Your title rival. This one matters.',
         '{name} is {gap} up the road. Beat him and it is a big swing in the championship.',
-        'Championship rival {name} is {gap} ahead. Let us have him.'
+        'Championship rival {name} is {gap} ahead. Let us have him.',
+        '{name}, {gap} ahead. He is the one we are racing this year. Go.',
+        'Your rival is the car in front, {name}, {gap}. Every place on him is double.'
     ],
     rivalBehind: [
         'Your title rival {name} is {gap} behind. Keep him there.',
         '{name} is behind, {gap}. Every place between you counts.',
-        'Title rival in the mirrors. {name}, {gap}.'
+        'Title rival in the mirrors. {name}, {gap}.',
+        '{name} behind you, {gap}. The championship is in that gap. Keep it.',
+        'That is your rival behind, {name}, {gap}. Nothing silly, just keep him there.'
     ],
     rivalPassed: [
         'You are ahead of {name}. That is a big one for the title.',
         'Past your title rival! {name} is behind you now.',
-        'That is {name} done. Huge for the championship.'
+        'That is {name} done. Huge for the championship.',
+        '{name} behind you. The table liked that. Now pull away from him.',
+        'Past {name}! That is the pass of the season, for the points it is worth.'
     ],
     champAheadMid: [
         'As it stands, you would lead the championship by {pts} from {name}.',
         'Live standings. You are {pts} clear of {name} in the championship.',
-        'If it finishes like this, you are {pts} ahead of {name} in the title fight.'
+        'If it finishes like this, you are {pts} ahead of {name} in the title fight.',
+        'Championship as it stands: you, by {pts}, from {name}.',
+        'The live table has you {pts} ahead of {name}. Keep it that way.'
     ],
     champBehindMid: [
         'As it stands, you would be {pts} behind {name} in the championship.',
         'Live standings. {name} leads you by {pts}.',
-        'If it ends like this, {name} is {pts} ahead in the championship. Let us change that.'
+        'If it ends like this, {name} is {pts} ahead in the championship. Let us change that.',
+        'Championship as it stands: {name} by {pts}. There is time.',
+        'The live table says {name} is {pts} up on you. Places now are points later.'
     ],
     champLevelMid: [
         'As it stands, you would be level on points with {name}.',
-        'Live standings. Dead level with {name} in the championship.'
+        'Live standings. Dead level with {name} in the championship.',
+        'Championship as it stands: you and {name}, level. Every place decides it.'
     ],
     champFinishAhead: [
         'As it stands, that puts you {pts} clear of {name}, with {rounds} to go.',
         'Championship. You lead {name} by {pts}, {rounds} left.',
-        'That leaves you {pts} ahead of {name}, with {rounds} to go.'
+        'That leaves you {pts} ahead of {name}, with {rounds} to go.',
+        'Standings: {pts} over {name}, {rounds} remaining. Good day for the title.',
+        'The table tonight: you, by {pts}, from {name}. {rounds} to go.'
     ],
     champFinishBehind: [
         'As it stands, {name} leads you by {pts}, with {rounds} to go.',
         'Championship. {pts} to {name}, and {rounds} left to get them.',
-        '{name} is {pts} ahead in the standings, {rounds} to go. Plenty of racing left.'
+        '{name} is {pts} ahead in the standings, {rounds} to go. Plenty of racing left.',
+        'The table tonight: {name} by {pts}. {rounds} left, and we have done harder.',
+        'Standings: {pts} behind {name}, {rounds} remaining. Nothing is decided.'
     ],
     champChampion: [
         'That is it! You are the champion! Nobody can catch you now!',
         'You have done it! You are the champion!',
-        'Champion! Mathematically, it is yours. What a season!'
+        'Champion! Mathematically, it is yours. What a season!',
+        'World champion! The numbers are done, nobody can reach you. Enjoy every metre of the slow-down lap.',
+        'CHAMPION! That is the title! The garage has gone mad!'
     ],
     champChampionEarly: [
         'That is the title! With {rounds} to go, nobody can catch you. You are the champion!',
         'Champion, with {rounds} still to run! Nobody can catch you now!',
-        'You have wrapped it up, with {rounds} to spare. Champion!'
+        'You have wrapped it up, with {rounds} to spare. Champion!',
+        'World champion, and there are still {rounds} left! Nobody can touch the total. What a year!'
     ],
 
     // ---- between the lines -----------------------------------------------------
@@ -3280,61 +3545,78 @@ const RADIO_LINES = {
         'Blue flags for {name}. Give him room.',
         '{name} is lapping you. Blue flags, do not hold him up.',
         'Blue flag. {name} is behind and a lap up. Move over cleanly.',
-        'Let {name} through, he is lapping you. Stay off the racing line.'
+        'Let {name} through, he is lapping you. Stay off the racing line.',
+        'Blue flags out. {name} is a lap ahead of you, let him go without losing time.',
+        '{name} behind you is lapping you. Give him the line and get on with your race.'
     ],
     blueFlagLeader: [
         'Blue flags. The race leader {name} is coming through.',
         'Blue flags. {name}, the leader, is right behind. Let him by.',
-        'The leader is lapping you. {name}, give him room.'
+        'The leader is lapping you. {name}, give him room.',
+        'Blue flag, it is the leader. {name}. Off the line, let him through cleanly.'
     ],
     traffic: [
         'Traffic ahead. {name}, a lap down. He has the blue flags.',
         'Backmarker ahead, {name}. Blue flags are out for him.',
         '{name} ahead is a lap down. He has been told to let you by.',
-        'Lapped car coming up, {name}. Blue flags waving.'
+        'Lapped car coming up, {name}. Blue flags waving.',
+        'Blue flags for {name} ahead. Go by where it is safe, do not lose time behind him.',
+        'Traffic. {name}, lapped, right ahead. He should move over.'
     ],
     wreckAhead: [
         'Careful, {name} ahead is struggling. He will move over.',
         'Slow car ahead, {name}. Watch him, he is crawling.',
         '{name} is in trouble up ahead. Give him room.',
-        'Heads up. {name} is very slow, he is getting out of the way.'
+        'Heads up. {name} is very slow, he is getting out of the way.',
+        'Crippled car ahead, {name}. He is nowhere near racing speed, go round him.',
+        '{name} ahead is limping. Do not arrive on him at full speed.'
     ],
     carOut: [
         '{name} is out of the race.',
         'We have lost {name}. He has retired.',
-        '{name} is out. That is one less.'
+        '{name} is out. That is one less.',
+        '{name} has stopped. Out of the race.',
+        'Retirement for {name}. One fewer car to deal with.'
     ],
     carOutAhead: [
         '{name} is out of the race. That is {pos} for you.',
         '{name} has retired. You inherit {pos}.',
-        'The car ahead is out. {name} retires, you are up to {pos}.'
+        'The car ahead is out. {name} retires, you are up to {pos}.',
+        '{name} is out, the car in front of you. {Pos} now, for free.'
     ],
     leaderOut: [
         'The leader is out! {name} has retired!',
         'Big news. {name} is out of the race from the lead.',
-        '{name} has retired from the lead. The race is wide open.'
+        '{name} has retired from the lead. The race is wide open.',
+        'The race leader, {name}, is out! Everything changes now.'
     ],
     rivalOut: [
         'Your title rival {name} is out of the race! Big opportunity for the championship.',
         '{name} has retired. That is huge for the title. Bring it home.',
-        'Your rival {name} is out. Do not do anything silly now.'
+        'Your rival {name} is out. Do not do anything silly now.',
+        '{name} is out of the race! Every point you score today is a point on him for nothing.'
     ],
     selfOut: [
         'That is the end of our race. I am sorry.',
         'We are out. Park it safely.',
         'The car is done. That is it for today, I am sorry.',
-        'Retired. Tough one. We will come back stronger.'
+        'Retired. Tough one. We will come back stronger.',
+        'That is us done for today. Get out of the car safely.',
+        'Our race is over. Sorry. We will talk tonight.'
     ],
     aheadPits: [
         '{name} is in the pits. Push now, this is your chance.',
         '{name} has boxed. Big push, this lap.',
         '{name} is stopping. Clear air. Go.',
-        '{name} in the pit lane. Everything you have, now.'
+        '{name} in the pit lane. Everything you have, now.',
+        '{name} is in. This is the lap that decides it. Push, push.',
+        'The car ahead has pitted, {name}. Hammer time.'
     ],
     behindPits: [
         '{name} has pitted from behind you.',
         'The car behind, {name}, is in the pits. Focus on your race.',
-        '{name} has boxed. One less in the mirrors for now.'
+        '{name} has boxed. One less in the mirrors for now.',
+        '{name} behind has stopped. He will come out on fresh tyres, keep your pace up.'
     ],
 
     // ---- the start --------------------------------------------------------------
@@ -3342,28 +3624,35 @@ const RADIO_LINES = {
         'Great start! {places} gained, {pos} now.',
         'Brilliant first lap. Up {n}, {pos}.',
         'You made {places} on the opening lap. {Pos} now.',
-        'Mega launch. Plus {n}, {pos}.'
+        'Mega launch. Plus {n}, {pos}.',
+        'Lap one done, up {n}. {Pos}. Settle in now.',
+        'That is {places} gained at the start. {Pos}. Lovely.'
     ],
     startGainLead: [
         'Great start! Into the lead from {grid} on the grid.',
         'What a launch. From {grid} to the lead on lap one.',
         'You have taken the lead! {places} on the opening lap.',
-        'Brilliant first lap. P1, from {grid}.'
+        'Brilliant first lap. P1, from {grid}.',
+        'Lights to the lead from {grid}. Now build it.'
     ],
     startLoss: [
         'Tough start, {places} lost. {Pos}. We will get them back.',
         'We lost {n} on lap one. {Pos} now. Stay calm, pick them off.',
-        'Not the start we wanted. Down {n} to {pos}. Stay calm.'
+        'Not the start we wanted. Down {n} to {pos}. Stay calm.',
+        'Down {n} at the start. {Pos}. Long race, head down.',
+        'Lap one cost us {places}. {Pos}. No panic, the pace is there.'
     ],
     startHeldLead: [
         'Clean start, still leading. Now build a gap.',
         'Great start, you held the lead.',
-        'Lap one done, still P1. Good job.'
+        'Lap one done, still P1. Good job.',
+        'Lead held through the first lap. Now the race is yours to control.'
     ],
     startHeld: [
         'Held position at the start. {Pos}.',
         'Clean first lap. {Pos}.',
-        'Start done, {pos}. Settle in.'
+        'Start done, {pos}. Settle in.',
+        'No change at the start. {Pos}. Now race.'
     ],
 
     // ---- the pit lane, the flags ------------------------------------------------
@@ -3373,14 +3662,17 @@ const RADIO_LINES = {
         'Okay, we are ready for you. Box this lap.',
         'Box confirmed. The crew is out.',
         'Copy that. Pit this lap, everything is ready.',
-        'Understood. Come in, we are waiting for you.'
+        'Understood. Come in, we are waiting for you.',
+        'Box, box, confirmed. Tyres are in the gun.',
+        'Copy. In this lap. Hit the limiter at the line.'
     ],
     stayOut: [
         'Copy that, staying out.',
         'Okay, stay out.',
         'Understood, we stay out.',
         'No problem, staying out.',
-        'Copy, cancel the stop.'
+        'Copy, cancel the stop.',
+        'Stop cancelled. Stay out, keep pushing.'
     ],
     tyresOn: [
         '{tyre}. {tyre} on. Go go go.',
@@ -3388,7 +3680,9 @@ const RADIO_LINES = {
         'Fresh {tyre}, go go go.',
         '{tyre} fitted. Release, release!',
         'Go, go! {tyre} on.',
-        'Clean stop, {tyre} on. Go!'
+        'Clean stop, {tyre} on. Go!',
+        '{tyre} on the car. Go, go, go!',
+        'Good stop. {tyre}. Release!'
     ],
     // ...and the same release when the crew mended the car as well
     repairedOn: [
@@ -3396,14 +3690,16 @@ const RADIO_LINES = {
         'Damage fixed, {tyre} fitted. Release, release!',
         'Car is as new, {tyre} on. Go!',
         'All repaired. {tyre} on, go go go.',
-        'That is the damage sorted and fresh {tyre}. Go!'
+        'That is the damage sorted and fresh {tyre}. Go!',
+        'Bodywork fixed, {tyre} fitted. Go, go!'
     ],
     // ...and when the stop also paid off the stewards (THE STEWARDS)
     penaltyOn: [
         'Penalty served, {tyre} on. Go go go.',
         'That is the penalty done and {tyre} fitted. Release!',
         '{tyre} on, penalty served, we are clear with the stewards. Go!',
-        'Time served. {tyre} on, go go go.'
+        'Time served. {tyre} on, go go go.',
+        'Stewards paid, {tyre} on. Go, go!'
     ],
 
     // ---- the stewards ----------------------------------------------------------
@@ -3413,50 +3709,60 @@ const RADIO_LINES = {
         'Five second penalty, I am afraid. The stewards say {what}. Serve it at the box with P, or it goes on at the flag.',
         'Stewards have given you five seconds: {what}. We can serve it at your stop, press P on the panel, or take it at the flag.',
         'Bad news from race control. Five seconds, {what}. P at the box serves it, otherwise it is added at the end.',
-        'Five seconds from the stewards. Their words: {what}. {s} seconds owed now. P at the box to serve it.'
+        'Five seconds from the stewards. Their words: {what}. {s} seconds owed now. P at the box to serve it.',
+        'Race control: five seconds, {what}. Serve it at the stop with P or we take it at the flag. Your call.',
+        'The stewards have decided: five seconds, {what}. We will serve it at the box if you press P.'
     ],
     // no box this race: it can only go on at the flag
     penYouNoBox: [
         'Five second penalty from the stewards, {what}. It goes on your race time at the flag.',
         'Race control have given you five seconds: {what}. Added at the end. Make it back on the road.',
-        'Five seconds, I am afraid. The stewards say {what}. It is added at the flag, so push.'
+        'Five seconds, I am afraid. The stewards say {what}. It is added at the flag, so push.',
+        'Stewards: five seconds, {what}. No box to serve it, so build a five second gap.'
     ],
     // out of the race with a penalty owed
     penYouOut: [
         'And the stewards have given you five seconds for the contact: {what}. Academic now.',
-        'Race control: five seconds, {what}. Not that it matters any more today.'
+        'Race control: five seconds, {what}. Not that it matters any more today.',
+        'Five seconds from the stewards, {what}. The car is already out, so that is for the record.'
     ],
     penYouOutSeason: [
         'The stewards have given you five seconds, {what}. You are out, so it is the back of the grid next time.',
         'Race control: five seconds for the contact, {what}. We cannot serve it, so we start last at the next round.',
-        'Five seconds from the stewards, {what}. With the car out that becomes the back of the grid at the next Grand Prix.'
+        'Five seconds from the stewards, {what}. With the car out that becomes the back of the grid at the next Grand Prix.',
+        'Stewards: five seconds, {what}. Out of the race, so it carries over: back of the grid at the next one.'
     ],
     // the other driver got it
     penHim: [
         '{name} gets five seconds: {what}.',
         'Stewards have looked at it. Five seconds for {name}, {what}.',
         'Race control agree with us: {what}. {name}, five second penalty.',
-        'Five seconds for {name}. {what}.'
+        'Five seconds for {name}. {what}.',
+        'Penalty for {name}, five seconds. The stewards say {what}.',
+        '{name} has five seconds from the stewards: {what}. Good.'
     ],
     // nobody did
     penNone: [
         'The stewards looked at the contact with {name}. Racing incident, no further action.',
         'Race control have no further action on the touch with {name}. Racing incident.',
-        'Stewards say racing incident with {name}. Nothing to answer for.'
+        'Stewards say racing incident with {name}. Nothing to answer for.',
+        'No penalty for the contact with {name}. Racing incident, carry on.'
     ],
     vsc: [
         'Virtual safety car. Virtual safety car. Slow down and hold the gap.',
         'V S C, V S C. Ease off and hold the gap.',
         'Virtual safety car deployed. Slow down.',
         'The V S C is out. Slow down, keep it steady.',
-        'Virtual safety car. Ease off and keep the gap.'
+        'Virtual safety car. Ease off and keep the gap.',
+        'V S C. Back off, no overtaking, hold your delta.'
     ],
     green: [
         'Green flag, green flag. We are racing.',
         'Green, green, green! Racing again.',
         'V S C ending. Green flag, go.',
         'Track is clear. Green flag.',
-        'We are green. Push now.'
+        'We are green. Push now.',
+        'Green flag. Back to full speed.'
     ],
 
     // ---- the safety car ---------------------------------------------------------
@@ -3465,54 +3771,62 @@ const RADIO_LINES = {
         'The safety car is out. Hold your position and close up.',
         'Safety car deployed. Follow the queue, no overtaking.',
         'S C, S C. Safety car on track.',
-        'Safety car. Keep the tyres warm and stay in line.'
+        'Safety car. Keep the tyres warm and stay in line.',
+        'Safety car is out. Close up to the car ahead, no passing.'
     ],
     scLead: [
         'Safety car. Sorry, that is your lead gone. We go again at the restart.',
         'Safety car is out and it takes your gap away. Stay calm, you control the restart.',
         'Safety car. The whole field will bunch up behind you. Get ready to defend.',
         'Safety car deployed. Your gap is gone, but you lead the restart.',
-        'Safety car, safety car. All that gap, gone. Keep your head, it is still your race.'
+        'Safety car, safety car. All that gap, gone. Keep your head, it is still your race.',
+        'Safety car. Hard on you, that. Keep the tyres warm and own the restart.'
     ],
     scChase: [
         'Safety car! The gap to {name} is gone. This is our chance.',
         'Safety car. That puts you right back with {name}. Get ready for the restart.',
         'Safety car is out. The field closes up, {name} is in reach now.',
         'Safety car, safety car. A free gap to {name}. Make the restart count.',
-        'Safety car. Everything we lost to {name}, we get back now.'
+        'Safety car. Everything we lost to {name}, we get back now.',
+        'Safety car. {name} just lost his whole gap. Be ready when it goes green.'
     ],
     scBox: [
         'Box under the safety car? It is a cheap stop now. B to box.',
         'The stop is cheap under the safety car. Box this lap if you want tyres.',
         'Cheap stop available under the safety car. Your call.',
-        'Safety car means a cheap stop. Box, if you want it.'
+        'Safety car means a cheap stop. Box, if you want it.',
+        'If you want tyres, now is the time: the safety car makes the stop almost free. B to box.'
     ],
     scPitHold: [
         'Hold, hold. The pit exit is closed for the safety car.',
         'Wait in the box. The safety car is coming past.',
         'Stay there, pit exit is red. Wait for the queue to go by.',
-        'Hold position in the box. You go after the safety car train.'
+        'Hold position in the box. You go after the safety car train.',
+        'Hold. Exit is closed until the queue has passed.'
     ],
     scIn: [
         'Safety car in this lap. Get ready.',
         'The safety car comes in at the end of this lap. Warm the tyres.',
         'Lights are off on the safety car. Restart coming.',
         'Safety car in this lap. No overtaking until the line.',
-        'Safety car is coming in. Be ready for the restart.'
+        'Safety car is coming in. Be ready for the restart.',
+        'Safety car in. Get heat in the tyres, the restart is coming.'
     ],
     scInLead: [
         'Safety car in this lap. You control the restart, go when you want.',
         'The safety car is coming in. You lead the restart, pick your moment.',
         'Lights are off on the safety car. You set the pace from here, no overtaking before the line.',
         'Safety car in this lap. Back them up if you like, then go.',
-        'Safety car in. Your restart. Make it a good one.'
+        'Safety car in. Your restart. Make it a good one.',
+        'The safety car pulls in this lap. Dictate the pace, go when they least expect it.'
     ],
     scGreen: [
         'Green flag, green flag! Go, go, go.',
         'Green flag. We are racing again.',
         'Restart! Green, green, green.',
         'Green flag. Push now.',
-        'And we are green. Go!'
+        'And we are green. Go!',
+        'Green! Go, go, go!'
     ],
 
     // ---- the weather, when it moves ---------------------------------------------
@@ -3520,155 +3834,181 @@ const RADIO_LINES = {
         'Weather update. Some light rain around {when}, maybe not enough for inters.',
         'Radar shows a light shower around {when}. Slicks might live through it.',
         'A little rain is forecast around {when}. It may not be enough to matter.',
-        'Light rain on the radar, around {when}. Do not panic about it yet.'
+        'Light rain on the radar, around {when}. Do not panic about it yet.',
+        'Forecast: a few drops around {when}. Probably a slick race still.'
     ],
     wxFcShower: [
         'Weather update. Rain is forecast around {when}. That is intermediate weather.',
         'Radar shows rain arriving around {when}. Think about the inters.',
         'We have rain coming, around {when}. Plan for intermediates.',
-        'Rain expected around {when}. It should be enough for inters.'
+        'Rain expected around {when}. It should be enough for inters.',
+        'Forecast: a shower around {when}. We will have the inters ready.'
     ],
     wxFcDownpour: [
         'Big rain on the radar, around {when}. Standing water, full wets.',
         'Heavy rain forecast around {when}. It will be a full wet track.',
         'Storm coming around {when}. Full wets weather.',
-        'Weather update. A downpour around {when}. Be ready to box for wets.'
+        'Weather update. A downpour around {when}. Be ready to box for wets.',
+        'Radar is dark around {when}. Full wets, and puddles everywhere.'
     ],
     wxFcDrying: [
         'The rain should stop around {when}. Then the track dries.',
         'Radar says the rain stops around {when}. Slicks later on.',
         'Weather update. Dry from around {when}, the track will come to us.',
-        'Rain stopping around {when}. Think about slicks for the end.'
+        'Rain stopping around {when}. Think about slicks for the end.',
+        'Forecast: clearing around {when}. A dry line will come after that.'
     ],
     wxFcHeavier: [
         'More rain coming, heavier, around {when}. Full wets weather after that.',
         'Radar shows heavy rain around {when}. Standing water will build.',
         'Weather update. It gets much wetter around {when}.',
-        'Heavier rain forecast around {when}. Think about the full wets.'
+        'Heavier rain forecast around {when}. Think about the full wets.',
+        'Forecast: the rain picks up around {when}. Wets after that.'
     ],
     wxFcEasing: [
         'The rain should ease around {when}. Inters after that.',
         'Radar says it gets lighter around {when}. The standing water will go.',
         'Weather update. Rain easing around {when}.',
-        'Less rain from around {when}. The full wet will be too much then.'
+        'Less rain from around {when}. The full wet will be too much then.',
+        'Forecast: easing around {when}. Inters will be the tyre.'
     ],
     wxSoonRain: [
         'Rain is about a lap away now.',
         'Rain is close. One lap, maybe less.',
         'Radar says rain within a lap.',
-        'Rain incoming, about a lap.'
+        'Rain incoming, about a lap.',
+        'Rain within the lap. Watch the visor.'
     ],
     wxSoonDry: [
         'The rain should stop within a lap.',
         'The rain is about to stop.',
         'About a lap of rain left, then it dries.',
-        'Nearly through the rain now.'
+        'Nearly through the rain now.',
+        'Rain ending within a lap.'
     ],
     wxSoonHeavier: [
         'The heavy rain is about a lap away.',
         'Heavier rain within a lap. Be ready.',
-        'Big rain coming, about a lap.'
+        'Big rain coming, about a lap.',
+        'The heavy stuff arrives within the lap.'
     ],
     wxSoonEasing: [
         'The rain should ease within a lap.',
         'About a lap of heavy rain left.',
-        'It gets lighter soon, about a lap.'
+        'It gets lighter soon, about a lap.',
+        'The worst of it ends within a lap.'
     ],
     wxRainStart: [
         'It is starting to rain.',
         'We have rain now. Light for the moment.',
         'Rain, rain. It is starting to come down.',
-        'Drops on the visor? Yes, it is raining.'
+        'Drops on the visor? Yes, it is raining.',
+        'Here comes the rain.'
     ],
     wxRainLight: [
         'Light rain now. Stay on slicks, it should not be enough.',
         'A bit of drizzle. Stay out, slicks are fine.',
         'Some light rain. Keep the slicks on and keep it tidy.',
-        'Drizzle starting. No need to box for it.'
+        'Drizzle starting. No need to box for it.',
+        'Light rain. Slicks will cope, just be smooth.'
     ],
     wxRainHeavy: [
         'Here comes the heavy rain.',
         'It is pouring now. Careful.',
         'Heavy rain, heavy rain. Standing water will build fast.',
-        'Big rain now. Watch for the puddles.'
+        'Big rain now. Watch for the puddles.',
+        'Proper rain now. Aquaplaning risk everywhere.'
     ],
     wxRainStop: [
         'The rain has stopped. The track will start to dry.',
         'Rain has stopped. A dry line will come.',
         'No more rain. It dries from here.',
-        'Rain has eased off completely.'
+        'Rain has eased off completely.',
+        'The rain is gone. Look for the dry line.'
     ],
     wxGoInter: [
         'Inters are the tyre now. Box, box.',
         'Track is wet enough for intermediates. Box this lap.',
         'Crossover. Intermediates are quicker now, box when you can.',
-        'Slicks are done. Box for inters.'
+        'Slicks are done. Box for inters.',
+        'Inters, inters. Box this lap, the slicks are losing seconds.'
     ],
     wxGoWet: [
         'Standing water now. Full wets are the tyre. Box, box.',
         'It is too wet for that tyre. Box for full wets.',
         'Full wets are quicker now. Box this lap.',
-        'Crossover to the full wet. Box when you can.'
+        'Crossover to the full wet. Box when you can.',
+        'Wets, wets. Box this lap, there is water everywhere.'
     ],
     wxGoInterDown: [
         'The water is clearing. Inters are quicker than the full wet now. Box.',
         'Too dry for the full wet now. Box for inters.',
         'Crossover. Intermediates are the tyre again. Box when you can.',
-        'The full wet is overheating, inters are quicker now.'
+        'The full wet is overheating, inters are quicker now.',
+        'Inters, inters. The wets are cooking, box this lap.'
     ],
     wxGoSlick: [
         'There is a dry line. Slicks are the tyre now. Box, box.',
         'Crossover. Slicks are quicker now, and the rain tyres are eating themselves.',
         'Track is dry enough for slicks. Box this lap.',
-        'Time for slicks. Box when you can.'
+        'Time for slicks. Box when you can.',
+        'Slicks, slicks. The dry line is there, box this lap.'
     ],
     wxNextInter: [
         'Inters are a little quicker now. Not worth a stop on its own, but when you box, take inters.',
         'Track is just past the crossover. If you come in for tyres, it is inters.',
         'Inters are the quicker tyre now, not by much. That is what goes on at your next stop.',
-        'Slicks are losing a bit of time now. Inters at your next stop.'
+        'Slicks are losing a bit of time now. Inters at your next stop.',
+        'Next stop, inters. The road is just wet enough.'
     ],
     wxNextWet: [
         'Full wets are quicker now, but not by enough for a stop on its own. Wets at your next stop.',
         'Standing water building. When you box next, it is full wets.',
         'The full wet is the quicker tyre now. Take it at your next stop.',
-        'Wets are quicker now, not by a lot. Wets when you come in.'
+        'Wets are quicker now, not by a lot. Wets when you come in.',
+        'Next stop, full wets. The puddles are growing.'
     ],
     wxNextInterDown: [
         'Inters are quicker than the full wet now, not by a lot. Inters at your next stop.',
         'The water is clearing. When you box next, take inters.',
         'The full wet is a bit too much now. Inters when you come in.',
-        'Inters are the quicker tyre again. Take them at your next stop.'
+        'Inters are the quicker tyre again. Take them at your next stop.',
+        'Next stop, inters. The standing water is going.'
     ],
     wxNextSlick: [
         'Slicks are a bit quicker now. Not worth a stop on its own, but slicks at your next stop.',
         'Track is past the crossover to slicks. When you box, take slicks.',
         'Dry line is there. Slicks when you come in next.',
-        'Slicks are the quicker tyre now. Take them at your next stop.'
+        'Slicks are the quicker tyre now. Take them at your next stop.',
+        'Next stop, slicks. The road has dried enough.'
     ],
     wxSoonInter: [
         'Getting wetter. Inters probably at the end of this lap.',
         'The crossover to inters is close. Box this lap?',
         'Slicks are about to go off. Think about inters this lap.',
-        'It is nearly inter weather. Your call, box this lap?'
+        'It is nearly inter weather. Your call, box this lap?',
+        'Inters soon. If you want to be early, this is the lap.'
     ],
     wxSoonWet: [
         'Water is building. Full wets probably at the end of this lap.',
         'Nearly full wet weather. Box this lap?',
         'Standing water is coming. Think about the full wets.',
-        'The crossover to wets is close. Your call.'
+        'The crossover to wets is close. Your call.',
+        'Full wets soon. Box this lap if you want to be ahead of it.'
     ],
     wxSoonInterDown: [
         'The water is going. Inters soon. Box this lap?',
         'Nearly inter weather again. Your call.',
         'Standing water is clearing. Think about the inters.',
-        'The full wet will be too much soon.'
+        'The full wet will be too much soon.',
+        'Inters soon. The full wet is about to start cooking.'
     ],
     wxSoonSlick: [
         'Track is drying. Slicks soon, maybe the end of this lap.',
         'A dry line is forming. Box for slicks this lap?',
         'Nearly slick weather. Your call.',
-        'Drying fast now. Think about slicks.'
+        'Drying fast now. Think about slicks.',
+        'Slicks soon. Be early and you gain a lap on everybody.'
     ],
 
     // ---- the chequered flag ----------------------------------------------------
@@ -3676,7 +4016,8 @@ const RADIO_LINES = {
         'That is the chequered flag, and that is a grand slam. Pole, every lap led, fastest lap and the win. Sensational.',
         'Grand slam! Pole, win, fastest lap, every lap led. Perfect weekend.',
         'A grand slam! Every lap led, fastest lap, from pole. Unbelievable.',
-        'That is the perfect race. Pole, win, fastest lap, every lap. Grand slam!'
+        'That is the perfect race. Pole, win, fastest lap, every lap. Grand slam!',
+        'Chequered flag. Pole, every lap, fastest lap, the win. There is nothing left to win this weekend. Grand slam!'
     ],
     finishWin: [
         'That is the chequered flag, and you have won it. Superb drive.',
@@ -3685,40 +4026,55 @@ const RADIO_LINES = {
         'That is the win. Fantastic job.',
         'Race winner! Beautiful driving.',
         'P1, P1! Brilliant.',
-        'You have won it! Mega job.'
+        'You have won it! Mega job.',
+        'Chequered flag. Winner! The garage is going mad.',
+        'That is the flag and that is the win. Enjoy the slow-down lap.',
+        'Race win! Twenty-five points and the trophy. Fantastic.'
     ],
     finishWinClose: [
         'That is the win, by just {gap} from {name}! What a fight!',
         'You held him off! Winner by {gap} from {name}!',
-        'Wow, {gap} at the line, but the win is yours!'
+        'Wow, {gap} at the line, but the win is yours!',
+        '{gap} ahead of {name} at the flag. Winner! That was tight.',
+        'Chequered flag, and {name} was {gap} behind you. A win is a win. Brilliant.'
     ],
     finishWinDominant: [
         'Dominant. You win by {gap}.',
         'Winner, by {gap}. Nobody could live with you today.',
-        'A {gap} victory. That was a masterclass.'
+        'A {gap} victory. That was a masterclass.',
+        'Chequered flag, {gap} clear. Nobody else was in the race.',
+        'Win by {gap}. Total control, start to finish.'
     ],
     finishWinFromBack: [
         'From {grid} on the grid to the win! Incredible drive!',
         'You started {grid} and you win it! What a comeback!',
-        '{Grid} on the grid, first at the flag. Unbelievable!'
+        '{Grid} on the grid, first at the flag. Unbelievable!',
+        'Winner, from {grid}! That is the drive of the year!',
+        '{Grid} to first. Nobody does that. You just did.'
     ],
     finishPodium: [
         'Chequered flag. {Pos} place, that is a podium. Good job.',
         '{Pos} at the flag! On the podium.',
         'A podium! {Pos} place, well driven.',
-        'That is {pos}. Podium finish, good points.'
+        'That is {pos}. Podium finish, good points.',
+        'Chequered flag, {pos}. The podium is yours, well done.',
+        '{Pos}! Trophy, champagne, big points. Lovely.'
     ],
     finishPoints: [
         'Chequered flag. {Pos} place. Good points.',
         '{Pos} at the flag. Points in the bag.',
         'That is {pos}. Solid race, solid points.',
-        'Chequered flag, {pos}. We take the points.'
+        'Chequered flag, {pos}. We take the points.',
+        '{Pos}. Points scored, car in one piece. Good day.',
+        'Flag. {Pos} place. The points add up, well done.'
     ],
     finishNoPoints: [
         'Chequered flag. {Pos}. Not our day.',
         '{Pos}. We will go again next time.',
         'That is {pos}, no points today. We will learn from it.',
-        'Chequered flag, {pos}. Tough one. Head up.'
+        'Chequered flag, {pos}. Tough one. Head up.',
+        '{Pos} at the flag. Nothing to show for it, but the car is home. Next week.',
+        'Flag. {Pos}. Not what we came for. We regroup.'
     ],
 
     // ---- weather ---------------------------------------------------------------
@@ -3726,13 +4082,15 @@ const RADIO_LINES = {
         'It is raining and you are on a dry tyre. {water}. Box when you are ready and we will put the right rubber on it.',
         'Rain is here and you are on dries. {water}. Box when you can.',
         'It is wet out there and you are on slicks. {water}. Come in when you are ready.',
-        'Rain, rain. You are on the wrong tyre. {water}. We are ready for you.'
+        'Rain, rain. You are on the wrong tyre. {water}. We are ready for you.',
+        'Rain on a dry tyre. {water}. Box when you want the right compound, the crew is waiting.'
     ],
     rain: [
         'It is raining. {water}. Go around it, not through it.',
         'Rain now. {water}. Avoid the puddles, they take the steering away.',
         'It is raining. {water}. Steer clear of the standing water.',
-        'The track is wet. {water}. Stay off the shiny bits.'
+        'The track is wet. {water}. Stay off the shiny bits.',
+        'Rain. {water}. The puddles are the danger, not the rain.'
     ],
 
     // ---- qualifying -------------------------------------------------------------
@@ -3741,54 +4099,70 @@ const RADIO_LINES = {
         'The tyres are warm. {n} flying laps, let us go.',
         'Out lap done. Push now, {n} laps.',
         'Temperatures are good. {n} flying laps, make them count.',
-        'Okay, the tyres are in. {n} laps to put it on pole.'
+        'Okay, the tyres are in. {n} laps to put it on pole.',
+        'Out lap complete. {n} flying laps. Clear track, go for it.',
+        'Tyres up to temperature. {n} laps, each one a pole lap.'
     ],
     qPole: [
         '{time}. That is provisional pole.',
         '{time}, provisional pole!',
         'Top of the timesheet. {time}.',
         '{time}. P1 for now, great lap.',
-        'Provisional pole, {time}. Lovely.'
+        'Provisional pole, {time}. Lovely.',
+        '{time}. Nobody has gone quicker. Provisional pole.',
+        'That is P1, {time}. Keep it there.'
     ],
     qProvisional: [
         '{time}. Provisionally {pos}, {gap} off pole.',
         '{time}, that is {pos} for now, {gap} to pole.',
         '{Pos} provisionally, {time}. {gap} off the top.',
-        '{time}. {gap} off pole, {pos} at the moment.'
+        '{time}. {gap} off pole, {pos} at the moment.',
+        '{time}. That puts you {pos}, {gap} from the top.',
+        '{Pos} for now, {time}. Pole is {gap} away.'
     ],
     qSlower: [
         '{time}. {gap} off your own best. We stay on the earlier one.',
         '{time}, not an improvement. {gap} slower.',
         'No improvement. {time}, {gap} down.',
-        '{time}. That one did not go, {gap} off your best.'
+        '{time}. That one did not go, {gap} off your best.',
+        '{time}, {gap} slower than your best. We keep the earlier lap.',
+        'Slower, {time}. {gap} off. Clean it up for the next one.'
     ],
     qTyre: [
         'That set is finished. Box now if you want another one.',
         'Those tyres are done. Come in if you want a fresh set.',
-        'The set is gone. Box for new tyres if you want another go.'
+        'The set is gone. Box for new tyres if you want another go.',
+        'No more life in that set. Box for fresh rubber if you want a lap.'
     ],
     qLast: [
         'One lap left in the session. Everything you have.',
         'Last lap of qualifying. Give it everything.',
         'Final flying lap. All in.',
-        'Last chance. Make it count.'
+        'Last chance. Make it count.',
+        'Last flying lap. No tomorrow. Go.',
+        'One more lap. Pole or nothing.'
     ],
     qEndPole: [
         'Session over. {time}, and that is pole position. Beautiful lap.',
         'That is pole! {time}. Superb.',
         'Pole position! {time}, nobody could touch it.',
-        'Qualifying done, and you are on pole. {time}. Great job.'
+        'Qualifying done, and you are on pole. {time}. Great job.',
+        'Pole! {time}. The front row is yours, the first corner is yours.',
+        'Session over, P1. {time}. Nobody got near it.'
     ],
     qEndGrid: [
         'Session over. {time}, and that is {pos} on the grid.',
         'Qualifying done. {Pos} on the grid, {time}.',
         '{Pos} for the start, {time}. We can work with that.',
-        'That is {pos} on the grid, {time}. The race is tomorrow.'
+        'That is {pos} on the grid, {time}. The race is tomorrow.',
+        'Session over. {Pos}, {time}. Points are scored on Sunday.',
+        '{Pos} on the grid. {time}. Good platform for the race.'
     ],
     qEndNoTime: [
         'Session over, and no time on the board. We start from the back.',
         'No lap time, I am afraid. Back of the grid.',
-        'We did not get a lap in. We start from the back.'
+        'We did not get a lap in. We start from the back.',
+        'No time set. The back of the grid, and a long Sunday.'
     ]
 };
 
@@ -3971,11 +4345,12 @@ function radioLapReport(car, isBest) {
     const said = [];
     // `key` is the subject: once it is spent the wall does not come back to it
     // (except the tyre keys, which a new set clears). A null key is a line
-    // that may be said again in another race situation.
-    const add = (pri, key, text) => {
+    // that may be said again in another race situation. `check` (zoom112) is
+    // asked whether the line is still true if it has to wait its turn.
+    const add = (pri, key, text, check) => {
         if (!text) return;
         if (key && !radioOnce(car, key)) return;
-        said.push({ pri: pri, text: text });
+        said.push({ pri: pri, text: text, check: check || null });
     };
     const left = TOTAL_LAPS - car.lap;
     const pos = racePositionOf(car);
@@ -3984,6 +4359,13 @@ function radioLapReport(car, isBest) {
     const ahead = radioCarAhead(car);
     const behind = radioCarBehind(car);
     const rival = (typeof AI !== 'undefined' && AI.seasonRival) ? AI.seasonRival.driver : null;
+    // a stop since the last line: the lap comparison skips it, the pit-exit
+    // line is about it
+    const pitted = car.pitCount !== car._radioPitCount;
+    car._radioPitCount = car.pitCount;
+    // the checks for the cars either side (THE WALL IS PUNCTUAL, above)
+    const stillA = (maxGap) => ahead ? radioStill(car, 'ahead', ahead.car, ahead.gap, maxGap) : null;
+    const stillB = (maxGap) => behind ? radioStill(car, 'behind', behind.car, behind.gap, maxGap) : null;
 
     // ---- 3: the flag, the box, the car falling apart --------------------
     //
@@ -3997,16 +4379,22 @@ function radioLapReport(car, isBest) {
         const w = car.tyreWear || 0;
         if (pitRoadWear && w > 0.75) add(3, 'last', radioLine('lastLapWorn'));
         // ...and the last lap is about the car you are racing, when there is one
-        else if (pos === 1 && behind && behind.gap < 6)
+        // (said now, or not at all: a last-lap line that has gone stale falls
+        // back to the plain one rather than to silence)
+        const plain = () => radioLine('lastLap');
+        if (pos === 1 && behind && behind.gap < 6)
             add(3, 'last', radioLine('lastLapLeading', { name: radioName(behind.car),
-                                                        gap: radioGap(behind.gap) }));
+                                                        gap: radioGap(behind.gap) }),
+                () => stillB(8)() || plain());
         else if (behind && behind.gap < 1.2)
             add(3, 'last', radioLine('lastLapDefend', { name: radioName(behind.car),
-                                                       gap: radioGap(behind.gap) }));
+                                                       gap: radioGap(behind.gap) }),
+                () => stillB(2)() || plain());
         else if (ahead && ahead.gap < 1.5)
             add(3, 'last', radioLine('lastLapAttack', { name: radioName(ahead.car),
-                                                       gap: radioGap(ahead.gap) }));
-        else add(3, 'last', radioLine('lastLap'));
+                                                       gap: radioGap(ahead.gap) }),
+                () => stillA(2.5)() || plain());
+        else add(3, 'last', plain());
     }
 
     // The tyre calls read the RACE wear law, not merely the presence of a box:
@@ -4084,8 +4472,8 @@ function radioLapReport(car, isBest) {
     const fast = radioFastestCar();
     const hadFL = car._radioFL;
     car._radioFL = (fast === car);
-    if (pos === 1 && was && was > 1) add(2, null, radioLine('newLeader'));
-    else if (pos === 3 && was && was > 3) add(2, null, radioLine('intoPodium'));
+    if (pos === 1 && was && was > 1) add(2, null, radioLine('newLeader'), radioStillPos(car, 1));
+    else if (pos === 3 && was && was > 3) add(2, null, radioLine('intoPodium'), radioStillPos(car, 3));
     if (isBest && car.lap > 1) {
         // your own best, and the fastest of the race, are two different things
         // and he asked to be told which one he has just done
@@ -4127,20 +4515,43 @@ function radioLapReport(car, isBest) {
     // The car now behind that was ahead last lap is the one he passed; the car
     // now ahead that was behind last lap is the one that passed him.
     const prevAheadCol = car._radioAheadCol, prevBehindCol = car._radioBehindCol;
-    if (was && pos > was) {
+    // ...and whether the place changed hands in the pit lane rather than on
+    // the road: the other car's stop count against what it was a lap ago
+    const pitsThen = car._radioOtherPits || {};
+    const stoppedSince = (c) => !!c && pitsThen[c.color] !== undefined && (c.pitCount || 0) > pitsThen[c.color];
+    // (not on the lap of your own stop: the places a stop costs are the
+    // pit-exit line's subject, below, and not a loss to be mourned)
+    if (pitted) { /* see OUT OF THE PITS */ }
+    else if (was && pos > was) {
         const by = ahead && prevBehindCol && ahead.car.color === prevBehindCol ? ahead.car : null;
-        add(2, null, by ? radioLine('lostPlaceTo', Object.assign({ name: radioName(by) }, radioPosVars(pos)))
-                        : radioLine('lostPlace', radioPosVars(pos)));
+        const v = Object.assign({ name: by ? radioName(by) : '' }, radioPosVars(pos));
+        add(2, null, by ? radioLine(stoppedSince(by) ? 'lostPlaceStop' : 'lostPlaceTo', v)
+                        : radioLine('lostPlace', radioPosVars(pos)),
+            by ? radioStillSide(car, by, false) : radioStillPos(car, pos));
     } else if (was && pos < was) {
         const on = behind && prevAheadCol && behind.car.color === prevAheadCol ? behind.car : null;
+        const v = Object.assign({ name: on ? radioName(on) : '' }, radioPosVars(pos));
         if (on && rival && on.driverName === rival)
-            add(2, null, radioLine('rivalPassed', { name: radioName(on) }));
+            add(2, null, radioLine('rivalPassed', { name: radioName(on) }), radioStillSide(car, on, true));
+        else if (on && radioSameTeam(car, on))
+            add(2, null, radioLine('gainedPlaceMate', v), radioStillSide(car, on, true));
         else
-            add(2, null, on ? radioLine('gainedPlaceOn', Object.assign({ name: radioName(on) }, radioPosVars(pos)))
-                            : radioLine('gainedPlace', radioPosVars(pos)));
+            add(2, null, on ? radioLine(stoppedSince(on) ? 'gainedPlaceStop' : 'gainedPlaceOn', v)
+                            : radioLine('gainedPlace', radioPosVars(pos)),
+                on ? radioStillSide(car, on, true) : radioStillPos(car, pos));
     }
     car._radioAheadCol = ahead ? ahead.car.color : null;
     car._radioBehindCol = behind ? behind.car.color : null;
+    { const now = {}; for (const c of cars) now[c.color] = c.pitCount || 0; car._radioOtherPits = now; }
+    // OUT OF THE PITS (zoom112): the one lap a driver has no idea where he is
+    // - the tower has moved under him - and the first thing a wall says
+    if (pitted && left >= 1) {
+        if (ahead && ahead.gap < 8)
+            add(2, null, radioLine('afterStopAhead', Object.assign({ name: radioName(ahead.car), gap: radioGap(ahead.gap) }, radioPosVars(pos))), stillA());
+        else if (behind && behind.gap < 3)
+            add(2, null, radioLine('afterStopBehind', Object.assign({ name: radioName(behind.car), gap: radioGap(behind.gap) }, radioPosVars(pos))), stillB());
+        else add(2, null, radioLine('afterStop', radioPosVars(pos)), radioStillPos(car, pos));
+    }
     // THE RAIN CALL HAS TO BE ABOUT THIS GAME. It used to say "watch the white
     // lines", which is what a real engineer says and is about a hazard this
     // circuit does not have - there is no paint on these roads. What there IS,
@@ -4189,31 +4600,46 @@ function radioLapReport(car, isBest) {
         const sameA = prevA && prevA.color === ahead.car.color;
         const rate = sameA ? prevA.gap - ahead.gap : 0;   // positive = catching
         car._radioAhead = { color: ahead.car.color, gap: ahead.gap };
-        if (rival && ahead.car.driverName === rival && ahead.gap < 5)
-            add(1, 'rivalahead', radioLine('rivalAhead', { name: nameA, gap: radioGap(ahead.gap) }));
+        // (the gaps here are what a wall calls close: a rival or a team-mate
+        // is news within three and a half seconds, not five - zoom112)
+        if (rival && ahead.car.driverName === rival && ahead.gap < 3.5)
+            add(1, 'rivalahead', radioLine('rivalAhead', { name: nameA, gap: radioGap(ahead.gap) }), stillA(5));
+        else if (radioSameTeam(car, ahead.car) && ahead.gap < 3.5)
+            add(1, 'mateahead', radioLine('mateAhead', { name: nameA, gap: radioGap(ahead.gap) }), stillA(5));
         if (ahead.gap < 1.5) {
-            add(1, 'close' + ahead.car.color, radioLine('closeAhead', { name: nameA, gap: radioGap(ahead.gap) }));
+            add(1, 'close' + ahead.car.color, radioLine('closeAhead', { name: nameA, gap: radioGap(ahead.gap) }), stillA(2.5));
             // ...and how to pass him, once a race per driver
-            add(1, 'tellA' + ahead.car.color, radioTell(ahead.car, 'ahead'));
+            add(1, 'tellA' + ahead.car.color, radioTell(ahead.car, 'ahead'), stillA(3));
         } else if (sameA && rate >= 0.15 && ahead.gap < 8) {
             // WILL YOU CATCH HIM. The one number a driver cannot work out at
             // two hundred kilometres an hour: the gap divided by the rate.
             const n = Math.max(1, Math.ceil((ahead.gap - 0.5) / rate));
             if (n <= left)
                 add(1, 'catch' + ahead.car.color, radioLine('catching', {
-                    name: nameA, gap: radioGap(ahead.gap), d: radioGap(rate), n: n }));
+                    name: nameA, gap: radioGap(ahead.gap), d: radioGap(rate), n: n }), stillA());
             else
                 add(1, 'catch' + ahead.car.color, radioLine('cantCatch', {
-                    name: nameA, gap: radioGap(ahead.gap), d: radioGap(rate) }));
+                    name: nameA, gap: radioGap(ahead.gap), d: radioGap(rate) }), stillA());
         }
         // THE OTHER MAN'S STRATEGY. The same projection the AI stops on, read
         // for the car in front: a set that will not reach the flag is a stop
-        // he still has to make and you may not.
-        if (pitRoadWear && left >= 2 && ahead.gap < 6) {
+        // he still has to make and you may not. Within four seconds (zoom112:
+        // it was six, and six seconds is a car you are not racing yet).
+        if (pitRoadWear && left >= 2 && ahead.gap < 4) {
             const w = ahead.car.tyreWear || 0, r = ahead.car._wearLapRate || 0;
             const mine = (car.tyreWear || 0) + (car._wearLapRate || 0) * left;
             if (r > 0 && w + r * left > 1.05 && mine < 0.95)
-                add(1, 'muststopA' + ahead.car.color, radioLine('aheadMustStop', { name: nameA }));
+                add(1, 'muststopA' + ahead.car.color, radioLine('aheadMustStop', { name: nameA }), stillA(6));
+        }
+        // THE LEADER, NOW AND THEN (zoom112): when the car ahead is not him,
+        // every fourth lap, how far away the front of the race is
+        if (pos > 2 && pos <= 8 && car.lap % 4 === 2 && left >= 2) {
+            const lead = cars.slice().sort(raceCmp)[0];
+            if (lead && lead !== car && !lead.finished && !lead.isBroken) {
+                const px = (lead.trackProgress || 0) - (car.trackProgress || 0);
+                const sp = Math.max(80, Math.hypot(car.velocity.x, car.velocity.y));
+                if (px > 0 && px / sp >= 3) add(1, null, radioLine('leaderGap', { name: radioName(lead), gap: radioGap(px / sp) }));
+            }
         }
     } else {
         car._radioAhead = null;
@@ -4231,43 +4657,47 @@ function radioLapReport(car, isBest) {
         const d = same ? prevB.gap - behind.gap : 0;      // positive = closing
         car._radioBehind = { color: behind.car.color, gap: behind.gap };
         const v = { name: name, gap: radioGap(behind.gap), d: radioGap(Math.abs(d)) };
-        if (rival && behind.car.driverName === rival && behind.gap < 4)
-            add(1, 'rivalbehind', radioLine('rivalBehind', v));
+        if (rival && behind.car.driverName === rival && behind.gap < 3)
+            add(1, 'rivalbehind', radioLine('rivalBehind', v), stillB(4.5));
+        else if (radioSameTeam(car, behind.car) && behind.gap < 3)
+            add(1, 'matebehind', radioLine('mateBehind', v), stillB(4.5));
         if (pos === 1 && behind.gap >= 8) {
-            add(1, 'leadbig', radioLine('leadBig', v));
+            add(1, 'leadbig', radioLine('leadBig', v), stillB());
         } else if (behind.gap < 1.0) {
-            add(2, null, radioLine(same && d > 0.1 ? 'behindCloseClosing' : 'behindClose', v));
-            add(1, 'tellB' + behind.car.color, radioTell(behind.car, 'behind'));
+            add(2, null, radioLine(same && d > 0.1 ? 'behindCloseClosing' : 'behindClose', v), stillB(1.6));
+            add(1, 'tellB' + behind.car.color, radioTell(behind.car, 'behind'), stillB(2.5));
         } else if (behind.gap < 4) {
             if (pos === 1)
                 add(1, null, radioLine(same && d > 0.25 ? 'leadShrinking'
-                                     : same && d < -0.25 ? 'leadGrowing' : 'leadSteady', v));
-            else if (same && d > 0.25) add(1, null, radioLine('behindGaining', v));
-            else if (same && d < -0.25) add(1, null, radioLine('behindLosing', v));
-            else add(1, null, radioLine('behindHolding', v));
+                                     : same && d < -0.25 ? 'leadGrowing' : 'leadSteady', v), stillB());
+            else if (same && d > 0.25) add(1, null, radioLine('behindGaining', v), stillB());
+            else if (same && d < -0.25) add(1, null, radioLine('behindLosing', v), stillB());
+            else add(1, null, radioLine('behindHolding', v), stillB());
         } else if (pos === 1 && same && d < -0.25) {
             // four seconds and more is a lead, not a fight: worth a word when
             // it is growing, and not every lap that it is merely still there
-            add(1, null, radioLine('leadGrowing', v));
+            add(1, null, radioLine('leadGrowing', v), stillB());
         }
         if (pitRoadWear && left >= 2 && behind.gap < 3) {
             const w = behind.car.tyreWear || 0, r = behind.car._wearLapRate || 0;
             if (r > 0 && w + r * left > 1.05)
-                add(1, 'muststopB' + behind.car.color, radioLine('behindMustStop', { name: name }));
+                add(1, 'muststopB' + behind.car.color, radioLine('behindMustStop', { name: name }), stillB(5));
         }
     } else {
         car._radioBehind = null;
     }
     // ...and when there is nobody to talk about either way, say so once.
     if ((!ahead || ahead.gap > 4) && (!behind || behind.gap > 4) && pos > 1 && car.lap >= 2)
-        add(1, 'cleanair', radioLine('cleanAir'));
+        add(1, 'cleanair', radioLine('cleanAir'), () => {
+            const a = radioCarAhead(car), b = radioCarBehind(car);
+            return (!a || a.gap > 3) && (!b || b.gap > 3);
+        });
     // a lap that was quicker than the one before but not a best is still
     // information, and it is the commonest thing a real wall says
     // A lap against the one before it - bounded, and not across a stop. Ten
     // seconds of stationary time is not a driver having a bad lap, and "eight
     // seconds quicker than the last one" is the wall reading out an artefact.
-    const pitted = car.pitCount !== car._radioPitCount;
-    car._radioPitCount = car.pitCount;
+    // (`pitted` is read at the top of the report)
     if (!isBest && car.lastLapTime && car._radioPrevLap && !pitted) {
         const d = (car._radioPrevLap - car.lastLapTime) / 1000;
         if (d > 0.15 && d < 3) add(1, null, radioLine('quickerLap', { d: radioGap(d) }));
@@ -4306,8 +4736,20 @@ function radioLapReport(car, isBest) {
 // the answer to the second.
 function radioEmit(said) {
     said.sort((a, b) => b.pri - a.pri);
-    if (said[0]) radioSay(said[0].text, said[0].pri);
-    if (said[1]) radioSay(said[1].text, said[1].pri);
+    if (said[0]) radioSay(said[0].text, said[0].pri, said[0].check);
+    if (said[1]) radioSay(said[1].text, said[1].pri, said[1].check);
+}
+
+// THE CAR NEXT DOOR (zoom112). The game itself has no teams; a championship
+// built by Apex Career files each entrant with one, and when it has, the wall
+// knows a team-mate when it sees one - the same car, which is the one
+// comparison a paddock reads first.
+function radioSameTeam(a, b) {
+    if (!a || !b || a === b) return false;
+    if (typeof championshipState === 'undefined' || !championshipState || !championshipState.participants) return false;
+    const pa = championshipState.participants.find(p => p.color === a.color);
+    const pb = championshipState.participants.find(p => p.color === b.color);
+    return !!(pa && pb && pa.team && pb.team && pa.team === pb.team);
 }
 
 // ---------------------------------------------------------------------------
@@ -4389,11 +4831,11 @@ function radioWatch() {
     const now = performance.now();
     const order = cars.slice().sort(raceCmp);
     const mi = order.indexOf(me);
-    const say = (pri, text) => {
+    const say = (pri, text, check) => {
         if (!text) return false;
         if (pri < 3 && now < st.nextAt) return false;
         st.nextAt = now + 5000;
-        radioSay(text, pri);
+        radioSay(text, pri, check);
         return true;
     };
     const rival = (typeof AI !== 'undefined' && AI.seasonRival) ? AI.seasonRival.driver : null;
@@ -4428,8 +4870,8 @@ function radioWatch() {
             st.pit.set(c, is);
             if (c === me || !is || was || c.isBroken) continue;
             const ci = order.indexOf(c);
-            if (ci === mi - 1) say(2, radioLine('aheadPits', { name: radioName(c) }));
-            else if (ci === mi + 1) say(1, radioLine('behindPits', { name: radioName(c) }));
+            if (ci === mi - 1) say(2, radioLine('aheadPits', { name: radioName(c) }), () => !!c.pitPhase);
+            else if (ci === mi + 1) say(1, radioLine('behindPits', { name: radioName(c) }), () => !!c.pitPhase);
         }
     }
 
@@ -4441,8 +4883,11 @@ function radioWatch() {
         if (c === me || !c.blueFlag || c.blueFlagFrom !== me) continue;
         const last = st.flagged.get(c) || 0;
         if (now - last < 40000) continue;
+        // (still ahead of you and still waved out of your way when its turn
+        // comes, or it is not said - zoom112)
         if (say(c.blueFlagWhy === 'lap' ? 1 : 2,
-                radioLine(c.blueFlagWhy === 'lap' ? 'traffic' : 'wreckAhead', { name: radioName(c) })))
+                radioLine(c.blueFlagWhy === 'lap' ? 'traffic' : 'wreckAhead', { name: radioName(c) }),
+                () => !!(c.blueFlag && c.blueFlagFrom === me && (c.trackProgress || 0) > (me.trackProgress || 0))))
             st.flagged.set(c, now);
     }
 
@@ -4452,7 +4897,8 @@ function radioWatch() {
         const by = me.blueFlagFrom;
         const last = st.lapped.get(by) || 0;
         if (now - last > 30000 &&
-            say(2, radioLine(order[0] === by ? 'blueFlagLeader' : 'blueFlag', { name: radioName(by) })))
+            say(2, radioLine(order[0] === by ? 'blueFlagLeader' : 'blueFlag', { name: radioName(by) }),
+                () => !!(me.blueFlag && me.blueFlagFrom === by)))
             st.lapped.set(by, now);
     }
 
